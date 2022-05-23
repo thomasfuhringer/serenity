@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2020, Nico Weber <thakis@chromium.org>
+ * Copyright (c) 2022, the SerenityOS developers.
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -14,7 +15,7 @@
 #include <LibGUI/Widget.h>
 #include <LibGUI/Window.h>
 #include <LibGfx/Bitmap.h>
-#include <LibGfx/Font.h>
+#include <LibGfx/Font/Font.h>
 #include <LibGfx/Painter.h>
 #include <LibGfx/Palette.h>
 #include <LibGfx/Path.h>
@@ -23,13 +24,13 @@
 #include <LibMain/Main.h>
 #include <unistd.h>
 
-const int WIDTH = 300;
-const int HEIGHT = 200;
+int const WIDTH = 300;
+int const HEIGHT = 200;
 
 class Canvas final : public GUI::Widget {
     C_OBJECT(Canvas)
 public:
-    virtual ~Canvas() override;
+    virtual ~Canvas() override = default;
 
 private:
     Canvas();
@@ -43,15 +44,15 @@ private:
 
 Canvas::Canvas()
 {
-    m_bitmap_1x = Gfx::Bitmap::try_create(Gfx::BitmapFormat::BGRx8888, { WIDTH, HEIGHT }, 1).release_value_but_fixme_should_propagate_errors();
-    m_bitmap_2x = Gfx::Bitmap::try_create(Gfx::BitmapFormat::BGRx8888, { WIDTH, HEIGHT }, 2).release_value_but_fixme_should_propagate_errors();
+    m_bitmap_1x = Gfx::Bitmap::try_create(Gfx::BitmapFormat::BGRA8888, { WIDTH, HEIGHT }, 1).release_value_but_fixme_should_propagate_errors();
+    m_bitmap_2x = Gfx::Bitmap::try_create(Gfx::BitmapFormat::BGRA8888, { WIDTH, HEIGHT }, 2).release_value_but_fixme_should_propagate_errors();
 
     // m_bitmap_1x and m_bitmap_2x have the same logical size, so LibGfx will try to draw them at the same physical size:
     // When drawing on a 2x backing store it'd scale m_bitmap_1x up 2x and paint m_bitmap_2x at its physical size.
     // When drawing on a 1x backing store it'd draw m_bitmap_1x at its physical size, and it would have to scale down m_bitmap_2x to 0.5x its size.
     // But the system can't current scale down, and we want to draw the 2x bitmap at twice the size of the 1x bitmap in this particular application,
     // so make a 1x alias of the 2x bitmap to make LibGfx paint it without any scaling at paint time, mapping once pixel to one pixel.
-    m_bitmap_2x_as_1x = Gfx::Bitmap::try_create_wrapper(Gfx::BitmapFormat::BGRx8888, m_bitmap_2x->physical_size(), 1, m_bitmap_2x->pitch(), m_bitmap_2x->scanline(0)).release_value_but_fixme_should_propagate_errors();
+    m_bitmap_2x_as_1x = Gfx::Bitmap::try_create_wrapper(Gfx::BitmapFormat::BGRA8888, m_bitmap_2x->physical_size(), 1, m_bitmap_2x->pitch(), m_bitmap_2x->scanline(0)).release_value_but_fixme_should_propagate_errors();
 
     Gfx::Painter painter_1x(*m_bitmap_1x);
     draw(painter_1x);
@@ -60,10 +61,6 @@ Canvas::Canvas()
     draw(painter_2x);
 
     update();
-}
-
-Canvas::~Canvas()
-{
 }
 
 void Canvas::paint_event(GUI::PaintEvent& event)
@@ -78,8 +75,10 @@ void Canvas::paint_event(GUI::PaintEvent& event)
 void Canvas::draw(Gfx::Painter& painter)
 {
     auto active_window_icon = Gfx::Bitmap::try_load_from_file("/res/icons/16x16/window.png").release_value_but_fixme_should_propagate_errors();
+
     Gfx::WindowTheme::current().paint_normal_frame(painter, Gfx::WindowTheme::WindowState::Active, { 4, 18, WIDTH - 8, HEIGHT - 29 }, "Well hello friends 🐞", *active_window_icon, palette(), { WIDTH - 20, 6, 16, 16 }, 0, false);
 
+    painter.fill_rect({ 4, 25, WIDTH - 8, HEIGHT - 30 }, palette().color(Gfx::ColorRole::Background));
     painter.draw_rect({ 20, 34, WIDTH - 40, HEIGHT - 45 }, palette().color(Gfx::ColorRole::Selection), true);
     painter.draw_rect({ 24, 38, WIDTH - 48, HEIGHT - 53 }, palette().color(Gfx::ColorRole::Selection));
 
@@ -120,9 +119,9 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
     auto file_menu = TRY(window->try_add_menu("&File"));
     TRY(file_menu->try_add_action(GUI::CommonActions::make_quit_action([&](auto&) { app->quit(); })));
 
-    auto app_icon = GUI::Icon::default_icon("app-libgfx-demo");
+    auto app_icon = TRY(GUI::Icon::try_create_default_icon("app-libgfx-demo"));
     window->set_icon(app_icon.bitmap_for_size(16));
-    TRY(window->try_set_main_widget<Canvas>());
+    (void)TRY(window->try_set_main_widget<Canvas>());
     window->show();
 
     return app->exec();

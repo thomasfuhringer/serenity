@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2021, Tim Flynn <trflynn89@pm.me>
+ * Copyright (c) 2021-2022, Tim Flynn <trflynn89@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -10,7 +10,7 @@
 
 namespace JS::Intl {
 
-// 15.1.4 Number Format Functions, https://tc39.es/ecma402/#sec-number-format-functions
+// 15.5.2 Number Format Functions, https://tc39.es/ecma402/#sec-number-format-functions
 NumberFormatFunction* NumberFormatFunction::create(GlobalObject& global_object, NumberFormat& number_format)
 {
     return global_object.heap().allocate<NumberFormatFunction>(global_object, number_format, *global_object.function_prototype());
@@ -44,14 +44,9 @@ ThrowCompletionOr<Value> NumberFormatFunction::call()
     // 4. Let x be ? ToNumeric(value).
     value = TRY(value.to_numeric(global_object));
 
-    // FIXME: Support BigInt number formatting.
-    if (value.is_bigint())
-        return vm.throw_completion<InternalError>(global_object, ErrorType::NotImplemented, "BigInt number formatting");
-
     // 5. Return ? FormatNumeric(nf, x).
     // Note: Our implementation of FormatNumeric does not throw.
-    auto formatted = format_numeric(m_number_format, value.as_double());
-
+    auto formatted = format_numeric(global_object, m_number_format, value);
     return js_string(vm, move(formatted));
 }
 

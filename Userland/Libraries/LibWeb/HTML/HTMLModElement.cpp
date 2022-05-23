@@ -8,13 +8,11 @@
 
 namespace Web::HTML {
 
-HTMLModElement::HTMLModElement(DOM::Document& document, QualifiedName qualified_name)
+HTMLModElement::HTMLModElement(DOM::Document& document, DOM::QualifiedName qualified_name)
     : HTMLElement(document, move(qualified_name))
 {
 }
 
-HTMLModElement::~HTMLModElement()
-{
-}
+HTMLModElement::~HTMLModElement() = default;
 
 }

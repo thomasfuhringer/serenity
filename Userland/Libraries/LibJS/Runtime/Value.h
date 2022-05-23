@@ -9,6 +9,7 @@
 
 #include <AK/Assertions.h>
 #include <AK/BitCast.h>
+#include <AK/Concepts.h>
 #include <AK/Format.h>
 #include <AK/Forward.h>
 #include <AK/Function.h>
@@ -17,7 +18,6 @@
 #include <AK/Types.h>
 #include <LibJS/Forward.h>
 #include <LibJS/Runtime/BigInt.h>
-#include <LibJS/Runtime/PrimitiveString.h>
 #include <LibJS/Runtime/Utf16String.h>
 #include <math.h>
 
@@ -131,7 +131,8 @@ public:
     {
     }
 
-    explicit Value(bool value)
+    template<typename T>
+    requires(SameAs<RemoveCVReference<T>, bool>) explicit Value(T value)
         : m_type(Type::Boolean)
     {
         m_value.as_bool = value;
@@ -177,31 +178,31 @@ public:
         m_value.as_i32 = value;
     }
 
-    Value(const Object* object)
+    Value(Object const* object)
         : m_type(object ? Type::Object : Type::Null)
     {
         m_value.as_object = const_cast<Object*>(object);
     }
 
-    Value(const PrimitiveString* string)
+    Value(PrimitiveString const* string)
         : m_type(Type::String)
     {
         m_value.as_string = const_cast<PrimitiveString*>(string);
     }
 
-    Value(const Symbol* symbol)
+    Value(Symbol const* symbol)
         : m_type(Type::Symbol)
     {
         m_value.as_symbol = const_cast<Symbol*>(symbol);
     }
 
-    Value(const Accessor* accessor)
+    Value(Accessor const* accessor)
         : m_type(Type::Accessor)
     {
         m_value.as_accessor = const_cast<Accessor*>(accessor);
     }
 
-    Value(const BigInt* bigint)
+    Value(BigInt const* bigint)
         : m_type(Type::BigInt)
     {
         m_value.as_bigint = const_cast<BigInt*>(bigint);
@@ -234,7 +235,7 @@ public:
         return *m_value.as_object;
     }
 
-    const Object& as_object() const
+    Object const& as_object() const
     {
         VERIFY(type() == Type::Object);
         return *m_value.as_object;
@@ -246,7 +247,7 @@ public:
         return *m_value.as_string;
     }
 
-    const PrimitiveString& as_string() const
+    PrimitiveString const& as_string() const
     {
         VERIFY(is_string());
         return *m_value.as_string;
@@ -258,7 +259,7 @@ public:
         return *m_value.as_symbol;
     }
 
-    const Symbol& as_symbol() const
+    Symbol const& as_symbol() const
     {
         VERIFY(is_symbol());
         return *m_value.as_symbol;
@@ -331,6 +332,7 @@ public:
     ThrowCompletionOr<FunctionObject*> get_method(GlobalObject&, PropertyKey const&) const;
 
     String to_string_without_side_effects() const;
+    Optional<BigInt*> string_to_bigint(GlobalObject& global_object) const;
 
     Value value_or(Value fallback) const
     {
@@ -344,12 +346,12 @@ public:
     bool operator==(Value const&) const;
 
     template<typename... Args>
-    [[nodiscard]] ALWAYS_INLINE ThrowCompletionOr<Value> invoke(GlobalObject& global_object, PropertyKey const& property_name, Args... args);
+    [[nodiscard]] ALWAYS_INLINE ThrowCompletionOr<Value> invoke(GlobalObject& global_object, PropertyKey const& property_key, Args... args);
 
 private:
     Type m_type { Type::Empty };
 
-    [[nodiscard]] ThrowCompletionOr<Value> invoke_internal(GlobalObject& global_object, PropertyKey const&, Optional<MarkedValueList> arguments);
+    [[nodiscard]] ThrowCompletionOr<Value> invoke_internal(GlobalObject& global_object, PropertyKey const&, Optional<MarkedVector<Value>> arguments);
 
     ThrowCompletionOr<i32> to_i32_slow_case(GlobalObject&) const;
 
@@ -429,28 +431,9 @@ bool same_value_zero(Value lhs, Value rhs);
 bool same_value_non_numeric(Value lhs, Value rhs);
 ThrowCompletionOr<TriState> is_less_than(GlobalObject&, bool left_first, Value lhs, Value rhs);
 
+double to_integer_or_infinity(double);
+
 inline bool Value::operator==(Value const& value) const { return same_value(*this, value); }
-
-struct ValueTraits : public Traits<Value> {
-    static unsigned hash(Value value)
-    {
-        VERIFY(!value.is_empty());
-        if (value.is_string())
-            return value.as_string().string().hash();
-
-        if (value.is_bigint())
-            return value.as_bigint().big_integer().hash();
-
-        if (value.is_negative_zero())
-            value = Value(0);
-
-        return u64_hash(value.encoded()); // FIXME: Is this the best way to hash pointers, doubles & ints?
-    }
-    static bool equals(const Value a, const Value b)
-    {
-        return same_value_zero(a, b);
-    }
-};
 
 }
 

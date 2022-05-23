@@ -1,8 +1,9 @@
 set(SOURCES "") # avoid pulling SOURCES from parent scope
 
-lagom_tool(Generate_CSS_PropertyID_h   SOURCES Generate_CSS_PropertyID_h.cpp)
-lagom_tool(Generate_CSS_PropertyID_cpp SOURCES Generate_CSS_PropertyID_cpp.cpp)
-lagom_tool(Generate_CSS_ValueID_h      SOURCES Generate_CSS_ValueID_h.cpp)
-lagom_tool(Generate_CSS_ValueID_cpp    SOURCES Generate_CSS_ValueID_cpp.cpp)
-lagom_tool(WrapperGenerator            SOURCES WrapperGenerator.cpp)
-target_compile_options(WrapperGenerator PUBLIC -g)
+lagom_tool(GenerateCSSEnums                SOURCES GenerateCSSEnums.cpp LIBS LagomMain)
+lagom_tool(GenerateCSSMediaFeatureID       SOURCES GenerateCSSMediaFeatureID.cpp LIBS LagomMain)
+lagom_tool(GenerateCSSPropertyID           SOURCES GenerateCSSPropertyID.cpp LIBS LagomMain)
+lagom_tool(GenerateCSSTransformFunctions   SOURCES GenerateCSSTransformFunctions.cpp LIBS LagomMain)
+lagom_tool(GenerateCSSValueID              SOURCES GenerateCSSValueID.cpp LIBS LagomMain)
+
+add_subdirectory(WrapperGenerator)

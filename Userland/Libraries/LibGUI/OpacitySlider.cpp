@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2020, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2022, the SerenityOS developers.
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -23,10 +24,6 @@ OpacitySlider::OpacitySlider(Gfx::Orientation orientation)
     set_max(100);
     set_value(100);
     set_fixed_height(20);
-}
-
-OpacitySlider::~OpacitySlider()
-{
 }
 
 Gfx::IntRect OpacitySlider::frame_inner_rect() const
@@ -98,7 +95,7 @@ void OpacitySlider::paint_event(PaintEvent& event)
     Gfx::StylePainter::paint_frame(painter, rect(), palette(), Gfx::FrameShape::Container, Gfx::FrameShadow::Sunken, 2);
 }
 
-int OpacitySlider::value_at(const Gfx::IntPoint& position) const
+int OpacitySlider::value_at(Gfx::IntPoint const& position) const
 {
     auto inner_rect = frame_inner_rect();
     if (position.x() < inner_rect.left())
@@ -106,7 +103,9 @@ int OpacitySlider::value_at(const Gfx::IntPoint& position) const
     if (position.x() > inner_rect.right())
         return max();
     float relative_offset = (float)(position.x() - inner_rect.x()) / (float)inner_rect.width();
-    return relative_offset * (float)max();
+
+    int range = max() - min();
+    return min() + (int)(relative_offset * (float)range);
 }
 
 void OpacitySlider::mousedown_event(MouseEvent& event)
@@ -139,7 +138,7 @@ void OpacitySlider::mouseup_event(MouseEvent& event)
 
 void OpacitySlider::mousewheel_event(MouseEvent& event)
 {
-    set_value(value() - event.wheel_delta());
+    decrease_slider_by(event.wheel_delta_y());
 }
 
 }

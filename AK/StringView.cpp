@@ -7,78 +7,50 @@
 #include <AK/AnyOf.h>
 #include <AK/ByteBuffer.h>
 #include <AK/Find.h>
-#include <AK/FlyString.h>
 #include <AK/Function.h>
 #include <AK/Memory.h>
-#include <AK/String.h>
 #include <AK/StringView.h>
 #include <AK/Vector.h>
 
+#ifndef KERNEL
+#    include <AK/FlyString.h>
+#    include <AK/String.h>
+#endif
+
 namespace AK {
 
-StringView::StringView(const String& string)
+#ifndef KERNEL
+StringView::StringView(String const& string)
     : m_characters(string.characters())
     , m_length(string.length())
 {
 }
 
-StringView::StringView(const FlyString& string)
+StringView::StringView(FlyString const& string)
     : m_characters(string.characters())
     , m_length(string.length())
 {
 }
+#endif
 
-StringView::StringView(const ByteBuffer& buffer)
-    : m_characters((const char*)buffer.data())
+StringView::StringView(ByteBuffer const& buffer)
+    : m_characters((char const*)buffer.data())
     , m_length(buffer.size())
 {
 }
 
-Vector<StringView> StringView::split_view(const char separator, bool keep_empty) const
+Vector<StringView> StringView::split_view(char const separator, bool keep_empty) const
 {
-    if (is_empty())
-        return {};
-
-    Vector<StringView> v;
-    size_t substart = 0;
-    for (size_t i = 0; i < length(); ++i) {
-        char ch = characters_without_null_termination()[i];
-        if (ch == separator) {
-            size_t sublen = i - substart;
-            if (sublen != 0 || keep_empty)
-                v.append(substring_view(substart, sublen));
-            substart = i + 1;
-        }
-    }
-    size_t taillen = length() - substart;
-    if (taillen != 0 || keep_empty)
-        v.append(substring_view(substart, taillen));
-    return v;
+    StringView seperator_view { &separator, 1 };
+    return split_view(seperator_view, keep_empty);
 }
 
 Vector<StringView> StringView::split_view(StringView separator, bool keep_empty) const
 {
-    VERIFY(!separator.is_empty());
-
-    if (is_empty())
-        return {};
-
-    StringView view { *this };
-
     Vector<StringView> parts;
-
-    auto maybe_separator_index = find(separator);
-    while (maybe_separator_index.has_value()) {
-        auto separator_index = maybe_separator_index.value();
-        auto part_with_separator = view.substring_view(0, separator_index + separator.length());
-        if (keep_empty || separator_index > 0)
-            parts.append(part_with_separator.substring_view(0, separator_index));
-        view = view.substring_view_starting_after_substring(part_with_separator);
-        maybe_separator_index = view.find(separator);
-    }
-    if (keep_empty || !view.is_empty())
+    for_each_split_view(separator, keep_empty, [&](StringView view) {
         parts.append(view);
-
+    });
     return parts;
 }
 
@@ -175,6 +147,7 @@ bool StringView::equals_ignoring_case(StringView other) const
     return StringUtils::equals_ignoring_case(*this, other);
 }
 
+#ifndef KERNEL
 String StringView::to_lowercase_string() const
 {
     return StringImpl::create_lowercased(characters_without_null_termination(), length());
@@ -189,10 +162,11 @@ String StringView::to_titlecase_string() const
 {
     return StringUtils::to_titlecase(*this);
 }
+#endif
 
 StringView StringView::substring_view_starting_from_substring(StringView substring) const
 {
-    const char* remaining_characters = substring.characters_without_null_termination();
+    char const* remaining_characters = substring.characters_without_null_termination();
     VERIFY(remaining_characters >= m_characters);
     VERIFY(remaining_characters <= m_characters + m_length);
     size_t remaining_length = m_length - (remaining_characters - m_characters);
@@ -201,11 +175,23 @@ StringView StringView::substring_view_starting_from_substring(StringView substri
 
 StringView StringView::substring_view_starting_after_substring(StringView substring) const
 {
-    const char* remaining_characters = substring.characters_without_null_termination() + substring.length();
+    char const* remaining_characters = substring.characters_without_null_termination() + substring.length();
     VERIFY(remaining_characters >= m_characters);
     VERIFY(remaining_characters <= m_characters + m_length);
     size_t remaining_length = m_length - (remaining_characters - m_characters);
     return { remaining_characters, remaining_length };
+}
+
+bool StringView::copy_characters_to_buffer(char* buffer, size_t buffer_size) const
+{
+    // We must fit at least the NUL-terminator.
+    VERIFY(buffer_size > 0);
+
+    size_t characters_to_copy = min(m_length, buffer_size - 1);
+    __builtin_memcpy(buffer, m_characters, characters_to_copy);
+    buffer[characters_to_copy] = 0;
+
+    return characters_to_copy == m_length;
 }
 
 template<typename T>
@@ -234,17 +220,10 @@ template Optional<unsigned long long> StringView::to_uint() const;
 template Optional<long> StringView::to_uint() const;
 template Optional<long long> StringView::to_uint() const;
 
-bool StringView::operator==(const String& string) const
+#ifndef KERNEL
+bool StringView::operator==(String const& string) const
 {
-    if (string.is_null())
-        return !m_characters;
-    if (!m_characters)
-        return false;
-    if (m_length != string.length())
-        return false;
-    if (m_characters == string.characters())
-        return true;
-    return !__builtin_memcmp(m_characters, string.characters(), m_length);
+    return *this == string.view();
 }
 
 String StringView::to_string() const { return String { *this }; }
@@ -253,6 +232,7 @@ String StringView::replace(StringView needle, StringView replacement, bool all_o
 {
     return StringUtils::replace(*this, needle, replacement, all_occurrences);
 }
+#endif
 
 Vector<size_t> StringView::find_all(StringView needle) const
 {

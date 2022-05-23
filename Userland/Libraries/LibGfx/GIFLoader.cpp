@@ -1,12 +1,13 @@
 /*
  * Copyright (c) 2018-2021, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2022, the SerenityOS developers.
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #include <AK/Array.h>
 #include <AK/Debug.h>
-#include <AK/Math.h>
+#include <AK/IntegralMath.h>
 #include <AK/Memory.h>
 #include <AK/MemoryStream.h>
 #include <AK/NonnullOwnPtrVector.h>
@@ -16,8 +17,8 @@
 namespace Gfx {
 
 // Row strides and offsets for each interlace pass.
-static const int INTERLACE_ROW_STRIDES[] = { 8, 8, 4, 2 };
-static const int INTERLACE_ROW_OFFSETS[] = { 0, 4, 2, 1 };
+static constexpr Array<int, 4> INTERLACE_ROW_STRIDES = { 8, 8, 4, 2 };
+static constexpr Array<int, 4> INTERLACE_ROW_OFFSETS = { 0, 4, 2, 1 };
 
 struct GIFImageDescriptor {
     u16 x { 0 };
@@ -69,7 +70,7 @@ struct GIFLoadingContext {
         FailedToLoadFrameDescriptors,
     };
     ErrorState error_state { NoError };
-    const u8* data { nullptr };
+    u8 const* data { nullptr };
     size_t data_size { 0 };
     LogicalScreen logical_screen {};
     u8 background_color_index { 0 };
@@ -109,7 +110,7 @@ private:
     static constexpr int max_code_size = 12;
 
 public:
-    explicit LZWDecoder(const Vector<u8>& lzw_bytes, u8 min_code_size)
+    explicit LZWDecoder(Vector<u8> const& lzw_bytes, u8 min_code_size)
         : m_lzw_bytes(lzw_bytes)
         , m_code_size(min_code_size)
         , m_original_code_size(min_code_size)
@@ -159,7 +160,7 @@ public:
             for (int i = 0; current_byte_index + i < m_lzw_bytes.size(); ++i) {
                 padded_last_bytes[i] = m_lzw_bytes[current_byte_index + i];
             }
-            const u32* addr = (const u32*)&padded_last_bytes;
+            u32 const* addr = (u32 const*)&padded_last_bytes;
             m_current_code = (*addr & mask) >> current_bit_offset;
         } else {
             u32 tmp_word;
@@ -212,7 +213,7 @@ private:
         m_original_code_table = m_code_table;
     }
 
-    void extend_code_table(const Vector<u8>& entry)
+    void extend_code_table(Vector<u8> const& entry)
     {
         if (entry.size() > 1 && m_code_table.size() < 4096) {
             m_code_table.append(entry);
@@ -223,7 +224,7 @@ private:
         }
     }
 
-    const Vector<u8>& m_lzw_bytes;
+    Vector<u8> const& m_lzw_bytes;
 
     int m_current_bit_index { 0 };
 
@@ -239,20 +240,20 @@ private:
     Vector<u8> m_output {};
 };
 
-static void copy_frame_buffer(Bitmap& dest, const Bitmap& src)
+static void copy_frame_buffer(Bitmap& dest, Bitmap const& src)
 {
     VERIFY(dest.size_in_bytes() == src.size_in_bytes());
     memcpy(dest.scanline(0), src.scanline(0), dest.size_in_bytes());
 }
 
-static void clear_rect(Bitmap& bitmap, const IntRect& rect, Color color)
+static void clear_rect(Bitmap& bitmap, IntRect const& rect, Color color)
 {
     auto intersection_rect = rect.intersected(bitmap.rect());
     if (intersection_rect.is_empty())
         return;
 
-    RGBA32* dst = bitmap.scanline(intersection_rect.top()) + intersection_rect.left();
-    const size_t dst_skip = bitmap.pitch() / sizeof(RGBA32);
+    ARGB32* dst = bitmap.scanline(intersection_rect.top()) + intersection_rect.left();
+    const size_t dst_skip = bitmap.pitch() / sizeof(ARGB32);
 
     for (int i = intersection_rect.height() - 1; i >= 0; --i) {
         fast_u32_fill(dst, color.value(), intersection_rect.width());
@@ -292,7 +293,7 @@ static bool decode_frame(GIFLoadingContext& context, size_t frame_index)
     for (size_t i = start_frame; i <= frame_index; ++i) {
         auto& image = context.images.at(i);
 
-        const auto previous_image_disposal_method = i > 0 ? context.images.at(i - 1).disposal_method : GIFImageDescriptor::DisposalMethod::None;
+        auto const previous_image_disposal_method = i > 0 ? context.images.at(i - 1).disposal_method : GIFImageDescriptor::DisposalMethod::None;
 
         if (i == 0) {
             context.frame_buffer->fill(Color::Transparent);
@@ -323,10 +324,10 @@ static bool decode_frame(GIFLoadingContext& context, size_t frame_index)
         LZWDecoder decoder(image.lzw_encoded_bytes, image.lzw_min_code_size);
 
         // Add GIF-specific control codes
-        const int clear_code = decoder.add_control_code();
-        const int end_of_information_code = decoder.add_control_code();
+        int const clear_code = decoder.add_control_code();
+        int const end_of_information_code = decoder.add_control_code();
 
-        const auto& color_map = image.use_global_color_map ? context.logical_screen.color_map : image.color_map;
+        auto const& color_map = image.use_global_color_map ? context.logical_screen.color_map : image.color_map;
 
         int pixel_index = 0;
         int row = 0;
@@ -348,7 +349,7 @@ static bool decode_frame(GIFLoadingContext& context, size_t frame_index)
                 continue;
 
             auto colors = decoder.get_output();
-            for (const auto& color : colors) {
+            for (auto const& color : colors) {
                 auto c = color_map[color];
 
                 int x = pixel_index % image.width + image.x;
@@ -598,14 +599,14 @@ static bool load_gif_frame_descriptors(GIFLoadingContext& context)
     return true;
 }
 
-GIFImageDecoderPlugin::GIFImageDecoderPlugin(const u8* data, size_t size)
+GIFImageDecoderPlugin::GIFImageDecoderPlugin(u8 const* data, size_t size)
 {
     m_context = make<GIFLoadingContext>();
     m_context->data = data;
     m_context->data_size = size;
 }
 
-GIFImageDecoderPlugin::~GIFImageDecoderPlugin() { }
+GIFImageDecoderPlugin::~GIFImageDecoderPlugin() = default;
 
 IntSize GIFImageDecoderPlugin::size()
 {

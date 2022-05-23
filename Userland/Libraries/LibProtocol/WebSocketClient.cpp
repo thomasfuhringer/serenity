@@ -9,12 +9,12 @@
 
 namespace Protocol {
 
-WebSocketClient::WebSocketClient()
-    : IPC::ServerConnection<WebSocketClientEndpoint, WebSocketServerEndpoint>(*this, "/tmp/portal/websocket")
+WebSocketClient::WebSocketClient(NonnullOwnPtr<Core::Stream::LocalSocket> socket)
+    : IPC::ConnectionToServer<WebSocketClientEndpoint, WebSocketServerEndpoint>(*this, move(socket))
 {
 }
 
-RefPtr<WebSocket> WebSocketClient::connect(const URL& url, const String& origin, const Vector<String>& protocols, const Vector<String>& extensions, const HashMap<String, String>& request_headers)
+RefPtr<WebSocket> WebSocketClient::connect(const URL& url, String const& origin, Vector<String> const& protocols, Vector<String> const& extensions, HashMap<String, String> const& request_headers)
 {
     IPC::Dictionary header_dictionary;
     for (auto& it : request_headers)

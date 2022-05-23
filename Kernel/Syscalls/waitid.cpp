@@ -19,10 +19,10 @@ ErrorOr<siginfo_t> Process::do_waitid(Variant<Empty, NonnullRefPtr<Process>, Non
     return result;
 }
 
-ErrorOr<FlatPtr> Process::sys$waitid(Userspace<const Syscall::SC_waitid_params*> user_params)
+ErrorOr<FlatPtr> Process::sys$waitid(Userspace<Syscall::SC_waitid_params const*> user_params)
 {
     VERIFY_PROCESS_BIG_LOCK_ACQUIRED(this)
-    REQUIRE_PROMISE(proc);
+    TRY(require_promise(Pledge::proc));
     auto params = TRY(copy_typed_from_user(user_params));
 
     Variant<Empty, NonnullRefPtr<Process>, NonnullRefPtr<ProcessGroup>> waitee;

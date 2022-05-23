@@ -8,13 +8,11 @@
 
 namespace Web::HTML {
 
-HTMLPictureElement::HTMLPictureElement(DOM::Document& document, QualifiedName qualified_name)
+HTMLPictureElement::HTMLPictureElement(DOM::Document& document, DOM::QualifiedName qualified_name)
     : HTMLElement(document, move(qualified_name))
 {
 }
 
-HTMLPictureElement::~HTMLPictureElement()
-{
-}
+HTMLPictureElement::~HTMLPictureElement() = default;
 
 }

@@ -22,14 +22,14 @@
 #include <LibGUI/TabWidget.h>
 #include <LibGUI/TextEditor.h>
 #include <LibGUI/Widget.h>
-#include <LibGfx/FontDatabase.h>
+#include <LibGfx/Font/FontDatabase.h>
 #include <LibJS/SyntaxHighlighter.h>
 
 REGISTER_WIDGET(Spreadsheet, ConditionsView);
 
 namespace Spreadsheet {
 
-CellTypeDialog::CellTypeDialog(const Vector<Position>& positions, Sheet& sheet, GUI::Window* parent)
+CellTypeDialog::CellTypeDialog(Vector<Position> const& positions, Sheet& sheet, GUI::Window* parent)
     : GUI::Dialog(parent)
 {
     VERIFY(!positions.is_empty());
@@ -59,11 +59,11 @@ CellTypeDialog::CellTypeDialog(const Vector<Position>& positions, Sheet& sheet, 
     button_layout.add_spacer();
     auto& ok_button = buttonbox.add<GUI::Button>("OK");
     ok_button.set_fixed_width(80);
-    ok_button.on_click = [&](auto) { done(ExecOK); };
+    ok_button.on_click = [&](auto) { done(ExecResult::OK); };
 }
 
-const Vector<String> g_horizontal_alignments { "Left", "Center", "Right" };
-const Vector<String> g_vertical_alignments { "Top", "Center", "Bottom" };
+Vector<String> const g_horizontal_alignments { "Left", "Center", "Right" };
+Vector<String> const g_vertical_alignments { "Top", "Center", "Bottom" };
 Vector<String> g_types;
 
 constexpr static CellTypeDialog::VerticalAlignment vertical_alignment_from(Gfx::TextAlignment alignment)
@@ -74,10 +74,12 @@ constexpr static CellTypeDialog::VerticalAlignment vertical_alignment_from(Gfx::
     case Gfx::TextAlignment::Center:
         return CellTypeDialog::VerticalAlignment::Center;
 
+    case Gfx::TextAlignment::TopCenter:
     case Gfx::TextAlignment::TopRight:
     case Gfx::TextAlignment::TopLeft:
         return CellTypeDialog::VerticalAlignment::Top;
 
+    case Gfx::TextAlignment::BottomCenter:
     case Gfx::TextAlignment::BottomLeft:
     case Gfx::TextAlignment::BottomRight:
         return CellTypeDialog::VerticalAlignment::Bottom;
@@ -89,7 +91,9 @@ constexpr static CellTypeDialog::VerticalAlignment vertical_alignment_from(Gfx::
 constexpr static CellTypeDialog::HorizontalAlignment horizontal_alignment_from(Gfx::TextAlignment alignment)
 {
     switch (alignment) {
+    case Gfx::TextAlignment::BottomCenter:
     case Gfx::TextAlignment::Center:
+    case Gfx::TextAlignment::TopCenter:
         return CellTypeDialog::HorizontalAlignment::Center;
 
     case Gfx::TextAlignment::TopRight:
@@ -106,7 +110,7 @@ constexpr static CellTypeDialog::HorizontalAlignment horizontal_alignment_from(G
     return CellTypeDialog::HorizontalAlignment::Right;
 }
 
-void CellTypeDialog::setup_tabs(GUI::TabWidget& tabs, const Vector<Position>& positions, Sheet& sheet)
+void CellTypeDialog::setup_tabs(GUI::TabWidget& tabs, Vector<Position> const& positions, Sheet& sheet)
 {
     g_types.clear();
     for (auto& type_name : CellType::names())
@@ -149,6 +153,8 @@ void CellTypeDialog::setup_tabs(GUI::TabWidget& tabs, const Vector<Position>& po
             }
 
             m_type = CellType::get_by_name(g_types.at(index.row()));
+            if (auto* editor = right_side.find_descendant_of_type_named<GUI::TextEditor>("format_editor"))
+                editor->set_tooltip(m_type->metadata_hint(MetadataName::Format));
         };
 
         {
@@ -175,6 +181,7 @@ void CellTypeDialog::setup_tabs(GUI::TabWidget& tabs, const Vector<Position>& po
             auto& checkbox = right_side.add<GUI::CheckBox>("Override display format");
             auto& editor = right_side.add<GUI::TextEditor>();
             checkbox.set_checked(!m_format.is_empty());
+            editor.set_name("format_editor");
             editor.set_should_hide_unnecessary_scrollbars(true);
             editor.set_enabled(!m_format.is_empty());
             editor.set_text(m_format);
@@ -343,7 +350,7 @@ CellTypeMetadata CellTypeDialog::metadata() const
             metadata.alignment = Gfx::TextAlignment::TopLeft;
             break;
         case HorizontalAlignment::Center:
-            metadata.alignment = Gfx::TextAlignment::Center; // TopCenter?
+            metadata.alignment = Gfx::TextAlignment::TopCenter;
             break;
         case HorizontalAlignment::Right:
             metadata.alignment = Gfx::TextAlignment::TopRight;

@@ -20,8 +20,4 @@ NumberObject::NumberObject(double value, Object& prototype)
 {
 }
 
-NumberObject::~NumberObject()
-{
-}
-
 }

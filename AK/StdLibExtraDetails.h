@@ -10,15 +10,6 @@
 
 namespace AK::Detail {
 
-template<bool B, class T = void>
-struct EnableIf {
-};
-
-template<class T>
-struct EnableIf<true, T> {
-    using Type = T;
-};
-
 template<class T, T v>
 struct IntegralConstant {
     static constexpr T value = v;
@@ -33,6 +24,24 @@ using TrueType = IntegralConstant<bool, true>;
 
 template<class T>
 using AddConst = const T;
+
+template<class T>
+struct __AddConstToReferencedType {
+    using Type = T;
+};
+
+template<class T>
+struct __AddConstToReferencedType<T&> {
+    using Type = AddConst<T>&;
+};
+
+template<class T>
+struct __AddConstToReferencedType<T&&> {
+    using Type = AddConst<T>&&;
+};
+
+template<class T>
+using AddConstToReferencedType = typename __AddConstToReferencedType<T>::Type;
 
 template<class T>
 struct __RemoveConst {
@@ -557,8 +566,42 @@ inline constexpr bool IsSpecializationOf = false;
 template<template<typename...> typename U, typename... Us>
 inline constexpr bool IsSpecializationOf<U<Us...>, U> = true;
 
+template<typename T>
+struct __decay {
+    typedef Detail::RemoveCVReference<T> type;
+};
+template<typename T>
+struct __decay<T[]> {
+    typedef T* type;
+};
+template<typename T, decltype(sizeof(T)) N>
+struct __decay<T[N]> {
+    typedef T* type;
+};
+// FIXME: Function decay
+template<typename T>
+using Decay = typename __decay<T>::type;
+
+template<typename T, typename U>
+inline constexpr bool IsPointerOfType = IsPointer<Decay<U>>&& IsSame<T, RemoveCV<RemovePointer<Decay<U>>>>;
+
+template<typename T, typename U>
+inline constexpr bool IsHashCompatible = false;
+template<typename T>
+inline constexpr bool IsHashCompatible<T, T> = true;
+
+template<typename T, typename... Ts>
+inline constexpr bool IsOneOf = (IsSame<T, Ts> || ...);
+
+template<typename T, typename U>
+inline constexpr bool IsSameIgnoringCV = IsSame<RemoveCV<T>, RemoveCV<U>>;
+
+template<typename T, typename... Ts>
+inline constexpr bool IsOneOfIgnoringCV = (IsSameIgnoringCV<T, Ts> || ...);
+
 }
 using AK::Detail::AddConst;
+using AK::Detail::AddConstToReferencedType;
 using AK::Detail::AddLvalueReference;
 using AK::Detail::AddRvalueReference;
 using AK::Detail::AssertSize;
@@ -567,7 +610,6 @@ using AK::Detail::Conditional;
 using AK::Detail::CopyConst;
 using AK::Detail::declval;
 using AK::Detail::DependentFalse;
-using AK::Detail::EnableIf;
 using AK::Detail::FalseType;
 using AK::Detail::IdentityType;
 using AK::Detail::IndexSequence;
@@ -587,15 +629,19 @@ using AK::Detail::IsEnum;
 using AK::Detail::IsFloatingPoint;
 using AK::Detail::IsFunction;
 using AK::Detail::IsFundamental;
+using AK::Detail::IsHashCompatible;
 using AK::Detail::IsIntegral;
 using AK::Detail::IsLvalueReference;
 using AK::Detail::IsMoveAssignable;
 using AK::Detail::IsMoveConstructible;
 using AK::Detail::IsNullPointer;
+using AK::Detail::IsOneOf;
+using AK::Detail::IsOneOfIgnoringCV;
 using AK::Detail::IsPOD;
 using AK::Detail::IsPointer;
 using AK::Detail::IsRvalueReference;
 using AK::Detail::IsSame;
+using AK::Detail::IsSameIgnoringCV;
 using AK::Detail::IsSigned;
 using AK::Detail::IsSpecializationOf;
 using AK::Detail::IsTrivial;

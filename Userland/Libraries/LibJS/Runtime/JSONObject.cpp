@@ -9,12 +9,14 @@
 #include <AK/JsonObject.h>
 #include <AK/JsonParser.h>
 #include <AK/StringBuilder.h>
+#include <AK/Utf16View.h>
 #include <AK/Utf8View.h>
 #include <LibJS/Runtime/AbstractOperations.h>
 #include <LibJS/Runtime/Array.h>
 #include <LibJS/Runtime/BigIntObject.h>
 #include <LibJS/Runtime/BooleanObject.h>
 #include <LibJS/Runtime/Error.h>
+#include <LibJS/Runtime/FunctionObject.h>
 #include <LibJS/Runtime/GlobalObject.h>
 #include <LibJS/Runtime/JSONObject.h>
 #include <LibJS/Runtime/NumberObject.h>
@@ -38,10 +40,6 @@ void JSONObject::initialize(GlobalObject& global_object)
 
     // 25.5.3 JSON [ @@toStringTag ], https://tc39.es/ecma262/#sec-json-@@tostringtag
     define_direct_property(*vm.well_known_symbol_to_string_tag(), js_string(global_object.heap(), "JSON"), Attribute::Configurable);
-}
-
-JSONObject::~JSONObject()
-{
 }
 
 // 25.5.2 JSON.stringify ( value [ , replacer [ , space ] ] ), https://tc39.es/ecma262/#sec-json.stringify
@@ -124,51 +122,98 @@ JS_DEFINE_NATIVE_FUNCTION(JSONObject::stringify)
 }
 
 // 25.5.2.1 SerializeJSONProperty ( state, key, holder ), https://tc39.es/ecma262/#sec-serializejsonproperty
-ThrowCompletionOr<String> JSONObject::serialize_json_property(GlobalObject& global_object, StringifyState& state, const PropertyKey& key, Object* holder)
+ThrowCompletionOr<String> JSONObject::serialize_json_property(GlobalObject& global_object, StringifyState& state, PropertyKey const& key, Object* holder)
 {
     auto& vm = global_object.vm();
+
+    // 1. Let value be ? Get(holder, key).
     auto value = TRY(holder->get(key));
+
+    // 2. If Type(value) is Object or BigInt, then
     if (value.is_object() || value.is_bigint()) {
-        auto* value_object = TRY(value.to_object(global_object));
-        auto to_json = TRY(value_object->get(vm.names.toJSON));
-        if (to_json.is_function())
-            value = TRY(vm.call(to_json.as_function(), value, js_string(vm, key.to_string())));
+        // a. Let toJSON be ? GetV(value, "toJSON").
+        auto to_json = TRY(value.get(global_object, vm.names.toJSON));
+
+        // b. If IsCallable(toJSON) is true, then
+        if (to_json.is_function()) {
+            // i. Set value to ? Call(toJSON, value, « key »).
+            value = TRY(call(global_object, to_json.as_function(), value, js_string(vm, key.to_string())));
+        }
     }
 
-    if (state.replacer_function)
-        value = TRY(vm.call(*state.replacer_function, holder, js_string(vm, key.to_string()), value));
+    // 3. If state.[[ReplacerFunction]] is not undefined, then
+    if (state.replacer_function) {
+        // a. Set value to ? Call(state.[[ReplacerFunction]], holder, « key, value »).
+        value = TRY(call(global_object, *state.replacer_function, holder, js_string(vm, key.to_string()), value));
+    }
 
+    // 4. If Type(value) is Object, then
     if (value.is_object()) {
         auto& value_object = value.as_object();
-        if (is<NumberObject>(value_object))
+
+        // a. If value has a [[NumberData]] internal slot, then
+        if (is<NumberObject>(value_object)) {
+            // i. Set value to ? ToNumber(value).
             value = TRY(value.to_number(global_object));
-        else if (is<StringObject>(value_object))
+        }
+        // b. Else if value has a [[StringData]] internal slot, then
+        else if (is<StringObject>(value_object)) {
+            // i. Set value to ? ToString(value).
             value = TRY(value.to_primitive_string(global_object));
-        else if (is<BooleanObject>(value_object))
-            value = static_cast<BooleanObject&>(value_object).value_of();
-        else if (is<BigIntObject>(value_object))
-            value = static_cast<BigIntObject&>(value_object).value_of();
+        }
+        // c. Else if value has a [[BooleanData]] internal slot, then
+        else if (is<BooleanObject>(value_object)) {
+            // i. Set value to value.[[BooleanData]].
+            value = Value(static_cast<BooleanObject&>(value_object).boolean());
+        }
+        // d. Else if value has a [[BigIntData]] internal slot, then
+        else if (is<BigIntObject>(value_object)) {
+            // i. Set value to value.[[BigIntData]].
+            value = Value(&static_cast<BigIntObject&>(value_object).bigint());
+        }
     }
 
+    // 5. If value is null, return "null".
     if (value.is_null())
-        return "null";
+        return "null"sv;
+
+    // 6. If value is true, return "true".
+    // 7. If value is false, return "false".
     if (value.is_boolean())
-        return value.as_bool() ? "true" : "false";
+        return value.as_bool() ? "true"sv : "false"sv;
+
+    // 8. If Type(value) is String, return QuoteJSONString(value).
     if (value.is_string())
         return quote_json_string(value.as_string().string());
+
+    // 9. If Type(value) is Number, then
     if (value.is_number()) {
+        // a. If value is finite, return ! ToString(value).
         if (value.is_finite_number())
             return MUST(value.to_string(global_object));
-        return "null";
+
+        // b. Return "null".
+        return "null"sv;
     }
+
+    // 10. If Type(value) is BigInt, throw a TypeError exception.
     if (value.is_bigint())
         return vm.throw_completion<TypeError>(global_object, ErrorType::JsonBigInt);
+
+    // 11. If Type(value) is Object and IsCallable(value) is false, then
     if (value.is_object() && !value.is_function()) {
+        // a. Let isArray be ? IsArray(value).
         auto is_array = TRY(value.is_array(global_object));
+
+        // b. If isArray is true, return ? SerializeJSONArray(state, value).
         if (is_array)
             return serialize_json_array(global_object, state, static_cast<Array&>(value.as_object()));
+
+        // c. Return ? SerializeJSONObject(state, value).
         return serialize_json_object(global_object, state, value.as_object());
     }
+
+    // 12. Return undefined.
     return String {};
 }
 
@@ -184,7 +229,7 @@ ThrowCompletionOr<String> JSONObject::serialize_json_object(GlobalObject& global
     state.indent = String::formatted("{}{}", state.indent, state.gap);
     Vector<String> property_strings;
 
-    auto process_property = [&](const PropertyKey& key) -> ThrowCompletionOr<void> {
+    auto process_property = [&](PropertyKey const& key) -> ThrowCompletionOr<void> {
         if (key.is_symbol())
             return {};
         auto serialized_property_string = TRY(serialize_json_property(global_object, state, key, &object));
@@ -306,7 +351,6 @@ ThrowCompletionOr<String> JSONObject::serialize_json_array(GlobalObject& global_
 // 25.5.2.2 QuoteJSONString ( value ), https://tc39.es/ecma262/#sec-quotejsonstring
 String JSONObject::quote_json_string(String string)
 {
-    // FIXME: Handle UTF16
     StringBuilder builder;
     builder.append('"');
     auto utf_view = Utf8View(string);
@@ -334,7 +378,7 @@ String JSONObject::quote_json_string(String string)
             builder.append("\\\\");
             break;
         default:
-            if (code_point < 0x20) {
+            if (code_point < 0x20 || Utf16View::is_high_surrogate(code_point) || Utf16View::is_low_surrogate(code_point)) {
                 builder.appendff("\\u{:04x}", code_point);
             } else {
                 builder.append_code_point(code_point);
@@ -364,7 +408,7 @@ JS_DEFINE_NATIVE_FUNCTION(JSONObject::parse)
     return unfiltered;
 }
 
-Value JSONObject::parse_json_value(GlobalObject& global_object, const JsonValue& value)
+Value JSONObject::parse_json_value(GlobalObject& global_object, JsonValue const& value)
 {
     if (value.is_object())
         return Value(parse_json_object(global_object, value.as_object()));
@@ -383,21 +427,21 @@ Value JSONObject::parse_json_value(GlobalObject& global_object, const JsonValue&
     VERIFY_NOT_REACHED();
 }
 
-Object* JSONObject::parse_json_object(GlobalObject& global_object, const JsonObject& json_object)
+Object* JSONObject::parse_json_object(GlobalObject& global_object, JsonObject const& json_object)
 {
     auto* object = Object::create(global_object, global_object.object_prototype());
     json_object.for_each_member([&](auto& key, auto& value) {
-        object->define_direct_property(key, parse_json_value(global_object, value), JS::default_attributes);
+        object->define_direct_property(key, parse_json_value(global_object, value), default_attributes);
     });
     return object;
 }
 
-Array* JSONObject::parse_json_array(GlobalObject& global_object, const JsonArray& json_array)
+Array* JSONObject::parse_json_array(GlobalObject& global_object, JsonArray const& json_array)
 {
     auto* array = MUST(Array::create(global_object, 0));
     size_t index = 0;
     json_array.for_each([&](auto& value) {
-        array->define_direct_property(index++, parse_json_value(global_object, value), JS::default_attributes);
+        array->define_direct_property(index++, parse_json_value(global_object, value), default_attributes);
     });
     return array;
 }
@@ -411,7 +455,7 @@ ThrowCompletionOr<Value> JSONObject::internalize_json_property(GlobalObject& glo
         auto is_array = TRY(value.is_array(global_object));
 
         auto& value_object = value.as_object();
-        auto process_property = [&](const PropertyKey& key) -> ThrowCompletionOr<void> {
+        auto process_property = [&](PropertyKey const& key) -> ThrowCompletionOr<void> {
             auto element = TRY(internalize_json_property(global_object, &value_object, key, reviver));
             if (element.is_undefined())
                 TRY(value_object.internal_delete(key));
@@ -426,12 +470,12 @@ ThrowCompletionOr<Value> JSONObject::internalize_json_property(GlobalObject& glo
                 TRY(process_property(i));
         } else {
             auto property_list = TRY(value_object.enumerable_own_property_names(Object::PropertyKind::Key));
-            for (auto& property_name : property_list)
-                TRY(process_property(property_name.as_string().string()));
+            for (auto& property_key : property_list)
+                TRY(process_property(property_key.as_string().string()));
         }
     }
 
-    return TRY(vm.call(reviver, Value(holder), js_string(vm, name.to_string()), value));
+    return TRY(call(global_object, reviver, holder, js_string(vm, name.to_string()), value));
 }
 
 }

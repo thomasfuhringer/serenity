@@ -6,13 +6,15 @@
 
 #include <LibCore/ArgsParser.h>
 #include <LibCore/DateTime.h>
+#include <LibCore/System.h>
+#include <LibMain/Main.h>
 #include <stdio.h>
 #include <string.h>
 #include <time.h>
 
-const int line_width = 70;
-const int line_count = 8;
-const int column_width = 22;
+int const line_width = 70;
+int const line_count = 8;
+int const column_width = 22;
 
 char print_buffer[line_width * line_count];
 char temp_buffer[line_width * 8];
@@ -86,8 +88,12 @@ static void clean_buffers()
     temp_buffer[line_width - 1] = '\0';
 }
 
-int main(int argc, char** argv)
+ErrorOr<int> serenity_main(Main::Arguments arguments)
 {
+    TRY(Core::System::pledge("stdio rpath"));
+    TRY(Core::System::unveil("/etc/timezone", "r"));
+    TRY(Core::System::unveil(nullptr, nullptr));
+
     int day = 0;
     int month = 0;
     int year = 0;
@@ -98,7 +104,7 @@ int main(int argc, char** argv)
     args_parser.add_positional_argument(day, "Day of year", "day", Core::ArgsParser::Required::No);
     args_parser.add_positional_argument(month, "Month", "month", Core::ArgsParser::Required::No);
     args_parser.add_positional_argument(year, "Year", "year", Core::ArgsParser::Required::No);
-    args_parser.parse(argc, argv);
+    args_parser.parse(arguments);
 
     time_t now = time(nullptr);
     auto* tm = localtime(&now);

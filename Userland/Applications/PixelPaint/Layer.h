@@ -1,5 +1,7 @@
 /*
  * Copyright (c) 2020-2021, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2022, the SerenityOS developers.
+ * Copyright (c) 2022, Tobias Christiansen <tobyase@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -11,6 +13,7 @@
 #include <AK/String.h>
 #include <AK/Weakable.h>
 #include <LibGfx/Bitmap.h>
+#include <LibGfx/Painter.h>
 
 namespace PixelPaint {
 
@@ -29,14 +32,21 @@ public:
     static ErrorOr<NonnullRefPtr<Layer>> try_create_with_bitmap(Image&, NonnullRefPtr<Gfx::Bitmap>, String name);
     static ErrorOr<NonnullRefPtr<Layer>> try_create_snapshot(Image&, Layer const&);
 
-    ~Layer() { }
+    ~Layer() = default;
 
     Gfx::IntPoint const& location() const { return m_location; }
     void set_location(Gfx::IntPoint const& location) { m_location = location; }
 
-    Gfx::Bitmap const& bitmap() const { return *m_bitmap; }
-    Gfx::Bitmap& bitmap() { return *m_bitmap; }
-    Gfx::IntSize size() const { return bitmap().size(); }
+    Gfx::Bitmap const& display_bitmap() const { return m_cached_display_bitmap; }
+    Gfx::Bitmap const& content_bitmap() const { return m_content_bitmap; }
+    Gfx::Bitmap& content_bitmap() { return m_content_bitmap; }
+
+    Gfx::Bitmap const* mask_bitmap() const { return m_mask_bitmap; }
+    Gfx::Bitmap* mask_bitmap() { return m_mask_bitmap; }
+
+    void create_mask();
+
+    Gfx::IntSize size() const { return content_bitmap().size(); }
 
     Gfx::IntRect relative_rect() const { return { location(), size() }; }
     Gfx::IntRect rect() const { return { {}, size() }; }
@@ -44,7 +54,14 @@ public:
     String const& name() const { return m_name; }
     void set_name(String);
 
-    void set_bitmap(NonnullRefPtr<Gfx::Bitmap> bitmap) { m_bitmap = move(bitmap); }
+    void flip(Gfx::Orientation orientation);
+    void rotate(Gfx::RotationDirection direction);
+    void crop(Gfx::IntRect const& rect);
+    void resize(Gfx::IntSize const& new_size, Gfx::Painter::ScalingMode scaling_mode);
+    void resize(Gfx::IntRect const& new_rect, Gfx::Painter::ScalingMode scaling_mode);
+    void resize(Gfx::IntSize const& new_size, Gfx::IntPoint const& new_location, Gfx::Painter::ScalingMode scaling_mode);
+
+    ErrorOr<void> try_set_bitmaps(NonnullRefPtr<Gfx::Bitmap> content, RefPtr<Gfx::Bitmap> mask);
 
     void did_modify_bitmap(Gfx::IntRect const& = {});
 
@@ -61,6 +78,20 @@ public:
 
     Image const& image() const { return m_image; }
 
+    void erase_selection(Selection const&);
+
+    bool is_masked() const { return !m_mask_bitmap.is_null(); }
+
+    enum class EditMode {
+        Content,
+        Mask,
+    };
+
+    EditMode edit_mode() { return m_edit_mode; }
+    void set_edit_mode(EditMode mode);
+
+    Gfx::Bitmap& currently_edited_bitmap();
+
 private:
     Layer(Image&, NonnullRefPtr<Gfx::Bitmap>, String name);
 
@@ -68,12 +99,18 @@ private:
 
     String m_name;
     Gfx::IntPoint m_location;
-    NonnullRefPtr<Gfx::Bitmap> m_bitmap;
+    NonnullRefPtr<Gfx::Bitmap> m_content_bitmap;
+    RefPtr<Gfx::Bitmap> m_mask_bitmap { nullptr };
+    NonnullRefPtr<Gfx::Bitmap> m_cached_display_bitmap;
 
     bool m_selected { false };
     bool m_visible { true };
 
     int m_opacity_percent { 100 };
+
+    EditMode m_edit_mode { EditMode::Content };
+
+    void update_cached_bitmap();
 };
 
 }

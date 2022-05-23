@@ -12,21 +12,21 @@ namespace Kernel {
 ErrorOr<FlatPtr> Process::sys$getpid()
 {
     VERIFY_NO_PROCESS_BIG_LOCK(this)
-    REQUIRE_PROMISE(stdio);
+    TRY(require_promise(Pledge::stdio));
     return pid().value();
 }
 
 ErrorOr<FlatPtr> Process::sys$getppid()
 {
     VERIFY_PROCESS_BIG_LOCK_ACQUIRED(this)
-    REQUIRE_PROMISE(stdio);
+    TRY(require_promise(Pledge::stdio));
     return m_protected_values.ppid.value();
 }
 
 ErrorOr<FlatPtr> Process::sys$get_process_name(Userspace<char*> buffer, size_t buffer_size)
 {
     VERIFY_PROCESS_BIG_LOCK_ACQUIRED(this)
-    REQUIRE_PROMISE(stdio);
+    TRY(require_promise(Pledge::stdio));
     if (m_name->length() + 1 > buffer_size)
         return ENAMETOOLONG;
 
@@ -34,10 +34,10 @@ ErrorOr<FlatPtr> Process::sys$get_process_name(Userspace<char*> buffer, size_t b
     return 0;
 }
 
-ErrorOr<FlatPtr> Process::sys$set_process_name(Userspace<const char*> user_name, size_t user_name_length)
+ErrorOr<FlatPtr> Process::sys$set_process_name(Userspace<char const*> user_name, size_t user_name_length)
 {
     VERIFY_PROCESS_BIG_LOCK_ACQUIRED(this)
-    REQUIRE_PROMISE(proc);
+    TRY(require_promise(Pledge::proc));
     if (user_name_length > 256)
         return ENAMETOOLONG;
     auto name = TRY(try_copy_kstring_from_user(user_name, user_name_length));
@@ -48,9 +48,9 @@ ErrorOr<FlatPtr> Process::sys$set_process_name(Userspace<const char*> user_name,
     return 0;
 }
 
-ErrorOr<FlatPtr> Process::sys$set_coredump_metadata(Userspace<const Syscall::SC_set_coredump_metadata_params*> user_params)
+ErrorOr<FlatPtr> Process::sys$set_coredump_metadata(Userspace<Syscall::SC_set_coredump_metadata_params const*> user_params)
 {
-    VERIFY_PROCESS_BIG_LOCK_ACQUIRED(this)
+    VERIFY_NO_PROCESS_BIG_LOCK(this)
     auto params = TRY(copy_typed_from_user(user_params));
 
     if (params.key.length == 0 || params.key.length > 16 * KiB)

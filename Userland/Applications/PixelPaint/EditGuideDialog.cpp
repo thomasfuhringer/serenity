@@ -59,24 +59,24 @@ EditGuideDialog::EditGuideDialog(GUI::Window* parent_window, String const& offse
         } else if (m_is_horizontal_checked) {
             m_orientation = Guide::Orientation::Horizontal;
         } else {
-            done(ExecResult::ExecAborted);
+            done(ExecResult::Aborted);
             return;
         }
 
         if (m_offset_text_box->text().is_empty())
-            done(ExecResult::ExecAborted);
+            done(ExecResult::Aborted);
 
         m_offset = m_offset_text_box->text();
 
-        done(ExecResult::ExecOK);
+        done(ExecResult::OK);
     };
 
     cancel_button->on_click = [this](auto) {
-        done(ExecResult::ExecCancel);
+        done(ExecResult::Cancel);
     };
 }
 
-Optional<float> EditGuideDialog::offset_as_pixel(const ImageEditor& editor)
+Optional<float> EditGuideDialog::offset_as_pixel(ImageEditor const& editor)
 {
     float offset = 0;
     if (m_offset.ends_with('%')) {

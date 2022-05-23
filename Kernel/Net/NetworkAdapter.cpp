@@ -4,7 +4,6 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-#include <AK/StringBuilder.h>
 #include <Kernel/Arch/x86/InterruptDisabler.h>
 #include <Kernel/Heap/kmalloc.h>
 #include <Kernel/Net/EtherType.h>
@@ -20,9 +19,7 @@ NetworkAdapter::NetworkAdapter(NonnullOwnPtr<KString> interface_name)
 {
 }
 
-NetworkAdapter::~NetworkAdapter()
-{
-}
+NetworkAdapter::~NetworkAdapter() = default;
 
 void NetworkAdapter::send_packet(ReadonlyBytes packet)
 {
@@ -31,20 +28,20 @@ void NetworkAdapter::send_packet(ReadonlyBytes packet)
     send_raw(packet);
 }
 
-void NetworkAdapter::send(const MACAddress& destination, const ARPPacket& packet)
+void NetworkAdapter::send(MACAddress const& destination, ARPPacket const& packet)
 {
     size_t size_in_bytes = sizeof(EthernetFrameHeader) + sizeof(ARPPacket);
     auto buffer_result = NetworkByteBuffer::create_zeroed(size_in_bytes);
-    if (!buffer_result.has_value()) {
+    if (buffer_result.is_error()) {
         dbgln("Dropping ARP packet targeted at {} as there is not enough memory to buffer it", packet.target_hardware_address().to_string());
         return;
     }
-    auto* eth = (EthernetFrameHeader*)buffer_result->data();
+    auto* eth = (EthernetFrameHeader*)buffer_result.value().data();
     eth->set_source(mac_address());
     eth->set_destination(destination);
     eth->set_ether_type(EtherType::ARP);
     memcpy(eth->payload(), &packet, sizeof(ARPPacket));
-    send_packet({ (const u8*)eth, size_in_bytes });
+    send_packet({ (u8 const*)eth, size_in_bytes });
 }
 
 void NetworkAdapter::fill_in_ipv4_header(PacketWithTimestamp& packet, IPv4Address const& source_ipv4, MACAddress const& destination_mac, IPv4Address const& destination_ipv4, IPv4Protocol protocol, size_t payload_size, u8 type_of_service, u8 ttl)
@@ -152,19 +149,14 @@ void NetworkAdapter::release_packet_buffer(PacketWithTimestamp& packet)
     m_unused_packets.append(packet);
 }
 
-void NetworkAdapter::set_ipv4_address(const IPv4Address& address)
+void NetworkAdapter::set_ipv4_address(IPv4Address const& address)
 {
     m_ipv4_address = address;
 }
 
-void NetworkAdapter::set_ipv4_netmask(const IPv4Address& netmask)
+void NetworkAdapter::set_ipv4_netmask(IPv4Address const& netmask)
 {
     m_ipv4_netmask = netmask;
-}
-
-void NetworkAdapter::set_ipv4_gateway(const IPv4Address& gateway)
-{
-    m_ipv4_gateway = gateway;
 }
 
 }

@@ -30,6 +30,7 @@ enum I8042Command : u8 {
     DisableFirstPS2Port = 0xAD,
     EnableFirstPS2Port = 0xAE,
     WriteSecondPS2PortInputBuffer = 0xD4,
+    SetScanCodeSet = 0xF0,
     GetDeviceID = 0xF2,
     SetSampleRate = 0xF3,
     EnablePacketStreaming = 0xF4,
@@ -71,7 +72,7 @@ public:
     virtual void irq_handle_byte_read(u8 byte) = 0;
 
 protected:
-    explicit I8042Device(const I8042Controller& ps2_controller)
+    explicit I8042Device(I8042Controller const& ps2_controller)
         : m_i8042_controller(ps2_controller)
     {
     }
@@ -81,6 +82,7 @@ protected:
 
 class PS2KeyboardDevice;
 class PS2MouseDevice;
+class HIDManagement;
 class I8042Controller : public RefCounted<I8042Controller> {
     friend class PS2KeyboardDevice;
     friend class PS2MouseDevice;
@@ -88,61 +90,68 @@ class I8042Controller : public RefCounted<I8042Controller> {
 public:
     static NonnullRefPtr<I8042Controller> initialize();
 
-    void detect_devices();
+    ErrorOr<void> detect_devices();
 
-    bool reset_device(HIDDevice::Type device)
+    ErrorOr<void> reset_device(HIDDevice::Type device)
     {
         SpinlockLocker lock(m_lock);
         return do_reset_device(device);
     }
 
-    u8 send_command(HIDDevice::Type device, u8 command)
+    ErrorOr<u8> send_command(HIDDevice::Type device, u8 command)
     {
         SpinlockLocker lock(m_lock);
         return do_send_command(device, command);
     }
-    u8 send_command(HIDDevice::Type device, u8 command, u8 data)
+    ErrorOr<u8> send_command(HIDDevice::Type device, u8 command, u8 data)
     {
         SpinlockLocker lock(m_lock);
         return do_send_command(device, command, data);
     }
 
-    u8 read_from_device(HIDDevice::Type device)
+    ErrorOr<u8> read_from_device(HIDDevice::Type device)
     {
         SpinlockLocker lock(m_lock);
         return do_read_from_device(device);
     }
 
-    void wait_then_write(u8 port, u8 data)
+    ErrorOr<void> wait_then_write(u8 port, u8 data)
     {
         SpinlockLocker lock(m_lock);
-        do_wait_then_write(port, data);
+        return do_wait_then_write(port, data);
     }
 
-    u8 wait_then_read(u8 port)
+    ErrorOr<u8> wait_then_read(u8 port)
     {
         SpinlockLocker lock(m_lock);
         return do_wait_then_read(port);
     }
 
-    void prepare_for_output();
-    void prepare_for_input(HIDDevice::Type);
+    ErrorOr<void> prepare_for_output();
+    ErrorOr<void> prepare_for_input(HIDDevice::Type);
 
     bool irq_process_input_buffer(HIDDevice::Type);
 
     RefPtr<MouseDevice> mouse() const;
     RefPtr<KeyboardDevice> keyboard() const;
 
+    // Note: This function exists only for the initialization process of the controller
+    bool check_existence_via_probing(Badge<HIDManagement>);
+
 private:
     I8042Controller();
-    bool do_reset_device(HIDDevice::Type);
-    u8 do_send_command(HIDDevice::Type type, u8 data);
-    u8 do_send_command(HIDDevice::Type device, u8 command, u8 data);
-    u8 do_write_to_device(HIDDevice::Type device, u8 data);
-    u8 do_read_from_device(HIDDevice::Type device);
-    void do_wait_then_write(u8 port, u8 data);
-    u8 do_wait_then_read(u8 port);
-    void drain_output_buffer();
+    ErrorOr<void> do_reset_device(HIDDevice::Type);
+    ErrorOr<u8> do_send_command(HIDDevice::Type type, u8 data);
+    ErrorOr<u8> do_send_command(HIDDevice::Type device, u8 command, u8 data);
+    ErrorOr<u8> do_write_to_device(HIDDevice::Type device, u8 data);
+    ErrorOr<u8> do_read_from_device(HIDDevice::Type device);
+    ErrorOr<void> do_wait_then_write(u8 port, u8 data);
+    ErrorOr<u8> do_wait_then_read(u8 port);
+    ErrorOr<void> drain_output_buffer();
+
+    // Note: These functions exist only for the initialization process of the controller
+    void do_write(u8 port, u8 data);
+    u8 do_read(u8 port);
 
     Spinlock m_lock;
     bool m_first_port_available { false };

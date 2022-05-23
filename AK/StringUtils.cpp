@@ -9,11 +9,14 @@
 #include <AK/MemMem.h>
 #include <AK/Memory.h>
 #include <AK/Optional.h>
-#include <AK/String.h>
 #include <AK/StringBuilder.h>
 #include <AK/StringUtils.h>
 #include <AK/StringView.h>
 #include <AK/Vector.h>
+
+#ifndef KERNEL
+#    include <AK/String.h>
+#endif
 
 namespace AK {
 
@@ -34,11 +37,11 @@ bool matches(StringView str, StringView mask, CaseSensitivity case_sensitivity, 
         return true;
     }
 
-    const char* string_ptr = str.characters_without_null_termination();
-    const char* string_start = str.characters_without_null_termination();
-    const char* string_end = string_ptr + str.length();
-    const char* mask_ptr = mask.characters_without_null_termination();
-    const char* mask_end = mask_ptr + mask.length();
+    char const* string_ptr = str.characters_without_null_termination();
+    char const* string_start = str.characters_without_null_termination();
+    char const* string_end = string_ptr + str.length();
+    char const* mask_ptr = mask.characters_without_null_termination();
+    char const* mask_end = mask_ptr + mask.length();
 
     while (string_ptr < string_end && mask_ptr < mask_end) {
         auto string_start_ptr = string_ptr;
@@ -89,7 +92,7 @@ Optional<T> convert_to_int(StringView str, TrimWhitespace trim_whitespace)
 
     T sign = 1;
     size_t i = 0;
-    const auto characters = string.characters_without_null_termination();
+    auto const characters = string.characters_without_null_termination();
 
     if (characters[0] == '-' || characters[0] == '+') {
         if (string.length() == 1)
@@ -129,7 +132,7 @@ Optional<T> convert_to_uint(StringView str, TrimWhitespace trim_whitespace)
         return {};
 
     T value = 0;
-    const auto characters = string.characters_without_null_termination();
+    auto const characters = string.characters_without_null_termination();
 
     for (size_t i = 0; i < string.length(); i++) {
         if (characters[i] < '0' || characters[i] > '9')
@@ -162,7 +165,7 @@ Optional<T> convert_to_uint_from_hex(StringView str, TrimWhitespace trim_whitesp
         return {};
 
     T value = 0;
-    const auto count = string.length();
+    auto const count = string.length();
     const T upper_bound = NumericLimits<T>::max();
 
     for (size_t i = 0; i < count; i++) {
@@ -190,6 +193,41 @@ template Optional<u8> convert_to_uint_from_hex(StringView str, TrimWhitespace);
 template Optional<u16> convert_to_uint_from_hex(StringView str, TrimWhitespace);
 template Optional<u32> convert_to_uint_from_hex(StringView str, TrimWhitespace);
 template Optional<u64> convert_to_uint_from_hex(StringView str, TrimWhitespace);
+
+template<typename T>
+Optional<T> convert_to_uint_from_octal(StringView str, TrimWhitespace trim_whitespace)
+{
+    auto string = trim_whitespace == TrimWhitespace::Yes
+        ? str.trim_whitespace()
+        : str;
+    if (string.is_empty())
+        return {};
+
+    T value = 0;
+    auto const count = string.length();
+    const T upper_bound = NumericLimits<T>::max();
+
+    for (size_t i = 0; i < count; i++) {
+        char digit = string[i];
+        u8 digit_val;
+        if (value > (upper_bound >> 3))
+            return {};
+
+        if (digit >= '0' && digit <= '7') {
+            digit_val = digit - '0';
+        } else {
+            return {};
+        }
+
+        value = (value << 3) + digit_val;
+    }
+    return value;
+}
+
+template Optional<u8> convert_to_uint_from_octal(StringView str, TrimWhitespace);
+template Optional<u16> convert_to_uint_from_octal(StringView str, TrimWhitespace);
+template Optional<u32> convert_to_uint_from_octal(StringView str, TrimWhitespace);
+template Optional<u64> convert_to_uint_from_octal(StringView str, TrimWhitespace);
 
 bool equals_ignoring_case(StringView a, StringView b)
 {
@@ -267,7 +305,8 @@ bool contains(StringView str, StringView needle, CaseSensitivity case_sensitivit
             continue;
         for (size_t ni = 0; si + ni < str.length(); ni++) {
             if (to_ascii_lowercase(str_chars[si + ni]) != to_ascii_lowercase(needle_chars[ni])) {
-                si += ni;
+                if (ni > 0)
+                    si += ni - 1;
                 break;
             }
             if (ni + 1 == needle.length())
@@ -380,6 +419,7 @@ Optional<size_t> find_any_of(StringView haystack, StringView needles, SearchDire
     return {};
 }
 
+#ifndef KERNEL
 String to_snakecase(StringView str)
 {
     auto should_insert_underscore = [&](auto i, auto current_char) {
@@ -449,6 +489,7 @@ String replace(StringView str, StringView needle, StringView replacement, bool a
     replaced_string.append(str.substring_view(last_position, str.length() - last_position));
     return replaced_string.build();
 }
+#endif
 
 // TODO: Benchmark against KMP (AK/MemMem.h) and switch over if it's faster for short strings too
 size_t count(StringView str, StringView needle)

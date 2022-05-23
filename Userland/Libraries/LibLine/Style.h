@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2020, the SerenityOS developers.
+ * Copyright (c) 2020-2022, the SerenityOS developers.
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -15,7 +15,7 @@ namespace Line {
 
 class Style {
 public:
-    bool operator==(const Style&) const = default;
+    bool operator==(Style const&) const = default;
 
     enum class XtermColor : int {
         Default = 9,
@@ -39,7 +39,7 @@ public:
     struct ItalicTag {
     };
     struct Color {
-        bool operator==(const Color&) const = default;
+        bool operator==(Color const&) const = default;
 
         explicit Color(XtermColor color)
             : m_xterm_color(color)
@@ -88,7 +88,7 @@ public:
     };
 
     struct Hyperlink {
-        bool operator==(const Hyperlink&) const = default;
+        bool operator==(Hyperlink const&) const = default;
 
         explicit Hyperlink(StringView link)
             : m_link(link)
@@ -96,7 +96,7 @@ public:
             m_has_link = true;
         }
 
-        Hyperlink() { }
+        Hyperlink() = default;
 
         String to_vt_escape(bool starting) const;
 
@@ -113,27 +113,27 @@ public:
 
     // Prepare for the horror of templates.
     template<typename T, typename... Rest>
-    Style(const T& style_arg, Rest... rest)
+    Style(T const& style_arg, Rest... rest)
         : Style(rest...)
     {
         set(style_arg);
         m_is_empty = false;
     }
-    Style() { }
+    Style() = default;
 
     static Style reset_style()
     {
         return { Foreground(XtermColor::Default), Background(XtermColor::Default), Hyperlink("") };
     }
 
-    Style unified_with(const Style& other, bool prefer_other = true) const
+    Style unified_with(Style const& other, bool prefer_other = true) const
     {
         Style style = *this;
         style.unify_with(other, prefer_other);
         return style;
     }
 
-    void unify_with(const Style&, bool prefer_other = false);
+    void unify_with(Style const&, bool prefer_other = false);
 
     bool underline() const { return m_underline; }
     bool bold() const { return m_bold; }
@@ -142,13 +142,13 @@ public:
     Foreground foreground() const { return m_foreground; }
     Hyperlink hyperlink() const { return m_hyperlink; }
 
-    void set(const ItalicTag&) { m_italic = true; }
-    void set(const BoldTag&) { m_bold = true; }
-    void set(const UnderlineTag&) { m_underline = true; }
-    void set(const Background& bg) { m_background = bg; }
-    void set(const Foreground& fg) { m_foreground = fg; }
-    void set(const Hyperlink& link) { m_hyperlink = link; }
-    void set(const AnchoredTag&) { m_is_anchored = true; }
+    void set(ItalicTag const&) { m_italic = true; }
+    void set(BoldTag const&) { m_bold = true; }
+    void set(UnderlineTag const&) { m_underline = true; }
+    void set(Background const& bg) { m_background = bg; }
+    void set(Foreground const& fg) { m_foreground = fg; }
+    void set(Hyperlink const& link) { m_hyperlink = link; }
+    void set(AnchoredTag const&) { m_is_anchored = true; }
 
     bool is_anchored() const { return m_is_anchored; }
     bool is_empty() const { return m_is_empty; }

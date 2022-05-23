@@ -8,14 +8,12 @@
 
 namespace Web::HTML {
 
-HTMLAreaElement::HTMLAreaElement(DOM::Document& document, QualifiedName qualified_name)
+HTMLAreaElement::HTMLAreaElement(DOM::Document& document, DOM::QualifiedName qualified_name)
     : HTMLElement(document, move(qualified_name))
 {
 }
 
-HTMLAreaElement::~HTMLAreaElement()
-{
-}
+HTMLAreaElement::~HTMLAreaElement() = default;
 
 void HTMLAreaElement::parse_attribute(FlyString const& name, String const& value)
 {

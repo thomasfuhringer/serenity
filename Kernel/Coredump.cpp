@@ -48,9 +48,12 @@ Coredump::Coredump(NonnullRefPtr<Process> process, NonnullRefPtr<OpenFileDescrip
     m_num_program_headers = 0;
     for ([[maybe_unused]] auto& region : m_process->address_space().regions()) {
 #if !INCLUDE_USERSPACE_HEAP_MEMORY_IN_COREDUMPS
-        if (looks_like_userspace_heap_region(*region))
+        if (looks_like_userspace_heap_region(region))
             continue;
 #endif
+
+        if (region.access() == Memory::Region::Access::None)
+            continue;
         ++m_num_program_headers;
     }
     ++m_num_program_headers; // +1 for NOTE segment
@@ -124,25 +127,28 @@ ErrorOr<void> Coredump::write_program_headers(size_t notes_size)
     for (auto& region : m_process->address_space().regions()) {
 
 #if !INCLUDE_USERSPACE_HEAP_MEMORY_IN_COREDUMPS
-        if (looks_like_userspace_heap_region(*region))
+        if (looks_like_userspace_heap_region(region))
             continue;
 #endif
+
+        if (region.access() == Memory::Region::Access::None)
+            continue;
 
         ElfW(Phdr) phdr {};
 
         phdr.p_type = PT_LOAD;
         phdr.p_offset = offset;
-        phdr.p_vaddr = region->vaddr().get();
+        phdr.p_vaddr = region.vaddr().get();
         phdr.p_paddr = 0;
 
-        phdr.p_filesz = region->page_count() * PAGE_SIZE;
-        phdr.p_memsz = region->page_count() * PAGE_SIZE;
+        phdr.p_filesz = region.page_count() * PAGE_SIZE;
+        phdr.p_memsz = region.page_count() * PAGE_SIZE;
         phdr.p_align = 0;
 
-        phdr.p_flags = region->is_readable() ? PF_R : 0;
-        if (region->is_writable())
+        phdr.p_flags = region.is_readable() ? PF_R : 0;
+        if (region.is_writable())
             phdr.p_flags |= PF_W;
-        if (region->is_executable())
+        if (region.is_executable())
             phdr.p_flags |= PF_X;
 
         offset += phdr.p_filesz;
@@ -170,21 +176,28 @@ ErrorOr<void> Coredump::write_regions()
     u8 zero_buffer[PAGE_SIZE] = {};
 
     for (auto& region : m_process->address_space().regions()) {
-        VERIFY(!region->is_kernel());
+        VERIFY(!region.is_kernel());
 
 #if !INCLUDE_USERSPACE_HEAP_MEMORY_IN_COREDUMPS
-        if (looks_like_userspace_heap_region(*region))
+        if (looks_like_userspace_heap_region(region))
             continue;
 #endif
 
-        region->set_readable(true);
-        region->remap();
+        if (region.access() == Memory::Region::Access::None)
+            continue;
 
-        for (size_t i = 0; i < region->page_count(); i++) {
-            auto* page = region->physical_page(i);
+        // If we crashed in the middle of mapping in Regions, they do not have a page directory yet, and will crash on a remap() call
+        if (!region.is_mapped())
+            continue;
+
+        region.set_readable(true);
+        region.remap();
+
+        for (size_t i = 0; i < region.page_count(); i++) {
+            auto const* page = region.physical_page(i);
             auto src_buffer = [&]() -> ErrorOr<UserOrKernelBuffer> {
                 if (page)
-                    return UserOrKernelBuffer::for_user_buffer(reinterpret_cast<uint8_t*>((region->vaddr().as_ptr() + (i * PAGE_SIZE))), PAGE_SIZE);
+                    return UserOrKernelBuffer::for_user_buffer(reinterpret_cast<uint8_t*>((region.vaddr().as_ptr() + (i * PAGE_SIZE))), PAGE_SIZE);
                 // If the current page is not backed by a physical page, we zero it in the coredump file.
                 return UserOrKernelBuffer::for_kernel_buffer(zero_buffer);
             }();
@@ -207,22 +220,26 @@ ErrorOr<void> Coredump::create_notes_process_data(auto& builder) const
     TRY(builder.append_bytes(ReadonlyBytes { (void*)&info, sizeof(info) }));
 
     {
-        JsonObjectSerializer process_obj { builder };
-        process_obj.add("pid"sv, m_process->pid().value());
-        process_obj.add("termination_signal"sv, m_process->termination_signal());
-        process_obj.add("executable_path"sv, m_process->executable() ? m_process->executable()->absolute_path() : String::empty());
+        auto process_obj = TRY(JsonObjectSerializer<>::try_create(builder));
+        TRY(process_obj.add("pid"sv, m_process->pid().value()));
+        TRY(process_obj.add("termination_signal"sv, m_process->termination_signal()));
+        TRY(process_obj.add("executable_path"sv, m_process->executable() ? TRY(m_process->executable()->try_serialize_absolute_path())->view() : ""sv));
 
         {
-            auto arguments_array = process_obj.add_array("arguments"sv);
-            for (auto& argument : m_process->arguments())
-                arguments_array.add(argument.view());
+            auto arguments_array = TRY(process_obj.add_array("arguments"sv));
+            for (auto const& argument : m_process->arguments())
+                TRY(arguments_array.add(argument.view()));
+            TRY(arguments_array.finish());
         }
 
         {
-            auto environment_array = process_obj.add_array("environment"sv);
-            for (auto& variable : m_process->environment())
-                environment_array.add(variable.view());
+            auto environment_array = TRY(process_obj.add_array("environment"sv));
+            for (auto const& variable : m_process->environment())
+                TRY(environment_array.add(variable.view()));
+            TRY(environment_array.finish());
         }
+
+        TRY(process_obj.finish());
     }
 
     TRY(builder.append('\0'));
@@ -231,7 +248,7 @@ ErrorOr<void> Coredump::create_notes_process_data(auto& builder) const
 
 ErrorOr<void> Coredump::create_notes_threads_data(auto& builder) const
 {
-    for (auto& thread : m_process->threads_for_coredump({})) {
+    for (auto const& thread : m_process->threads_for_coredump({})) {
         ELF::Core::ThreadInfo info {};
         info.header.type = ELF::Core::NotesEntryHeader::Type::ThreadInfo;
         info.tid = thread.tid().value();
@@ -247,24 +264,27 @@ ErrorOr<void> Coredump::create_notes_threads_data(auto& builder) const
 ErrorOr<void> Coredump::create_notes_regions_data(auto& builder) const
 {
     size_t region_index = 0;
-    for (auto& region : m_process->address_space().regions()) {
+    for (auto const& region : m_process->address_space().regions()) {
 
 #if !INCLUDE_USERSPACE_HEAP_MEMORY_IN_COREDUMPS
-        if (looks_like_userspace_heap_region(*region))
+        if (looks_like_userspace_heap_region(region))
             continue;
 #endif
+
+        if (region.access() == Memory::Region::Access::None)
+            continue;
 
         ELF::Core::MemoryRegionInfo info {};
         info.header.type = ELF::Core::NotesEntryHeader::Type::MemoryRegionInfo;
 
-        info.region_start = region->vaddr().get();
-        info.region_end = region->vaddr().offset(region->size()).get();
+        info.region_start = region.vaddr().get();
+        info.region_end = region.vaddr().offset(region.size()).get();
         info.program_header_index = region_index++;
 
         TRY(builder.append_bytes(ReadonlyBytes { (void*)&info, sizeof(info) }));
 
         // NOTE: The region name *is* null-terminated, so the following is ok:
-        auto name = region->name();
+        auto name = region.name();
         if (name.is_empty())
             TRY(builder.append('\0'));
         else
@@ -280,10 +300,12 @@ ErrorOr<void> Coredump::create_notes_metadata_data(auto& builder) const
     TRY(builder.append_bytes(ReadonlyBytes { (void*)&metadata, sizeof(metadata) }));
 
     {
-        JsonObjectSerializer metadata_obj { builder };
-        m_process->for_each_coredump_property([&](auto& key, auto& value) {
-            metadata_obj.add(key.view(), value.view());
-        });
+        auto metadata_obj = TRY(JsonObjectSerializer<>::try_create(builder));
+        TRY(m_process->for_each_coredump_property([&](auto& key, auto& value) -> ErrorOr<void> {
+            TRY(metadata_obj.add(key.view(), value.view()));
+            return {};
+        }));
+        TRY(metadata_obj.finish());
     }
     TRY(builder.append('\0'));
     return {};

@@ -1,6 +1,5 @@
 @GUI::Widget {
     fill_with_background_color: true
-
     layout: @GUI::VerticalBoxLayout {
         margins: [10]
         spacing: 5
@@ -10,7 +9,6 @@
         title: "Bell Mode"
         shrink_to_fit: false
         fixed_height: 160
-
         layout: @GUI::VerticalBoxLayout {
             margins: [16, 8, 8]
             spacing: 16
@@ -23,7 +21,6 @@
 
         @GUI::Widget {
             shrink_to_fit: true
-
             layout: @GUI::VerticalBoxLayout {
                 spacing: 4
             }
@@ -48,9 +45,13 @@
     @GUI::GroupBox {
         title: "Scrollback Size (Lines)"
         shrink_to_fit: true
-
         layout: @GUI::VerticalBoxLayout {
             margins: [16, 8, 8]
+        }
+
+        @GUI::CheckBox {
+            name: "terminal_show_scrollbar"
+            text: "Show scrollbar"
         }
 
         @GUI::SpinBox {
@@ -58,6 +59,19 @@
             min: 0
             max: 40960
             orientation: "Horizontal"
+        }
+    }
+
+    @GUI::GroupBox {
+        title: "Exit Behaviour"
+        shrink_to_fit: true
+        layout: @GUI::VerticalBoxLayout {
+            margins: [16, 8, 8]
+        }
+
+        @GUI::CheckBox {
+            name: "terminal_confirm_close"
+            text: "Ask before closing if processes are running in the terminal"
         }
     }
 }

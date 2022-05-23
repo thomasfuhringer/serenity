@@ -16,6 +16,7 @@ namespace Web::CSS {
 
 class StyleSheetList
     : public RefCounted<StyleSheetList>
+    , public Weakable<StyleSheetList>
     , public Bindings::Wrappable {
 public:
     using WrapperType = Bindings::StyleSheetListWrapper;
@@ -41,6 +42,9 @@ public:
     size_t length() const { return m_sheets.size(); }
 
     bool is_supported_property_index(u32) const;
+
+    DOM::Document& document() { return m_document; }
+    DOM::Document const& document() const { return m_document; }
 
 private:
     explicit StyleSheetList(DOM::Document&);

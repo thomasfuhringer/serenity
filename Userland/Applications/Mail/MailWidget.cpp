@@ -1,5 +1,7 @@
 /*
  * Copyright (c) 2021, Luke Wilde <lukew@serenityos.org>
+ * Copyright (c) 2021, Undefine <cqundefine@gmail.com>
+ * Copyright (c) 2022, the SerenityOS developers.
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -26,7 +28,7 @@ MailWidget::MailWidget()
 
     m_mailbox_list = *find_descendant_of_type_named<GUI::TreeView>("mailbox_list");
     m_individual_mailbox_view = *find_descendant_of_type_named<GUI::TableView>("individual_mailbox_view");
-    m_web_view = *find_descendant_of_type_named<Web::OutOfProcessWebView>("web_view");
+    m_web_view = *find_descendant_of_type_named<WebView::OutOfProcessWebView>("web_view");
     m_statusbar = *find_descendant_of_type_named<GUI::Statusbar>("statusbar");
 
     m_mailbox_list->on_selection_change = [this] {
@@ -94,16 +96,14 @@ MailWidget::MailWidget()
     };
 }
 
-MailWidget::~MailWidget()
-{
-}
-
 bool MailWidget::connect_and_login()
 {
     auto server = Config::read_string("Mail", "Connection", "Server", {});
 
     if (server.is_empty()) {
-        GUI::MessageBox::show_error(window(), "Mail has no servers configured. Refer to the Mail(1) man page for more information.");
+        auto result = GUI::MessageBox::show(window(), "Mail has no servers configured. Do you want configure them now?", "Error", GUI::MessageBox::Type::Error, GUI::MessageBox::InputType::YesNo);
+        if (result == GUI::MessageBox::ExecResult::Yes)
+            Desktop::Launcher::open(URL::create_with_file_protocol("/bin/MailSettings"), "/bin/MailSettings");
         return false;
     }
 
@@ -119,16 +119,19 @@ bool MailWidget::connect_and_login()
 
     auto password = Config::read_string("Mail", "User", "Password", {});
     while (password.is_empty()) {
-        if (GUI::PasswordInputDialog::show(window(), password, "Login", server, username) != GUI::Dialog::ExecOK)
+        if (GUI::PasswordInputDialog::show(window(), password, "Login", server, username) != GUI::Dialog::ExecResult::OK)
             return false;
     }
 
-    m_imap_client = make<IMAP::Client>(server, port, tls);
-    auto connection_promise = m_imap_client->connect();
-    if (!connection_promise) {
-        GUI::MessageBox::show_error(window(), String::formatted("Failed to connect to '{}:{}' over {}.", server, port, tls ? "TLS" : "Plaintext"));
+    auto maybe_imap_client = tls ? IMAP::Client::connect_tls(server, port) : IMAP::Client::connect_plaintext(server, port);
+    if (maybe_imap_client.is_error()) {
+        GUI::MessageBox::show_error(window(), String::formatted("Failed to connect to '{}:{}' over {}: {}", server, port, tls ? "TLS" : "Plaintext", maybe_imap_client.error()));
         return false;
     }
+    m_imap_client = maybe_imap_client.release_value();
+
+    auto connection_promise = m_imap_client->connection_promise();
+    VERIFY(!connection_promise.is_null());
     connection_promise->await();
 
     auto response = m_imap_client->login(username, password)->await().release_value();
@@ -493,7 +496,9 @@ void MailWidget::selected_email_to_load()
     if (selected_alternative_encoding.equals_ignoring_case("7bit") || selected_alternative_encoding.equals_ignoring_case("8bit")) {
         decoded_data = encoded_data;
     } else if (selected_alternative_encoding.equals_ignoring_case("base64")) {
-        decoded_data = decode_base64(encoded_data).value_or(ByteBuffer());
+        auto decoded_base64 = decode_base64(encoded_data);
+        if (!decoded_base64.is_error())
+            decoded_data = decoded_base64.release_value();
     } else if (selected_alternative_encoding.equals_ignoring_case("quoted-printable")) {
         decoded_data = IMAP::decode_quoted_printable(encoded_data);
     } else {

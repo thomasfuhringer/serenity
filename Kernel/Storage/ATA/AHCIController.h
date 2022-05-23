@@ -23,7 +23,7 @@ class AHCIController final : public ATAController
     , public PCI::Device {
     friend class AHCIPortHandler;
     friend class AHCIPort;
-    AK_MAKE_ETERNAL
+
 public:
     UNMAP_AFTER_INIT static NonnullRefPtr<AHCIController> initialize(PCI::DeviceIdentifier const& pci_device_identifier);
     virtual ~AHCIController() override;
@@ -32,7 +32,7 @@ public:
     virtual bool reset() override;
     virtual bool shutdown() override;
     virtual size_t devices_count() const override;
-    virtual void start_request(const ATADevice&, AsyncBlockDeviceRequest&) override;
+    virtual void start_request(ATADevice const&, AsyncBlockDeviceRequest&) override;
     virtual void complete_current_request(AsyncDeviceRequest::RequestResult) override;
 
     const AHCI::HBADefinedCapabilities& hba_capabilities() const { return m_capabilities; };

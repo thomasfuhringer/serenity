@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2020, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2022, the SerenityOS developers.
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -12,7 +13,7 @@
 #include <LibGUI/Label.h>
 #include <LibGUI/OpacitySlider.h>
 #include <LibGUI/TextBox.h>
-#include <LibGfx/Font.h>
+#include <LibGfx/Font/Font.h>
 
 REGISTER_WIDGET(PixelPaint, LayerPropertiesWidget);
 
@@ -65,17 +66,13 @@ LayerPropertiesWidget::LayerPropertiesWidget()
     };
 }
 
-LayerPropertiesWidget::~LayerPropertiesWidget()
-{
-}
-
 void LayerPropertiesWidget::set_layer(Layer* layer)
 {
     if (m_layer == layer)
         return;
 
     if (layer) {
-        m_layer = layer->make_weak_ptr();
+        m_layer = layer;
         m_name_textbox->set_text(layer->name());
         m_opacity_slider->set_value(layer->opacity_percent());
         m_visibility_checkbox->set_checked(layer->is_visible());

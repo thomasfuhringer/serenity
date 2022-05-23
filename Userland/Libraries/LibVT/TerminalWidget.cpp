@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2018-2021, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2022, the SerenityOS developers.
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -26,8 +27,8 @@
 #include <LibGUI/Painter.h>
 #include <LibGUI/Scrollbar.h>
 #include <LibGUI/Window.h>
-#include <LibGfx/Font.h>
-#include <LibGfx/FontDatabase.h>
+#include <LibGfx/Font/Font.h>
+#include <LibGfx/Font/FontDatabase.h>
 #include <LibGfx/Palette.h>
 #include <LibGfx/StylePainter.h>
 #include <ctype.h>
@@ -90,6 +91,7 @@ TerminalWidget::TerminalWidget(int ptm_fd, bool automatic_size_policy)
     m_auto_scroll_timer = add<Core::Timer>();
 
     m_scrollbar = add<GUI::Scrollbar>(Orientation::Vertical);
+    m_scrollbar->set_scroll_animation(GUI::Scrollbar::Animation::CoarseScroll);
     m_scrollbar->set_relative_rect(0, 0, 16, 0);
     m_scrollbar->on_change = [this](int) {
         update();
@@ -107,7 +109,7 @@ TerminalWidget::TerminalWidget(int ptm_fd, bool automatic_size_policy)
     m_auto_scroll_timer->on_timeout = [this] {
         if (m_auto_scroll_direction != AutoScrollDirection::None) {
             int scroll_amount = m_auto_scroll_direction == AutoScrollDirection::Up ? -1 : 1;
-            m_scrollbar->set_value(m_scrollbar->value() + scroll_amount);
+            m_scrollbar->increase_slider_by(scroll_amount);
         }
     };
     m_auto_scroll_timer->start();
@@ -148,10 +150,6 @@ TerminalWidget::TerminalWidget(int ptm_fd, bool automatic_size_policy)
     set_color_scheme(Config::read_string("Terminal", "Window", "ColorScheme", "Default"));
 }
 
-TerminalWidget::~TerminalWidget()
-{
-}
-
 Gfx::IntRect TerminalWidget::glyph_rect(u16 row, u16 column)
 {
     int y = row * m_line_height;
@@ -176,7 +174,7 @@ void TerminalWidget::set_logical_focus(bool focus)
         m_cursor_blink_state = true;
         m_cursor_blink_timer->start();
     }
-    m_auto_scroll_direction = AutoScrollDirection::None;
+    set_auto_scroll_direction(AutoScrollDirection::None);
     invalidate_cursor();
     update();
 }
@@ -215,11 +213,11 @@ void TerminalWidget::keydown_event(GUI::KeyEvent& event)
     m_cursor_blink_timer->start();
 
     if (event.key() == KeyCode::Key_PageUp && event.modifiers() == Mod_Shift) {
-        m_scrollbar->set_value(m_scrollbar->value() - m_terminal.rows());
+        m_scrollbar->decrease_slider_by(m_terminal.rows());
         return;
     }
     if (event.key() == KeyCode::Key_PageDown && event.modifiers() == Mod_Shift) {
-        m_scrollbar->set_value(m_scrollbar->value() + m_terminal.rows());
+        m_scrollbar->increase_slider_by(m_terminal.rows());
         return;
     }
     if (event.key() == KeyCode::Key_Alt) {
@@ -264,9 +262,6 @@ void TerminalWidget::paint_event(GUI::PaintEvent& event)
     auto visual_beep_active = m_visual_beep_timer->is_active();
 
     painter.add_clip_rect(event.rect());
-
-    Gfx::IntRect terminal_buffer_rect(frame_inner_rect().top_left(), { frame_inner_rect().width() - m_scrollbar->width(), frame_inner_rect().height() });
-    painter.add_clip_rect(terminal_buffer_rect);
 
     if (visual_beep_active)
         painter.clear_rect(frame_inner_rect(), terminal_color_to_rgb(VT::Color::named(VT::Color::ANSIColor::Red)));
@@ -347,7 +342,7 @@ void TerminalWidget::paint_event(GUI::PaintEvent& event)
             auto underline_style = UnderlineStyle::None;
             auto underline_color = text_color;
 
-            if (attribute.flags & VT::Attribute::Underline) {
+            if (has_flag(attribute.flags, VT::Attribute::Flags::Underline)) {
                 // Content has specified underline
                 underline_style = UnderlineStyle::Solid;
             } else if (!attribute.href.is_empty()) {
@@ -415,7 +410,7 @@ void TerminalWidget::paint_event(GUI::PaintEvent& event)
             painter.draw_glyph_or_emoji(
                 character_rect.location(),
                 code_point,
-                attribute.flags & VT::Attribute::Bold ? bold_font : font,
+                has_flag(attribute.flags, VT::Attribute::Flags::Bold) ? bold_font : font,
                 text_color);
         }
     }
@@ -497,7 +492,7 @@ void TerminalWidget::resize_event(GUI::ResizeEvent& event)
     relayout(event.size());
 }
 
-void TerminalWidget::relayout(const Gfx::IntSize& size)
+void TerminalWidget::relayout(Gfx::IntSize const& size)
 {
     if (!m_scrollbar)
         return;
@@ -548,6 +543,11 @@ void TerminalWidget::set_opacity(u8 new_opacity)
     update();
 }
 
+void TerminalWidget::set_show_scrollbar(bool show_scrollbar)
+{
+    m_scrollbar->set_visible(show_scrollbar);
+}
+
 bool TerminalWidget::has_selection() const
 {
     return m_selection.is_valid();
@@ -580,7 +580,7 @@ bool TerminalWidget::selection_contains(const VT::Position& position) const
     return position >= normalized_selection.start() && position <= normalized_selection.end();
 }
 
-VT::Position TerminalWidget::buffer_position_at(const Gfx::IntPoint& position) const
+VT::Position TerminalWidget::buffer_position_at(Gfx::IntPoint const& position) const
 {
     auto adjusted_position = position.translated(-(frame_thickness() + m_inset), -(frame_thickness() + m_inset));
     int row = adjusted_position.y() / m_line_height;
@@ -774,7 +774,11 @@ void TerminalWidget::mouseup_event(GUI::MouseEvent& event)
             m_active_href_id = {};
             update();
         }
-        m_auto_scroll_direction = AutoScrollDirection::None;
+
+        if (m_triple_click_timer.is_valid())
+            m_triple_click_timer.reset();
+
+        set_auto_scroll_direction(AutoScrollDirection::None);
     }
 }
 
@@ -819,25 +823,24 @@ void TerminalWidget::mousemove_event(GUI::MouseEvent& event)
     auto attribute = m_terminal.attribute_at(position);
 
     if (attribute.href_id != m_hovered_href_id) {
-        if (m_active_href_id.is_null() || m_active_href_id == attribute.href_id) {
+        if (!attribute.href_id.is_null()) {
             m_hovered_href_id = attribute.href_id;
+            m_hovered_href = attribute.href;
+
             auto handlers = Desktop::Launcher::get_handlers_for_url(attribute.href);
             if (!handlers.is_empty()) {
                 auto path = URL(attribute.href).path();
                 auto name = LexicalPath::basename(path);
-                if (path == handlers[0]) {
-                    m_hovered_href = String::formatted("Execute {}", name);
-                } else {
-                    m_hovered_href = String::formatted("Open {} with {}", name, LexicalPath::basename(handlers[0]));
-                }
-            } else {
-                m_hovered_href = attribute.href;
+                if (path == handlers[0])
+                    set_tooltip(String::formatted("Execute {}", name));
+                else
+                    set_tooltip(String::formatted("Open {} with {}", name, LexicalPath::basename(handlers[0])));
             }
         } else {
             m_hovered_href_id = {};
             m_hovered_href = {};
+            set_tooltip({});
         }
-        set_tooltip(m_hovered_href);
         show_or_hide_tooltip();
         if (!m_hovered_href.is_empty())
             set_override_cursor(Gfx::StandardCursor::Arrow);
@@ -872,11 +875,11 @@ void TerminalWidget::mousemove_event(GUI::MouseEvent& event)
 
     auto adjusted_position = event.position().translated(-(frame_thickness() + m_inset), -(frame_thickness() + m_inset));
     if (adjusted_position.y() < 0)
-        m_auto_scroll_direction = AutoScrollDirection::Up;
+        set_auto_scroll_direction(AutoScrollDirection::Up);
     else if (adjusted_position.y() > m_terminal.rows() * m_line_height)
-        m_auto_scroll_direction = AutoScrollDirection::Down;
+        set_auto_scroll_direction(AutoScrollDirection::Down);
     else
-        m_auto_scroll_direction = AutoScrollDirection::None;
+        set_auto_scroll_direction(AutoScrollDirection::None);
 
     VT::Position old_selection_end = m_selection.end();
     VT::Position old_selection_start = m_selection.start();
@@ -914,8 +917,8 @@ void TerminalWidget::mousewheel_event(GUI::MouseEvent& event)
 {
     if (!is_scrollable())
         return;
-    m_auto_scroll_direction = AutoScrollDirection::None;
-    m_scrollbar->set_value(m_scrollbar->value() + event.wheel_delta() * scroll_length());
+    set_auto_scroll_direction(AutoScrollDirection::None);
+    m_scrollbar->increase_slider_by(event.wheel_delta_y() * scroll_length());
     GUI::Frame::mousewheel_event(event);
 }
 
@@ -1027,7 +1030,7 @@ void TerminalWidget::beep()
     update();
 }
 
-void TerminalWidget::emit(const u8* data, size_t size)
+void TerminalWidget::emit(u8 const* data, size_t size)
 {
     if (write(m_ptm_fd, data, size) < 0) {
         perror("TerminalWidget::emit: write");
@@ -1190,7 +1193,13 @@ void TerminalWidget::set_color_scheme(StringView name)
         "White"
     };
 
-    auto color_config = Core::ConfigFile::open(String::formatted("/res/terminal-colors/{}.ini", name));
+    auto path = String::formatted("/res/terminal-colors/{}.ini", name);
+    auto color_config_or_error = Core::ConfigFile::open(path);
+    if (color_config_or_error.is_error()) {
+        dbgln("Unable to read color scheme file '{}': {}", path, color_config_or_error.error());
+        return;
+    }
+    auto color_config = color_config_or_error.release_value();
 
     m_show_bold_text_as_bright = color_config->read_bool_entry("Options", "ShowBoldTextAsBright", true);
 
@@ -1220,7 +1229,7 @@ void TerminalWidget::set_color_scheme(StringView name)
     update();
 }
 
-Gfx::IntSize TerminalWidget::widget_size_for_font(const Gfx::Font& font) const
+Gfx::IntSize TerminalWidget::widget_size_for_font(Gfx::Font const& font) const
 {
     return {
         (frame_thickness() * 2) + (m_inset * 2) + (m_terminal.columns() * font.glyph_width('x')) + m_scrollbar->width(),
@@ -1251,7 +1260,7 @@ constexpr Gfx::Color TerminalWidget::terminal_color_to_rgb(VT::Color color) cons
     }
 };
 
-void TerminalWidget::set_font_and_resize_to_fit(const Gfx::Font& font)
+void TerminalWidget::set_font_and_resize_to_fit(Gfx::Font const& font)
 {
     set_font(font);
     resize(widget_size_for_font(font));
@@ -1285,4 +1294,11 @@ void TerminalWidget::send_non_user_input(ReadonlyBytes bytes)
         VERIFY_NOT_REACHED();
     }
 }
+
+void TerminalWidget::set_auto_scroll_direction(AutoScrollDirection direction)
+{
+    m_auto_scroll_direction = direction;
+    m_auto_scroll_timer->set_active(direction != AutoScrollDirection::None);
+}
+
 }

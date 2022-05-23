@@ -6,6 +6,7 @@
 
 #pragma once
 
+#include <LibJS/Runtime/Completion.h>
 #include <LibJS/Runtime/FunctionObject.h>
 
 namespace JS {
@@ -14,14 +15,15 @@ class BoundFunction final : public FunctionObject {
     JS_OBJECT(BoundFunction, FunctionObject);
 
 public:
-    BoundFunction(GlobalObject&, FunctionObject& target_function, Value bound_this, Vector<Value> bound_arguments, i32 length, Object* constructor_prototype);
-    virtual void initialize(GlobalObject&) override;
-    virtual ~BoundFunction();
+    static ThrowCompletionOr<BoundFunction*> create(GlobalObject&, FunctionObject& target_function, Value bound_this, Vector<Value> bound_arguments);
 
-    virtual ThrowCompletionOr<Value> internal_call(Value this_argument, MarkedValueList arguments_list) override;
-    virtual ThrowCompletionOr<Object*> internal_construct(MarkedValueList arguments_list, FunctionObject& new_target) override;
+    BoundFunction(GlobalObject&, FunctionObject& target_function, Value bound_this, Vector<Value> bound_arguments, Object* prototype);
+    virtual ~BoundFunction() override = default;
 
-    virtual const FlyString& name() const override { return m_name; }
+    virtual ThrowCompletionOr<Value> internal_call(Value this_argument, MarkedVector<Value> arguments_list) override;
+    virtual ThrowCompletionOr<Object*> internal_construct(MarkedVector<Value> arguments_list, FunctionObject& new_target) override;
+
+    virtual FlyString const& name() const override { return m_name; }
     virtual bool is_strict_mode() const override { return m_bound_target_function->is_strict_mode(); }
     virtual bool has_constructor() const override { return m_bound_target_function->has_constructor(); }
 
@@ -36,9 +38,7 @@ private:
     Value m_bound_this;                                  // [[BoundThis]]
     Vector<Value> m_bound_arguments;                     // [[BoundArguments]]
 
-    Object* m_constructor_prototype { nullptr };
     FlyString m_name;
-    i32 m_length { 0 };
 };
 
 }

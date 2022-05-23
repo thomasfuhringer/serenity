@@ -6,13 +6,13 @@
 
 #pragma once
 
+#include <AK/BuiltinWrappers.h>
 #include <AK/Checked.h>
 #include <AK/Concepts.h>
 #include <AK/Format.h>
 #include <AK/NumericLimits.h>
 #include <AK/StdLibExtraDetails.h>
 #include <AK/StdLibExtras.h>
-#include <AK/String.h>
 #include <AK/StringBuilder.h>
 
 namespace AK {
@@ -34,6 +34,12 @@ struct NumericLimits<UFixedBigInt<T>> {
     static constexpr UFixedBigInt<T> min() { return 0; }
     static constexpr UFixedBigInt<T> max() { return { NumericLimits<T>::max(), NumericLimits<T>::max() }; }
     static constexpr bool is_signed() { return false; }
+};
+
+template<Unsigned T>
+struct UFixedBigIntMultiplicationResult {
+    T low;
+    T high;
 };
 
 template<typename T>
@@ -77,7 +83,7 @@ public:
     }
     Span<const u8> bytes() const
     {
-        return Span<const u8>(reinterpret_cast<const u8*>(this), sizeof(R));
+        return Span<const u8>(reinterpret_cast<u8 const*>(this), sizeof(R));
     }
 
     template<Unsigned U>
@@ -90,9 +96,9 @@ public:
     constexpr size_t clz() const requires(IsSame<T, u64>)
     {
         if (m_high)
-            return __builtin_clzll(m_high);
+            return count_leading_zeroes(m_high);
         else
-            return sizeof(T) * 8 + __builtin_clzll(m_low);
+            return sizeof(T) * 8 + count_leading_zeroes(m_low);
     }
     constexpr size_t clz() const requires(!IsSame<T, u64>)
     {
@@ -104,9 +110,9 @@ public:
     constexpr size_t ctz() const requires(IsSame<T, u64>)
     {
         if (m_low)
-            return __builtin_ctzll(m_low);
+            return count_trailing_zeroes(m_low);
         else
-            return sizeof(T) * 8 + __builtin_ctzll(m_high);
+            return sizeof(T) * 8 + count_trailing_zeroes(m_high);
     }
     constexpr size_t ctz() const requires(!IsSame<T, u64>)
     {
@@ -134,32 +140,32 @@ public:
         return m_low || m_high;
     }
     template<Unsigned U>
-    requires(sizeof(T) >= sizeof(U)) constexpr bool operator==(const T& other) const
+    requires(sizeof(T) >= sizeof(U)) constexpr bool operator==(const U& other) const
     {
         return !m_high && m_low == other;
     }
     template<Unsigned U>
-    requires(sizeof(T) >= sizeof(U)) constexpr bool operator!=(const T& other) const
+    requires(sizeof(T) >= sizeof(U)) constexpr bool operator!=(const U& other) const
     {
         return m_high || m_low != other;
     }
     template<Unsigned U>
-    requires(sizeof(T) >= sizeof(U)) constexpr bool operator>(const T& other) const
+    requires(sizeof(T) >= sizeof(U)) constexpr bool operator>(const U& other) const
     {
         return m_high || m_low > other;
     }
     template<Unsigned U>
-    requires(sizeof(T) >= sizeof(U)) constexpr bool operator<(const T& other) const
+    requires(sizeof(T) >= sizeof(U)) constexpr bool operator<(const U& other) const
     {
         return !m_high && m_low < other;
     }
     template<Unsigned U>
-    requires(sizeof(T) >= sizeof(U)) constexpr bool operator>=(const T& other) const
+    requires(sizeof(T) >= sizeof(U)) constexpr bool operator>=(const U& other) const
     {
         return *this == other || *this > other;
     }
     template<Unsigned U>
-    requires(sizeof(T) >= sizeof(U)) constexpr bool operator<=(const T& other) const
+    requires(sizeof(T) >= sizeof(U)) constexpr bool operator<=(const U& other) const
     {
         return *this == other || *this < other;
     }
@@ -411,7 +417,7 @@ public:
         return { lower, higher };
     }
 
-    constexpr R operator+(const bool& other) const
+    constexpr R operator+(bool const& other) const
     {
         bool carry = false; // unused
         return addc((u8)other, carry);
@@ -423,7 +429,7 @@ public:
         return addc(other, carry);
     }
 
-    constexpr R operator-(const bool& other) const
+    constexpr R operator-(bool const& other) const
     {
         bool carry = false; // unused
         return subc((u8)other, carry);
@@ -485,9 +491,9 @@ public:
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wdiv-by-zero"
         if (!divisor) {
-            volatile int x = 1;
-            volatile int y = 0;
-            [[maybe_unused]] volatile int z = x / y;
+            int volatile x = 1;
+            int volatile y = 0;
+            [[maybe_unused]] int volatile z = x / y;
         }
 #pragma GCC diagnostic pop
 
@@ -531,6 +537,72 @@ public:
             that <<= 1u;
         }
         return res;
+    }
+
+    template<Unsigned U>
+    requires(IsSame<R, U>&& IsSame<T, u64>) constexpr UFixedBigIntMultiplicationResult<R> wide_multiply(U const& other) const
+    {
+        auto mult_64_to_128 = [](u64 a, u64 b) -> UFixedBigIntMultiplicationResult<u64> {
+#ifdef __SIZEOF_INT128__
+            unsigned __int128 result = (unsigned __int128)a * b;
+            u64 low = result;
+            u64 high = result >> 64;
+            return { low, high };
+#else
+            u32 a_low = a;
+            u32 a_high = (a >> 32);
+            u32 b_low = b;
+            u32 b_high = (b >> 32);
+
+            u64 ll_result = (u64)a_low * b_low;
+            u64 lh_result = (u64)a_low * b_high;
+            u64 hl_result = (u64)a_high * b_low;
+            u64 hh_result = (u64)a_high * b_high;
+
+            UFixedBigInt<u64> ll { ll_result, 0u };
+            UFixedBigInt<u64> lh { lh_result << 32, lh_result >> 32 };
+            UFixedBigInt<u64> hl { hl_result << 32, hl_result >> 32 };
+            UFixedBigInt<u64> hh { 0u, hh_result };
+
+            UFixedBigInt<u64> result = ll + lh + hl + hh;
+            return { result.low(), result.high() };
+#endif
+        };
+
+        auto ll_result = mult_64_to_128(m_low, other.low());
+        auto lh_result = mult_64_to_128(m_low, other.high());
+        auto hl_result = mult_64_to_128(m_high, other.low());
+        auto hh_result = mult_64_to_128(m_high, other.high());
+
+        UFixedBigInt<R> ll { R { ll_result.low, ll_result.high }, R { 0u, 0u } };
+        UFixedBigInt<R> lh { R { 0u, lh_result.low }, R { lh_result.high, 0u } };
+        UFixedBigInt<R> hl { R { 0u, hl_result.low }, R { hl_result.high, 0u } };
+        UFixedBigInt<R> hh { R { 0u, 0u }, R { hh_result.low, hh_result.high } };
+
+        UFixedBigInt<R> result = ll + lh + hl + hh;
+        return { result.low(), result.high() };
+    }
+
+    template<Unsigned U>
+    requires(IsSame<R, U> && sizeof(T) > sizeof(u64)) constexpr UFixedBigIntMultiplicationResult<R> wide_multiply(U const& other) const
+    {
+        T left_low = m_low;
+        T left_high = m_high;
+        T right_low = other.low();
+        T right_high = other.high();
+
+        auto ll_result = left_low.wide_multiply(right_low);
+        auto lh_result = left_low.wide_multiply(right_high);
+        auto hl_result = left_high.wide_multiply(right_low);
+        auto hh_result = left_high.wide_multiply(right_high);
+
+        UFixedBigInt<R> ll { R { ll_result.low, ll_result.high }, R { 0u, 0u } };
+        UFixedBigInt<R> lh { R { 0u, lh_result.low }, R { lh_result.high, 0u } };
+        UFixedBigInt<R> hl { R { 0u, hl_result.low }, R { hl_result.high, 0u } };
+        UFixedBigInt<R> hh { R { 0u, 0u }, R { hh_result.low, hh_result.high } };
+
+        UFixedBigInt<R> result = ll + lh + hl + hh;
+        return { result.low(), result.high() };
     }
 
     template<Unsigned U>
@@ -598,7 +670,7 @@ public:
         R x1 = *this;
         R x2 = *this * *this;
         u64 exp_copy = exp;
-        for (ssize_t i = sizeof(u64) * 8 - __builtin_clzll(exp) - 2; i >= 0; --i) {
+        for (ssize_t i = sizeof(u64) * 8 - count_leading_zeroes(exp) - 2; i >= 0; --i) {
             if (exp_copy & 1u) {
                 x2 *= x1;
                 x1 *= x1;
@@ -642,7 +714,7 @@ public:
 
         U res = 1;
         u64 exp_copy = exp;
-        for (size_t i = sizeof(u64) - __builtin_clzll(exp) - 1u; i < exp; ++i) {
+        for (size_t i = sizeof(u64) - count_leading_zeroes(exp) - 1u; i < exp; ++i) {
             res *= res;
             res %= mod;
             if (exp_copy & 1u) {
@@ -682,13 +754,39 @@ public:
     constexpr size_t logn(u64 base)
     {
         // FIXME: proper rounding
-        return log2() / (sizeof(u64) - __builtin_clzll(base));
+        return log2() / (sizeof(u64) - count_leading_zeroes(base));
     }
     template<Unsigned U>
     requires(sizeof(U) > sizeof(u64)) constexpr size_t logn(U base)
     {
         // FIXME: proper rounding
         return log2() / base.log2();
+    }
+
+    constexpr u64 fold_or() const requires(IsSame<T, u64>)
+    {
+        return m_low | m_high;
+    }
+    constexpr u64 fold_or() const requires(!IsSame<T, u64>)
+    {
+        return m_low.fold_or() | m_high.fold_or();
+    }
+    constexpr bool is_zero_constant_time() const
+    {
+        return fold_or() == 0;
+    }
+
+    constexpr u64 fold_xor_pair(R& other) const requires(IsSame<T, u64>)
+    {
+        return (m_low ^ other.low()) | (m_high ^ other.high());
+    }
+    constexpr u64 fold_xor_pair(R& other) const requires(!IsSame<T, u64>)
+    {
+        return (m_low.fold_xor_pair(other.low())) | (m_high.fold_xor_pair(other.high()));
+    }
+    constexpr bool is_equal_to_constant_time(R& other)
+    {
+        return fold_xor_pair(other) == 0;
     }
 
 private:
@@ -698,13 +796,13 @@ private:
 
 // reverse operators
 template<Unsigned U, Unsigned T>
-requires(sizeof(U) < sizeof(T) * 2) constexpr bool operator<(const U a, const UFixedBigInt<T>& b) { return b >= a; }
+requires(sizeof(U) < sizeof(T) * 2) constexpr bool operator<(const U a, UFixedBigInt<T> const& b) { return b >= a; }
 template<Unsigned U, Unsigned T>
-requires(sizeof(U) < sizeof(T) * 2) constexpr bool operator>(const U a, const UFixedBigInt<T>& b) { return b <= a; }
+requires(sizeof(U) < sizeof(T) * 2) constexpr bool operator>(const U a, UFixedBigInt<T> const& b) { return b <= a; }
 template<Unsigned U, Unsigned T>
-requires(sizeof(U) < sizeof(T) * 2) constexpr bool operator<=(const U a, const UFixedBigInt<T>& b) { return b > a; }
+requires(sizeof(U) < sizeof(T) * 2) constexpr bool operator<=(const U a, UFixedBigInt<T> const& b) { return b > a; }
 template<Unsigned U, Unsigned T>
-requires(sizeof(U) < sizeof(T) * 2) constexpr bool operator>=(const U a, const UFixedBigInt<T>& b) { return b < a; }
+requires(sizeof(U) < sizeof(T) * 2) constexpr bool operator>=(const U a, UFixedBigInt<T> const& b) { return b < a; }
 
 template<Unsigned T>
 struct Formatter<UFixedBigInt<T>> : StandardFormatter {

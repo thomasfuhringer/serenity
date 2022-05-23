@@ -7,7 +7,6 @@
 #pragma once
 
 #include <AK/StringView.h>
-#include <AK/Vector.h>
 #include <LibGUI/AutocompleteProvider.h>
 #include <LibGUI/TreeView.h>
 #include <LibGUI/Widget.h>
@@ -32,7 +31,7 @@ private:
 // This is currently achieved with the on_update callback of ProjectDeclarations.
 struct ClassViewNode {
     StringView name;
-    const GUI::AutocompleteProvider::Declaration* declaration { nullptr };
+    CodeComprehension::Declaration const* declaration { nullptr };
     NonnullOwnPtrVector<ClassViewNode> children;
     ClassViewNode* parent { nullptr };
 
@@ -51,7 +50,7 @@ public:
 
 private:
     explicit ClassViewModel();
-    void add_declaration(const GUI::AutocompleteProvider::Declaration&);
+    void add_declaration(CodeComprehension::Declaration const&);
     NonnullOwnPtrVector<ClassViewNode> m_root_scope;
 };
 

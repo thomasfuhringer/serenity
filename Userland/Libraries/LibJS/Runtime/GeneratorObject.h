@@ -19,7 +19,7 @@ public:
     static ThrowCompletionOr<GeneratorObject*> create(GlobalObject&, Value, ECMAScriptFunctionObject*, ExecutionContext, Bytecode::RegisterWindow);
     GeneratorObject(GlobalObject&, Object& prototype, ExecutionContext);
     virtual void initialize(GlobalObject&) override;
-    virtual ~GeneratorObject() override;
+    virtual ~GeneratorObject() override = default;
     void visit_edges(Cell::Visitor&) override;
 
     ThrowCompletionOr<Value> next_impl(VM&, GlobalObject&, Optional<Value> next_argument, Optional<Value> value_to_throw);
@@ -29,7 +29,7 @@ private:
     ExecutionContext m_execution_context;
     ECMAScriptFunctionObject* m_generating_function { nullptr };
     Value m_previous_value;
-    Bytecode::RegisterWindow m_frame;
+    Optional<Bytecode::RegisterWindow> m_frame;
     bool m_done { false };
 };
 

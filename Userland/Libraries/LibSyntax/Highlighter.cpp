@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2020-2021, the SerenityOS developers.
+ * Copyright (c) 2020-2022, the SerenityOS developers.
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -9,10 +9,6 @@
 #include <LibSyntax/Highlighter.h>
 
 namespace Syntax {
-
-Highlighter::~Highlighter()
-{
-}
 
 void Highlighter::highlight_matching_token_pair()
 {
@@ -140,6 +136,32 @@ void Highlighter::register_nested_token_pairs(Vector<MatchingTokenPair> pairs)
 {
     for (auto& pair : pairs)
         m_nested_token_pairs.set(pair);
+}
+
+StringView Highlighter::language_string(Language language) const
+{
+    switch (language) {
+    case Language::Cpp:
+        return "C++"sv;
+    case Language::CSS:
+        return "CSS"sv;
+    case Language::GitCommit:
+        return "Git"sv;
+    case Language::GML:
+        return "GML"sv;
+    case Language::HTML:
+        return "HTML"sv;
+    case Language::INI:
+        return "INI"sv;
+    case Language::JavaScript:
+        return "JavaScript"sv;
+    case Language::Shell:
+        return "Shell"sv;
+    case Language::SQL:
+        return "SQL"sv;
+    default:
+        VERIFY_NOT_REACHED();
+    }
 }
 
 }

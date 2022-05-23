@@ -8,13 +8,10 @@
 
 namespace Web::HTML {
 
-HTMLLegendElement::HTMLLegendElement(DOM::Document& document, QualifiedName qualified_name)
+HTMLLegendElement::HTMLLegendElement(DOM::Document& document, DOM::QualifiedName qualified_name)
     : HTMLElement(document, move(qualified_name))
 {
 }
 
-HTMLLegendElement::~HTMLLegendElement()
-{
-}
-
+HTMLLegendElement::~HTMLLegendElement() = default;
 }

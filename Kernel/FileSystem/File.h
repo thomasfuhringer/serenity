@@ -9,7 +9,7 @@
 #include <AK/Error.h>
 #include <AK/NonnullRefPtr.h>
 #include <AK/RefCounted.h>
-#include <AK/String.h>
+#include <AK/StringView.h>
 #include <AK/Types.h>
 #include <AK/Weakable.h>
 #include <Kernel/Forward.h>
@@ -71,30 +71,30 @@ public:
 //   - Should create a Region in the Process and return it if successful.
 
 class File
-    : public RefCountedBase
+    : public RefCounted<File>
     , public Weakable<File> {
 public:
-    virtual bool unref() const;
-    virtual void before_removing() { }
+    virtual bool unref() const { return RefCounted<File>::unref(); }
+    virtual void will_be_destroyed() { }
     virtual ~File();
 
     virtual ErrorOr<NonnullRefPtr<OpenFileDescription>> open(int options);
     virtual ErrorOr<void> close();
 
-    virtual bool can_read(const OpenFileDescription&, size_t) const = 0;
-    virtual bool can_write(const OpenFileDescription&, size_t) const = 0;
+    virtual bool can_read(OpenFileDescription const&, u64) const = 0;
+    virtual bool can_write(OpenFileDescription const&, u64) const = 0;
 
     virtual ErrorOr<void> attach(OpenFileDescription&);
     virtual void detach(OpenFileDescription&);
     virtual void did_seek(OpenFileDescription&, off_t) { }
     virtual ErrorOr<size_t> read(OpenFileDescription&, u64, UserOrKernelBuffer&, size_t) = 0;
-    virtual ErrorOr<size_t> write(OpenFileDescription&, u64, const UserOrKernelBuffer&, size_t) = 0;
+    virtual ErrorOr<size_t> write(OpenFileDescription&, u64, UserOrKernelBuffer const&, size_t) = 0;
     virtual ErrorOr<void> ioctl(OpenFileDescription&, unsigned request, Userspace<void*> arg);
     virtual ErrorOr<Memory::Region*> mmap(Process&, OpenFileDescription&, Memory::VirtualRange const&, u64 offset, int prot, bool shared);
-    virtual ErrorOr<void> stat(::stat&) const { return EBADF; }
+    virtual ErrorOr<struct stat> stat() const { return EBADF; }
 
     // Although this might be better described "name" or "description", these terms already have other meanings.
-    virtual ErrorOr<NonnullOwnPtr<KString>> pseudo_path(const OpenFileDescription&) const = 0;
+    virtual ErrorOr<NonnullOwnPtr<KString>> pseudo_path(OpenFileDescription const&) const = 0;
 
     virtual ErrorOr<void> truncate(u64) { return EINVAL; }
     virtual ErrorOr<void> sync() { return EINVAL; }
@@ -128,7 +128,7 @@ protected:
             // If called from an IRQ handler we need to delay evaluation
             // and unblocking of waiting threads. Note that this File
             // instance may be deleted until the deferred call is executed!
-            Processor::deferred_call_queue([self = make_weak_ptr()]() {
+            Processor::deferred_call_queue([self = try_make_weak_ptr().release_value_but_fixme_should_propagate_errors()]() {
                 if (auto file = self.strong_ref())
                     file->do_evaluate_block_conditions();
             });

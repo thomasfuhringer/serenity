@@ -5,14 +5,15 @@
  */
 
 #include <AK/Assertions.h>
-#include <AK/ByteBuffer.h>
+#include <AK/LexicalPath.h>
 #include <AK/ScopeGuard.h>
 #include <AK/String.h>
-#include <AK/Utf8View.h>
 #include <AK/Vector.h>
 #include <LibCore/ArgsParser.h>
 #include <LibCore/DirIterator.h>
 #include <LibCore/File.h>
+#include <LibCore/System.h>
+#include <LibMain/Main.h>
 #include <LibRegex/Regex.h>
 #include <stdio.h>
 #include <unistd.h>
@@ -32,18 +33,17 @@ void fail(StringView format, Ts... args)
     abort();
 }
 
-int main(int argc, char** argv)
+ErrorOr<int> serenity_main(Main::Arguments args)
 {
-    if (pledge("stdio rpath", nullptr) < 0) {
-        perror("pledge");
-        return 1;
-    }
+    TRY(Core::System::pledge("stdio rpath"));
 
-    Vector<const char*> files;
+    String program_name = AK::LexicalPath::basename(args.strings[0]);
 
-    bool recursive { false };
-    bool use_ere { false };
-    Vector<const char*> patterns;
+    Vector<String> files;
+
+    bool recursive = (program_name == "rgrep"sv);
+    bool use_ere = (program_name == "egrep"sv);
+    Vector<String> patterns;
     BinaryFileMode binary_mode { BinaryFileMode::Binary };
     bool case_insensitive = false;
     bool line_numbers = false;
@@ -128,7 +128,7 @@ int main(int argc, char** argv)
     });
     args_parser.add_option(count_lines, "Output line count instead of line contents", "count", 'c');
     args_parser.add_positional_argument(files, "File(s) to process", "file", Core::ArgsParser::Required::No);
-    args_parser.parse(argc, argv);
+    args_parser.parse(args);
 
     // mock grep behavior: if -e is omitted, use first positional argument as pattern
     if (patterns.size() == 0 && files.size())
@@ -189,8 +189,10 @@ int main(int argc, char** argv)
             return false;
         };
 
+        bool did_match_something = false;
+
         auto handle_file = [&matches, binary_mode, suppress_errors, count_lines, quiet_mode,
-                               user_specified_multiple_files, &matched_line_count](StringView filename, bool print_filename) -> bool {
+                               user_specified_multiple_files, &matched_line_count, &did_match_something](StringView filename, bool print_filename) -> bool {
             auto file = Core::File::construct(filename);
             if (!file->open(Core::OpenMode::ReadOnly)) {
                 if (!suppress_errors)
@@ -198,11 +200,22 @@ int main(int argc, char** argv)
                 return false;
             }
 
+            auto file_size_or_error = Core::File::size(filename);
+            if (file_size_or_error.is_error()) {
+                if (!suppress_errors)
+                    warnln("Failed to retrieve size of {}: {}", filename, strerror(file_size_or_error.error().code()));
+                return false;
+            }
+
+            auto file_size = file_size_or_error.release_value();
+
             for (size_t line_number = 1; file->can_read_line(); ++line_number) {
-                auto line = file->read_line();
+                auto line = file->read_line(file_size);
                 auto is_binary = memchr(line.characters(), 0, line.length()) != nullptr;
 
-                if (matches(line, filename, line_number, print_filename, is_binary) && is_binary && binary_mode == BinaryFileMode::Binary)
+                auto matched = matches(line, filename, line_number, print_filename, is_binary);
+                did_match_something = did_match_something || matched;
+                if (matched && is_binary && binary_mode == BinaryFileMode::Binary)
                     break;
             }
 
@@ -230,7 +243,6 @@ int main(int argc, char** argv)
             }
         };
 
-        bool did_match_something = false;
         if (!files.size() && !recursive) {
             char* line = nullptr;
             size_t line_len = 0;

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2020, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2020-2022, Andreas Kling <kling@serenityos.org>
  * Copyright (c) 2021, Luke Wilde <lukew@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
@@ -22,6 +22,9 @@ namespace Web::Bindings {
 
 EventWrapper* wrap(JS::GlobalObject& global_object, DOM::Event& event)
 {
+    if (event.wrapper())
+        return static_cast<EventWrapper*>(event.wrapper());
+
     if (is<DOM::CustomEvent>(event))
         return static_cast<CustomEventWrapper*>(wrap_impl(global_object, static_cast<DOM::CustomEvent&>(event)));
     if (is<CSS::MediaQueryListEvent>(event))
@@ -42,6 +45,8 @@ EventWrapper* wrap(JS::GlobalObject& global_object, DOM::Event& event)
         return static_cast<MouseEventWrapper*>(wrap_impl(global_object, static_cast<UIEvents::MouseEvent&>(event)));
     if (is<XHR::ProgressEvent>(event))
         return static_cast<ProgressEventWrapper*>(wrap_impl(global_object, static_cast<XHR::ProgressEvent&>(event)));
+    if (is<UIEvents::UIEvent>(event))
+        return static_cast<UIEventWrapper*>(wrap_impl(global_object, static_cast<UIEvents::UIEvent&>(event)));
     return static_cast<EventWrapper*>(wrap_impl(global_object, event));
 }
 

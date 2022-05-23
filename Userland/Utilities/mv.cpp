@@ -8,33 +8,32 @@
 #include <AK/String.h>
 #include <LibCore/ArgsParser.h>
 #include <LibCore/File.h>
+#include <LibCore/System.h>
+#include <LibMain/Main.h>
 #include <stdio.h>
 #include <string.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
-int main(int argc, char** argv)
+ErrorOr<int> serenity_main(Main::Arguments arguments)
 {
-    if (pledge("stdio rpath wpath cpath fattr", nullptr) < 0) {
-        perror("pledge");
-        return 1;
-    }
+    TRY(Core::System::pledge("stdio rpath wpath cpath fattr"));
 
     // NOTE: The "force" option is a dummy for now, it's just here to silence scripts that use "mv -f"
     //       In the future, it might be used to cancel out an "-i" interactive option.
     bool force = false;
     bool verbose = false;
 
-    Vector<const char*> paths;
+    Vector<String> paths;
 
     Core::ArgsParser args_parser;
     args_parser.add_option(force, "Force", "force", 'f');
     args_parser.add_option(verbose, "Verbose", "verbose", 'v');
     args_parser.add_positional_argument(paths, "Paths to files being moved followed by target location", "paths");
-    args_parser.parse(argc, argv);
+    args_parser.parse(arguments);
 
     if (paths.size() < 2) {
-        args_parser.print_usage(stderr, argv[0]);
+        args_parser.print_usage(stderr, arguments.argv[0]);
         return 1;
     }
 
@@ -42,7 +41,7 @@ int main(int argc, char** argv)
 
     struct stat st;
 
-    int rc = lstat(original_new_path, &st);
+    int rc = lstat(original_new_path.characters(), &st);
     if (rc != 0 && errno != ENOENT) {
         perror("lstat");
         return 1;
@@ -58,14 +57,14 @@ int main(int argc, char** argv)
 
     for (auto& old_path : paths) {
         String combined_new_path;
-        const char* new_path = original_new_path;
+        auto new_path = original_new_path;
         if (S_ISDIR(st.st_mode)) {
             auto old_basename = LexicalPath::basename(old_path);
             combined_new_path = String::formatted("{}/{}", original_new_path, old_basename);
             new_path = combined_new_path.characters();
         }
 
-        rc = rename(old_path, new_path);
+        rc = rename(old_path.characters(), new_path.characters());
         if (rc < 0) {
             if (errno == EXDEV) {
                 auto result = Core::File::copy_file_or_directory(
@@ -78,7 +77,7 @@ int main(int argc, char** argv)
                     warnln("mv: could not move '{}': {}", old_path, static_cast<Error const&>(result.error()));
                     return 1;
                 }
-                rc = unlink(old_path);
+                rc = unlink(old_path.characters());
                 if (rc < 0)
                     warnln("mv: unlink '{}': {}", old_path, strerror(errno));
             } else {

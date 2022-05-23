@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2018-2020, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2022, the SerenityOS developers.
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -7,8 +8,8 @@
 #include <AK/Badge.h>
 #include <LibCore/EventLoop.h>
 #include <LibCore/MimeData.h>
+#include <LibGUI/ConnectionToWindowServer.h>
 #include <LibGUI/DragOperation.h>
-#include <LibGUI/WindowServerConnection.h>
 #include <LibGfx/Bitmap.h>
 
 namespace GUI {
@@ -17,10 +18,6 @@ static DragOperation* s_current_drag_operation;
 
 DragOperation::DragOperation(Core::Object* parent)
     : Core::Object(parent)
-{
-}
-
-DragOperation::~DragOperation()
 {
 }
 
@@ -37,7 +34,7 @@ DragOperation::Outcome DragOperation::exec()
         drag_bitmap = bitmap->to_shareable_bitmap();
     }
 
-    auto started = WindowServerConnection::the().start_drag(
+    auto started = ConnectionToWindowServer::the().start_drag(
         m_mime_data->text(),
         m_mime_data->all_data(),
         drag_bitmap);
@@ -64,32 +61,32 @@ void DragOperation::done(Outcome outcome)
     m_event_loop->quit(0);
 }
 
-void DragOperation::notify_accepted(Badge<WindowServerConnection>)
+void DragOperation::notify_accepted(Badge<ConnectionToWindowServer>)
 {
     VERIFY(s_current_drag_operation);
     s_current_drag_operation->done(Outcome::Accepted);
 }
 
-void DragOperation::notify_cancelled(Badge<WindowServerConnection>)
+void DragOperation::notify_cancelled(Badge<ConnectionToWindowServer>)
 {
     if (s_current_drag_operation)
         s_current_drag_operation->done(Outcome::Cancelled);
 }
 
-void DragOperation::set_text(const String& text)
+void DragOperation::set_text(String const& text)
 {
     if (!m_mime_data)
         m_mime_data = Core::MimeData::construct();
     m_mime_data->set_text(text);
 }
-void DragOperation::set_bitmap(const Gfx::Bitmap* bitmap)
+void DragOperation::set_bitmap(Gfx::Bitmap const* bitmap)
 {
     if (!m_mime_data)
         m_mime_data = Core::MimeData::construct();
     if (bitmap)
         m_mime_data->set_data("image/x-raw-bitmap", bitmap->serialize_to_byte_buffer());
 }
-void DragOperation::set_data(const String& data_type, const String& data)
+void DragOperation::set_data(String const& data_type, String const& data)
 {
     if (!m_mime_data)
         m_mime_data = Core::MimeData::construct();

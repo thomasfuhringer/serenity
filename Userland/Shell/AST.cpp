@@ -49,7 +49,7 @@ ErrorOr<void> AK::Formatter<Shell::AST::Command>::format(FormatBuilder& builder,
     for (auto& redir : value.redirections) {
         TRY(builder.put_padding(' ', 1));
         if (redir.is_path_redirection()) {
-            auto path_redir = (const Shell::AST::PathRedirection*)&redir;
+            auto path_redir = (Shell::AST::PathRedirection const*)&redir;
             TRY(builder.put_i64(path_redir->fd));
             switch (path_redir->direction) {
             case Shell::AST::PathRedirection::Read:
@@ -67,12 +67,12 @@ ErrorOr<void> AK::Formatter<Shell::AST::Command>::format(FormatBuilder& builder,
             }
             TRY(builder.put_literal(path_redir->path));
         } else if (redir.is_fd_redirection()) {
-            auto* fdredir = (const Shell::AST::FdRedirection*)&redir;
+            auto* fdredir = (Shell::AST::FdRedirection const*)&redir;
             TRY(builder.put_i64(fdredir->new_fd));
             TRY(builder.put_literal(">"));
             TRY(builder.put_i64(fdredir->old_fd));
         } else if (redir.is_close_redirection()) {
-            auto close_redir = (const Shell::AST::CloseRedirection*)&redir;
+            auto close_redir = (Shell::AST::CloseRedirection const*)&redir;
             TRY(builder.put_i64(close_redir->fd));
             TRY(builder.put_literal(">&-"));
         } else {
@@ -106,12 +106,12 @@ ErrorOr<void> AK::Formatter<Shell::AST::Command>::format(FormatBuilder& builder,
 
 namespace Shell::AST {
 
-static inline void print_indented(const String& str, int indent)
+static inline void print_indented(StringView str, int indent)
 {
     dbgln("{}{}", String::repeated(' ', indent * 2), str);
 }
 
-static inline Optional<Position> merge_positions(const Optional<Position>& left, const Optional<Position>& right)
+static inline Optional<Position> merge_positions(Optional<Position> const& left, Optional<Position> const& right)
 {
     if (!left.has_value())
         return right;
@@ -260,7 +260,7 @@ void Node::clear_syntax_error()
     m_syntax_error_node->clear_syntax_error();
 }
 
-void Node::set_is_syntax_error(const SyntaxError& error_node)
+void Node::set_is_syntax_error(SyntaxError const& error_node)
 {
     if (!m_syntax_error_node) {
         m_syntax_error_node = error_node;
@@ -331,21 +331,44 @@ Node::Node(Position position)
 {
 }
 
-Vector<Line::CompletionSuggestion> Node::complete_for_editor(Shell& shell, size_t offset, const HitTestResult& hit_test_result)
+Vector<Line::CompletionSuggestion> Node::complete_for_editor(Shell& shell, size_t offset, HitTestResult const& hit_test_result)
 {
     auto matching_node = hit_test_result.matching_node;
     if (matching_node) {
-        if (matching_node->is_bareword()) {
-            auto* node = static_cast<BarewordLiteral*>(matching_node.ptr());
-            auto corrected_offset = find_offset_into_node(node->text(), offset - matching_node->position().start_offset);
+        auto kind = matching_node->kind();
+        StringLiteral::EnclosureType enclosure_type = StringLiteral::EnclosureType::None;
+        if (kind == Kind::StringLiteral)
+            enclosure_type = static_cast<StringLiteral*>(matching_node.ptr())->enclosure_type();
 
-            if (corrected_offset > node->text().length())
+        auto set_results_trivia = [enclosure_type](Vector<Line::CompletionSuggestion>&& suggestions) {
+            if (enclosure_type != StringLiteral::EnclosureType::None) {
+                for (auto& entry : suggestions)
+                    entry.trailing_trivia = { static_cast<u32>(enclosure_type == StringLiteral::EnclosureType::SingleQuotes ? '\'' : '"') };
+            }
+            return suggestions;
+        };
+        if (kind == Kind::BarewordLiteral || kind == Kind::StringLiteral) {
+            Shell::EscapeMode escape_mode;
+            StringView text;
+            size_t corrected_offset;
+            if (kind == Kind::BarewordLiteral) {
+                auto* node = static_cast<BarewordLiteral*>(matching_node.ptr());
+                text = node->text();
+                escape_mode = Shell::EscapeMode::Bareword;
+                corrected_offset = find_offset_into_node(text, offset - matching_node->position().start_offset, escape_mode);
+            } else {
+                auto* node = static_cast<StringLiteral*>(matching_node.ptr());
+                text = node->text();
+                escape_mode = enclosure_type == StringLiteral::EnclosureType::SingleQuotes ? Shell::EscapeMode::SingleQuotedString : Shell::EscapeMode::DoubleQuotedString;
+                corrected_offset = find_offset_into_node(text, offset - matching_node->position().start_offset + 1, escape_mode);
+            }
+
+            if (corrected_offset > text.length())
                 return {};
-            auto& text = node->text();
 
             // If the literal isn't an option, treat it as a path.
             if (!(text.starts_with("-") || text == "--" || text == "-"))
-                return shell.complete_path("", text, corrected_offset, Shell::ExecutableOnly::No);
+                return set_results_trivia(shell.complete_path("", text, corrected_offset, Shell::ExecutableOnly::No, hit_test_result.closest_command_node.ptr(), hit_test_result.matching_node, escape_mode));
 
             // If the literal is an option, we have to know the program name
             // should we have no way to get that, bail early.
@@ -363,13 +386,14 @@ Vector<Line::CompletionSuggestion> Node::complete_for_editor(Shell& shell, size_
             else
                 program_name = static_cast<StringLiteral*>(program_name_node.ptr())->text();
 
-            return shell.complete_option(program_name, text, corrected_offset);
+            return set_results_trivia(shell.complete_option(program_name, text, corrected_offset, hit_test_result.closest_command_node.ptr(), hit_test_result.matching_node));
         }
         return {};
     }
     auto result = hit_test_position(offset);
     if (!result.matching_node)
-        return {};
+        return shell.complete_path("", "", 0, Shell::ExecutableOnly::No, result.closest_command_node.ptr(), nullptr, Shell::EscapeMode::Bareword);
+
     auto node = result.matching_node;
     if (node->is_bareword() || node != result.closest_node_with_semantic_meaning)
         node = result.closest_node_with_semantic_meaning;
@@ -383,10 +407,6 @@ Vector<Line::CompletionSuggestion> Node::complete_for_editor(Shell& shell, size_
 Vector<Line::CompletionSuggestion> Node::complete_for_editor(Shell& shell, size_t offset)
 {
     return Node::complete_for_editor(shell, offset, { nullptr, nullptr, nullptr });
-}
-
-Node::~Node()
-{
 }
 
 void And::dump(int level) const
@@ -438,10 +458,6 @@ And::And(Position position, NonnullRefPtr<Node> left, NonnullRefPtr<Node> right,
         set_is_syntax_error(m_left->syntax_error_node());
     else if (m_right->is_syntax_error())
         set_is_syntax_error(m_right->syntax_error_node());
-}
-
-And::~And()
-{
 }
 
 void ListConcatenate::dump(int level) const
@@ -557,10 +573,6 @@ ListConcatenate::ListConcatenate(Position position, Vector<NonnullRefPtr<Node>> 
     }
 }
 
-ListConcatenate::~ListConcatenate()
-{
-}
-
 void Background::dump(int level) const
 {
     Node::dump(level);
@@ -594,10 +606,6 @@ Background::Background(Position position, NonnullRefPtr<Node> command)
         set_is_syntax_error(m_command->syntax_error_node());
 }
 
-Background::~Background()
-{
-}
-
 void BarewordLiteral::dump(int level) const
 {
     Node::dump(level);
@@ -612,8 +620,22 @@ RefPtr<Value> BarewordLiteral::run(RefPtr<Shell>)
 void BarewordLiteral::highlight_in_editor(Line::Editor& editor, Shell& shell, HighlightMetadata metadata)
 {
     if (metadata.is_first_in_list) {
-        if (shell.is_runnable(m_text)) {
-            editor.stylize({ m_position.start_offset, m_position.end_offset }, { Line::Style::Bold });
+        auto runnable = shell.runnable_path_for(m_text);
+        if (runnable.has_value()) {
+            Line::Style bold = { Line::Style::Bold };
+            Line::Style style = bold;
+
+#ifdef __serenity__
+            if (runnable->kind == Shell::RunnablePath::Kind::Executable || runnable->kind == Shell::RunnablePath::Kind::Alias) {
+                auto name = shell.help_path_for({}, *runnable);
+                if (name.has_value()) {
+                    auto url = URL::create_with_help_scheme(name.release_value(), shell.hostname);
+                    style = bold.unified_with(Line::Style::Hyperlink(url.to_string()));
+                }
+            }
+#endif
+
+            editor.stylize({ m_position.start_offset, m_position.end_offset }, style);
         } else {
             editor.stylize({ m_position.start_offset, m_position.end_offset }, { Line::Style::Foreground(Line::Style::XtermColor::Red) });
         }
@@ -647,10 +669,6 @@ void BarewordLiteral::highlight_in_editor(Line::Editor& editor, Shell& shell, Hi
 BarewordLiteral::BarewordLiteral(Position position, String text)
     : Node(move(position))
     , m_text(move(text))
-{
-}
-
-BarewordLiteral::~BarewordLiteral()
 {
 }
 
@@ -709,10 +727,6 @@ BraceExpansion::BraceExpansion(Position position, NonnullRefPtrVector<Node> entr
     }
 }
 
-BraceExpansion::~BraceExpansion()
-{
-}
-
 void CastToCommand::dump(int level) const
 {
     Node::dump(level);
@@ -745,10 +759,12 @@ HitTestResult CastToCommand::hit_test_position(size_t offset) const
     auto result = m_inner->hit_test_position(offset);
     if (!result.closest_node_with_semantic_meaning)
         result.closest_node_with_semantic_meaning = this;
+    if (!result.closest_command_node && position().contains(offset))
+        result.closest_command_node = this;
     return result;
 }
 
-Vector<Line::CompletionSuggestion> CastToCommand::complete_for_editor(Shell& shell, size_t offset, const HitTestResult& hit_test_result)
+Vector<Line::CompletionSuggestion> CastToCommand::complete_for_editor(Shell& shell, size_t offset, HitTestResult const& hit_test_result)
 {
     auto matching_node = hit_test_result.matching_node;
     if (!matching_node || !matching_node->is_bareword())
@@ -774,10 +790,6 @@ CastToCommand::CastToCommand(Position position, NonnullRefPtr<Node> inner)
 {
     if (m_inner->is_syntax_error())
         set_is_syntax_error(m_inner->syntax_error_node());
-}
-
-CastToCommand::~CastToCommand()
-{
 }
 
 void CastToList::dump(int level) const
@@ -842,10 +854,6 @@ CastToList::CastToList(Position position, RefPtr<Node> inner)
         set_is_syntax_error(m_inner->syntax_error_node());
 }
 
-CastToList::~CastToList()
-{
-}
-
 void CloseFdRedirection::dump(int level) const
 {
     Node::dump(level);
@@ -879,7 +887,7 @@ CloseFdRedirection::~CloseFdRedirection()
 void CommandLiteral::dump(int level) const
 {
     Node::dump(level);
-    print_indented("(Generated command literal)", level + 1);
+    print_indented(String::formatted("(Generated command literal: {})", m_command), level + 1);
 }
 
 RefPtr<Value> CommandLiteral::run(RefPtr<Shell>)
@@ -1116,7 +1124,7 @@ HitTestResult FunctionDeclaration::hit_test_position(size_t offset) const
     return result;
 }
 
-Vector<Line::CompletionSuggestion> FunctionDeclaration::complete_for_editor(Shell& shell, size_t offset, const HitTestResult& hit_test_result)
+Vector<Line::CompletionSuggestion> FunctionDeclaration::complete_for_editor(Shell& shell, size_t offset, HitTestResult const& hit_test_result)
 {
     auto matching_node = hit_test_result.matching_node;
     if (!matching_node)
@@ -1190,7 +1198,7 @@ RefPtr<Value> ForLoop::run(RefPtr<Shell> shell)
             return IterationDecision::Continue;
         }
 
-        if (!shell->has_error(Shell::ShellError::None))
+        if (shell->has_any_error() && !shell->has_error(Shell::ShellError::InternalControlFlowInterrupted))
             return IterationDecision::Break;
 
         if (block_value->is_job()) {
@@ -1199,13 +1207,12 @@ RefPtr<Value> ForLoop::run(RefPtr<Shell> shell)
                 return IterationDecision::Continue;
             shell->block_on_job(job);
 
-            if (job->signaled()) {
-                if (job->termination_signal() == SIGINT)
+            if (shell->has_any_error()) {
+                if (shell->has_error(Shell::ShellError::InternalControlFlowInterrupted))
                     ++consecutive_interruptions;
-                else
+
+                if (shell->has_error(Shell::ShellError::InternalControlFlowKilled))
                     return IterationDecision::Break;
-            } else {
-                consecutive_interruptions = 0;
             }
         }
         return IterationDecision::Continue;
@@ -1216,11 +1223,16 @@ RefPtr<Value> ForLoop::run(RefPtr<Shell> shell)
         Optional<StringView> index_name = m_index_variable.has_value() ? Optional<StringView>(m_index_variable->name) : Optional<StringView>();
         size_t i = 0;
         m_iterated_expression->for_each_entry(shell, [&](auto value) {
-            if (consecutive_interruptions == 2)
+            if (consecutive_interruptions >= 2)
                 return IterationDecision::Break;
 
-            if (shell && shell->has_any_error())
-                return IterationDecision::Break;
+            if (shell) {
+                if (shell->has_error(Shell::ShellError::InternalControlFlowInterrupted))
+                    shell->take_error();
+
+                if (shell->has_any_error())
+                    return IterationDecision::Break;
+            }
 
             RefPtr<Value> block_value;
 
@@ -1240,11 +1252,16 @@ RefPtr<Value> ForLoop::run(RefPtr<Shell> shell)
         });
     } else {
         for (;;) {
-            if (shell && shell->has_any_error())
+            if (consecutive_interruptions >= 2)
                 break;
 
-            if (consecutive_interruptions == 2)
-                break;
+            if (shell) {
+                if (shell->has_error(Shell::ShellError::InternalControlFlowInterrupted))
+                    shell->take_error();
+
+                if (shell->has_any_error())
+                    break;
+            }
 
             RefPtr<Value> block_value = m_block->run(shell);
             if (run(block_value) == IterationDecision::Break)
@@ -1438,7 +1455,7 @@ void HistoryEvent::dump(int level) const
     print_indented(String::formatted("{}({})", m_selector.event.index, m_selector.event.text), level + 3);
 
     print_indented("Word Selector", level + 1);
-    auto print_word_selector = [&](const HistorySelector::WordSelector& selector) {
+    auto print_word_selector = [&](HistorySelector::WordSelector const& selector) {
         switch (selector.kind) {
         case HistorySelector::WordSelectorKind::Index:
             print_indented(String::formatted("Index {}", selector.selector), level + 3);
@@ -1589,6 +1606,9 @@ void Execute::for_each_entry(RefPtr<Shell> shell, Function<IterationDecision(Non
     if (shell && shell->has_any_error())
         return;
 
+    if (!shell)
+        return;
+
     auto commands = shell->expand_aliases(move(unexpanded_commands));
 
     if (m_capture_stdout) {
@@ -1645,7 +1665,7 @@ void Execute::for_each_entry(RefPtr<Shell> shell, Function<IterationDecision(Non
                         }
                 } else {
                     auto entry_result = ByteBuffer::create_uninitialized(line_end + ifs.length());
-                    if (!entry_result.has_value()) {
+                    if (entry_result.is_error()) {
                         loop.quit(Break);
                         notifier->set_enabled(false);
                         return Break;
@@ -1737,7 +1757,7 @@ void Execute::for_each_entry(RefPtr<Shell> shell, Function<IterationDecision(Non
 
             if (!stream.eof()) {
                 auto entry_result = ByteBuffer::create_uninitialized(stream.size());
-                if (!entry_result.has_value()) {
+                if (entry_result.is_error()) {
                     shell->raise_error(Shell::ShellError::OutOfMemory, {}, position());
                     return;
                 }
@@ -1795,7 +1815,7 @@ HitTestResult Execute::hit_test_position(size_t offset) const
     return result;
 }
 
-Vector<Line::CompletionSuggestion> Execute::complete_for_editor(Shell& shell, size_t offset, const HitTestResult& hit_test_result)
+Vector<Line::CompletionSuggestion> Execute::complete_for_editor(Shell& shell, size_t offset, HitTestResult const& hit_test_result)
 {
     auto matching_node = hit_test_result.matching_node;
     if (!matching_node || !matching_node->is_bareword())
@@ -1848,7 +1868,7 @@ RefPtr<Value> IfCond::run(RefPtr<Shell> shell)
 
     // The condition could be a builtin, in which case it has already run and exited.
     if (cond->is_job()) {
-        auto cond_job_value = static_cast<const JobValue*>(cond.ptr());
+        auto cond_job_value = static_cast<JobValue const*>(cond.ptr());
         auto cond_job = cond_job_value->job();
 
         shell->block_on_job(cond_job);
@@ -1975,7 +1995,7 @@ void ImmediateExpression::highlight_in_editor(Line::Editor& editor, Shell& shell
         editor.stylize({ m_closing_brace_position->start_offset, m_closing_brace_position->end_offset }, { Line::Style::Foreground(Line::Style::XtermColor::Green) });
 }
 
-Vector<Line::CompletionSuggestion> ImmediateExpression::complete_for_editor(Shell& shell, size_t offset, const HitTestResult& hit_test_result)
+Vector<Line::CompletionSuggestion> ImmediateExpression::complete_for_editor(Shell& shell, size_t offset, HitTestResult const& hit_test_result)
 {
     auto matching_node = hit_test_result.matching_node;
     if (!matching_node || matching_node != this)
@@ -2035,6 +2055,13 @@ RefPtr<Value> Join::run(RefPtr<Shell> shell)
     auto left = m_left->to_lazy_evaluated_commands(shell);
     if (shell && shell->has_any_error())
         return make_ref_counted<ListValue>({});
+
+    if (left.last().should_wait && !left.last().next_chain.is_empty()) {
+        // Join (C0s*; C1) X -> (C0s*; Join C1 X)
+        auto& lhs_node = left.last().next_chain.last().node;
+        lhs_node = make_ref_counted<Join>(m_position, lhs_node, m_right);
+        return make_ref_counted<CommandSequenceValue>(move(left));
+    }
 
     auto right = m_right->to_lazy_evaluated_commands(shell);
     if (shell && shell->has_any_error())
@@ -2107,8 +2134,15 @@ void MatchExpr::dump(int level) const
             builder.append(')');
         }
         print_indented(builder.string_view(), level + 2);
-        for (auto& node : entry.options)
-            node.dump(level + 3);
+        entry.options.visit(
+            [&](NonnullRefPtrVector<Node> const& options) {
+                for (auto& option : options)
+                    option.dump(level + 3);
+            },
+            [&](Vector<Regex<ECMA262>> const& options) {
+                for (auto& option : options)
+                    print_indented(String::formatted("(regex: {})", option.pattern_value), level + 3);
+            });
         print_indented("(execute)", level + 2);
         if (entry.body)
             entry.body->dump(level + 3);
@@ -2126,39 +2160,59 @@ RefPtr<Value> MatchExpr::run(RefPtr<Shell> shell)
     auto list = value->resolve_as_list(shell);
 
     auto list_matches = [&](auto&& pattern, auto& spans) {
-        if (pattern.size() != list.size())
-            return false;
-
-        for (size_t i = 0; i < pattern.size(); ++i) {
-            Vector<AK::MaskSpan> mask_spans;
-            if (!list[i].matches(pattern[i], mask_spans))
+        if constexpr (IsSame<RemoveCVReference<decltype(pattern)>, Regex<ECMA262>>) {
+            if (list.size() != 1)
                 return false;
-            for (auto& span : mask_spans)
-                spans.append(list[i].substring(span.start, span.length));
-        }
+            auto& subject = list.first();
+            auto match = pattern.match(subject);
+            if (!match.success)
+                return false;
 
-        return true;
+            spans.ensure_capacity(match.n_capture_groups);
+            for (size_t i = 0; i < match.n_capture_groups; ++i) {
+                auto& capture = match.capture_group_matches[0][i];
+                spans.append(capture.view.to_string());
+            }
+            return true;
+        } else {
+            if (pattern.size() != list.size())
+                return false;
+
+            for (size_t i = 0; i < pattern.size(); ++i) {
+                Vector<AK::MaskSpan> mask_spans;
+                if (!list[i].matches(pattern[i], mask_spans))
+                    return false;
+                for (auto& span : mask_spans)
+                    spans.append(list[i].substring(span.start, span.length));
+            }
+
+            return true;
+        }
     };
 
-    auto resolve_pattern = [&](auto& option) {
-        Vector<String> pattern;
-        if (option.is_glob()) {
-            pattern.append(static_cast<const Glob*>(&option)->text());
-        } else if (option.is_bareword()) {
-            pattern.append(static_cast<const BarewordLiteral*>(&option)->text());
+    auto resolve_pattern = [&](auto& option) -> decltype(auto) {
+        if constexpr (IsSame<RemoveCVReference<decltype(option)>, Regex<ECMA262>>) {
+            return option;
         } else {
-            auto list = option.run(shell);
-            if (shell && shell->has_any_error())
-                return pattern;
+            Vector<String> pattern;
+            if (option.is_glob()) {
+                pattern.append(static_cast<const Glob*>(&option)->text());
+            } else if (option.is_bareword()) {
+                pattern.append(static_cast<const BarewordLiteral*>(&option)->text());
+            } else {
+                auto list = option.run(shell);
+                if (shell && shell->has_any_error())
+                    return pattern;
 
-            option.for_each_entry(shell, [&](auto&& value) {
-                pattern.extend(value->resolve_as_list(nullptr)); // Note: 'nullptr' incurs special behavior,
-                                                                 //       asking the node for a 'raw' value.
-                return IterationDecision::Continue;
-            });
+                option.for_each_entry(shell, [&](auto&& value) {
+                    pattern.extend(value->resolve_as_list(nullptr)); // Note: 'nullptr' incurs special behavior,
+                                                                     //       asking the node for a 'raw' value.
+                    return IterationDecision::Continue;
+                });
+            }
+
+            return pattern;
         }
-
-        return pattern;
     };
 
     auto frame = shell->push_frame(String::formatted("match ({})", this));
@@ -2166,24 +2220,31 @@ RefPtr<Value> MatchExpr::run(RefPtr<Shell> shell)
         shell->set_local_variable(m_expr_name, value, true);
 
     for (auto& entry : m_entries) {
-        for (auto& option : entry.options) {
-            Vector<String> spans;
-            if (list_matches(resolve_pattern(option), spans)) {
-                if (entry.body) {
-                    if (entry.match_names.has_value()) {
-                        size_t i = 0;
-                        for (auto& name : entry.match_names.value()) {
-                            if (spans.size() > i)
-                                shell->set_local_variable(name, make_ref_counted<AST::StringValue>(spans[i]), true);
-                            ++i;
+        auto result = entry.options.visit([&](auto& options) -> Variant<IterationDecision, RefPtr<Value>> {
+            for (auto& option : options) {
+                Vector<String> spans;
+                if (list_matches(resolve_pattern(option), spans)) {
+                    if (entry.body) {
+                        if (entry.match_names.has_value()) {
+                            size_t i = 0;
+                            for (auto& name : entry.match_names.value()) {
+                                if (spans.size() > i)
+                                    shell->set_local_variable(name, make_ref_counted<AST::StringValue>(spans[i]), true);
+                                ++i;
+                            }
                         }
+                        return entry.body->run(shell);
                     }
-                    return entry.body->run(shell);
-                } else {
-                    return make_ref_counted<AST::ListValue>({});
+                    return RefPtr<Value>(make_ref_counted<AST::ListValue>({}));
                 }
             }
-        }
+            return IterationDecision::Continue;
+        });
+        if (result.has<IterationDecision>() && result.get<IterationDecision>() == IterationDecision::Break)
+            break;
+
+        if (result.has<RefPtr<Value>>())
+            return move(result).get<RefPtr<Value>>();
     }
 
     shell->raise_error(Shell::ShellError::EvaluatedSyntaxError, "Non-exhaustive match rules!", position());
@@ -2201,8 +2262,12 @@ void MatchExpr::highlight_in_editor(Line::Editor& editor, Shell& shell, Highligh
 
     for (auto& entry : m_entries) {
         metadata.is_first_in_list = false;
-        for (auto& option : entry.options)
-            option.highlight_in_editor(editor, shell, metadata);
+        entry.options.visit(
+            [&](NonnullRefPtrVector<Node>& node_options) {
+                for (auto& option : node_options)
+                    option.highlight_in_editor(editor, shell, metadata);
+            },
+            [](auto&) {});
 
         metadata.is_first_in_list = true;
         if (entry.body)
@@ -2445,7 +2510,7 @@ HitTestResult PathRedirectionNode::hit_test_position(size_t offset) const
     return result;
 }
 
-Vector<Line::CompletionSuggestion> PathRedirectionNode::complete_for_editor(Shell& shell, size_t offset, const HitTestResult& hit_test_result)
+Vector<Line::CompletionSuggestion> PathRedirectionNode::complete_for_editor(Shell& shell, size_t offset, HitTestResult const& hit_test_result)
 {
     auto matching_node = hit_test_result.matching_node;
     if (!matching_node || !matching_node->is_bareword())
@@ -2457,7 +2522,7 @@ Vector<Line::CompletionSuggestion> PathRedirectionNode::complete_for_editor(Shel
     if (corrected_offset > node->text().length())
         return {};
 
-    return shell.complete_path("", node->text(), corrected_offset, Shell::ExecutableOnly::No);
+    return shell.complete_path("", node->text(), corrected_offset, Shell::ExecutableOnly::No, nullptr, nullptr);
 }
 
 PathRedirectionNode::~PathRedirectionNode()
@@ -2697,6 +2762,15 @@ HitTestResult Sequence::hit_test_position(size_t offset) const
     return {};
 }
 
+RefPtr<Node> Sequence::leftmost_trivial_literal() const
+{
+    for (auto& entry : m_entries) {
+        if (auto node = entry.leftmost_trivial_literal())
+            return node;
+    }
+    return nullptr;
+}
+
 Sequence::Sequence(Position position, NonnullRefPtrVector<Node> entries, Vector<Position> separator_positions)
     : Node(move(position))
     , m_entries(move(entries))
@@ -2777,7 +2851,7 @@ HitTestResult Slice::hit_test_position(size_t offset) const
     return m_selector->hit_test_position(offset);
 }
 
-Vector<Line::CompletionSuggestion> Slice::complete_for_editor(Shell& shell, size_t offset, const HitTestResult& hit_test_result)
+Vector<Line::CompletionSuggestion> Slice::complete_for_editor(Shell& shell, size_t offset, HitTestResult const& hit_test_result)
 {
     // TODO: Maybe intercept this, and suggest values in range?
     return m_selector->complete_for_editor(shell, offset, hit_test_result);
@@ -2827,13 +2901,16 @@ void SimpleVariable::highlight_in_editor(Line::Editor& editor, Shell& shell, Hig
 
 HitTestResult SimpleVariable::hit_test_position(size_t offset) const
 {
+    if (!position().contains(offset))
+        return {};
+
     if (m_slice && m_slice->position().contains(offset))
         return m_slice->hit_test_position(offset);
 
     return { this, this, nullptr };
 }
 
-Vector<Line::CompletionSuggestion> SimpleVariable::complete_for_editor(Shell& shell, size_t offset, const HitTestResult& hit_test_result)
+Vector<Line::CompletionSuggestion> SimpleVariable::complete_for_editor(Shell& shell, size_t offset, HitTestResult const& hit_test_result)
 {
     auto matching_node = hit_test_result.matching_node;
     if (!matching_node)
@@ -2887,7 +2964,7 @@ void SpecialVariable::highlight_in_editor(Line::Editor& editor, Shell& shell, Hi
         m_slice->highlight_in_editor(editor, shell, metadata);
 }
 
-Vector<Line::CompletionSuggestion> SpecialVariable::complete_for_editor(Shell&, size_t, const HitTestResult&)
+Vector<Line::CompletionSuggestion> SpecialVariable::complete_for_editor(Shell&, size_t, HitTestResult const&)
 {
     return {};
 }
@@ -2991,26 +3068,39 @@ void Juxtaposition::highlight_in_editor(Line::Editor& editor, Shell& shell, High
     }
 }
 
-Vector<Line::CompletionSuggestion> Juxtaposition::complete_for_editor(Shell& shell, size_t offset, const HitTestResult& hit_test_result)
+Vector<Line::CompletionSuggestion> Juxtaposition::complete_for_editor(Shell& shell, size_t offset, HitTestResult const& hit_test_result)
 {
     auto matching_node = hit_test_result.matching_node;
-    // '~/foo/bar' is special, we have to actually resolve the tilde
-    // then complete the bareword with that path prefix.
-    if (m_right->is_bareword() && m_left->is_tilde()) {
-        auto tilde_value = m_left->run(shell)->resolve_as_list(shell)[0];
-
-        auto corrected_offset = offset - matching_node->position().start_offset;
-        auto* node = static_cast<BarewordLiteral*>(matching_node.ptr());
-
-        if (corrected_offset > node->text().length())
-            return {};
-
-        auto text = node->text().substring(1, node->text().length() - 1);
-
-        return shell.complete_path(tilde_value, text, corrected_offset - 1, Shell::ExecutableOnly::No);
+    if (m_left->would_execute() || m_right->would_execute()) {
+        return {};
     }
 
-    return Node::complete_for_editor(shell, offset, hit_test_result);
+    // '~/foo/bar' is special, we have to actually resolve the tilde
+    // then complete the bareword with that path prefix.
+    auto left_values = m_left->run(shell)->resolve_as_list(shell);
+
+    if (left_values.is_empty())
+        return m_right->complete_for_editor(shell, offset, hit_test_result);
+
+    auto& left_value = left_values.first();
+
+    auto right_values = m_right->run(shell)->resolve_as_list(shell);
+    StringView right_value {};
+
+    auto corrected_offset = offset - matching_node->position().start_offset;
+
+    if (!right_values.is_empty())
+        right_value = right_values.first();
+
+    if (m_left->is_tilde() && !right_value.is_empty()) {
+        right_value = right_value.substring_view(1);
+        corrected_offset--;
+    }
+
+    if (corrected_offset > right_value.length())
+        return {};
+
+    return shell.complete_path(left_value, right_value, corrected_offset, Shell::ExecutableOnly::No, hit_test_result.closest_command_node.ptr(), hit_test_result.matching_node);
 }
 
 HitTestResult Juxtaposition::hit_test_position(size_t offset) const
@@ -3064,9 +3154,10 @@ void StringLiteral::highlight_in_editor(Line::Editor& editor, Shell&, HighlightM
     editor.stylize({ m_position.start_offset, m_position.end_offset }, move(style));
 }
 
-StringLiteral::StringLiteral(Position position, String text)
+StringLiteral::StringLiteral(Position position, String text, EnclosureType enclosure_type)
     : Node(move(position))
     , m_text(move(text))
+    , m_enclosure_type(enclosure_type)
 {
 }
 
@@ -3154,7 +3245,7 @@ SyntaxError::SyntaxError(Position position, String error, bool is_continuable)
 {
 }
 
-const SyntaxError& SyntaxError::syntax_error_node() const
+SyntaxError const& SyntaxError::syntax_error_node() const
 {
     return *this;
 }
@@ -3206,7 +3297,7 @@ HitTestResult Tilde::hit_test_position(size_t offset) const
     return { this, this, nullptr };
 }
 
-Vector<Line::CompletionSuggestion> Tilde::complete_for_editor(Shell& shell, size_t offset, const HitTestResult& hit_test_result)
+Vector<Line::CompletionSuggestion> Tilde::complete_for_editor(Shell& shell, size_t offset, HitTestResult const& hit_test_result)
 {
     auto matching_node = hit_test_result.matching_node;
     if (!matching_node)
@@ -3375,6 +3466,14 @@ VariableDeclarations::~VariableDeclarations()
 Value::~Value()
 {
 }
+
+String Value::resolve_as_string(RefPtr<Shell> shell)
+{
+    if (shell)
+        shell->raise_error(Shell::ShellError::EvaluatedSyntaxError, "Conversion to string not allowed");
+    return {};
+}
+
 Vector<AST::Command> Value::resolve_as_commands(RefPtr<Shell> shell)
 {
     Command command;
@@ -3449,10 +3548,9 @@ Vector<Command> CommandSequenceValue::resolve_as_commands(RefPtr<Shell>)
     return m_contained_values;
 }
 
-Vector<String> CommandValue::resolve_as_list(RefPtr<Shell> shell)
+Vector<String> CommandValue::resolve_as_list(RefPtr<Shell>)
 {
-    shell->raise_error(Shell::ShellError::EvaluatedSyntaxError, "Unexpected cast of a command to a list");
-    return {};
+    return m_command.argv;
 }
 
 Vector<Command> CommandValue::resolve_as_commands(RefPtr<Shell>)
@@ -3467,6 +3565,14 @@ JobValue::~JobValue()
 StringValue::~StringValue()
 {
 }
+
+String StringValue::resolve_as_string(RefPtr<Shell> shell)
+{
+    if (m_split.is_null())
+        return m_string;
+    return Value::resolve_as_string(shell);
+}
+
 Vector<String> StringValue::resolve_as_list(RefPtr<Shell> shell)
 {
     if (is_list()) {
@@ -3506,6 +3612,19 @@ Vector<String> GlobValue::resolve_as_list(RefPtr<Shell> shell)
 SimpleVariableValue::~SimpleVariableValue()
 {
 }
+
+String SimpleVariableValue::resolve_as_string(RefPtr<Shell> shell)
+{
+    if (!shell)
+        return resolve_slices(shell, String {}, m_slices);
+
+    if (auto value = resolve_without_cast(shell); value != this)
+        return value->resolve_as_string(shell);
+
+    char* env_value = getenv(m_name.characters());
+    return resolve_slices(shell, env_value, m_slices);
+}
+
 Vector<String> SimpleVariableValue::resolve_as_list(RefPtr<Shell> shell)
 {
     if (!shell)
@@ -3541,6 +3660,21 @@ SpecialVariableValue::~SpecialVariableValue()
 {
 }
 
+String SpecialVariableValue::resolve_as_string(RefPtr<Shell> shell)
+{
+    if (!shell)
+        return {};
+
+    auto result = resolve_as_list(shell);
+    if (result.size() == 1)
+        return result[0];
+
+    if (result.is_empty())
+        return {};
+
+    return Value::resolve_as_string(shell);
+}
+
 Vector<String> SpecialVariableValue::resolve_as_list(RefPtr<Shell> shell)
 {
     if (!shell)
@@ -3548,7 +3682,7 @@ Vector<String> SpecialVariableValue::resolve_as_list(RefPtr<Shell> shell)
 
     switch (m_name) {
     case '?':
-        return { resolve_slices(shell, String::number(shell->last_return_code), m_slices) };
+        return { resolve_slices(shell, String::number(shell->last_return_code.value_or(0)), m_slices) };
     case '$':
         return { resolve_slices(shell, String::number(getpid()), m_slices) };
     case '*':
@@ -3572,6 +3706,12 @@ Vector<String> SpecialVariableValue::resolve_as_list(RefPtr<Shell> shell)
 TildeValue::~TildeValue()
 {
 }
+
+String TildeValue::resolve_as_string(RefPtr<Shell> shell)
+{
+    return resolve_as_list(shell).first();
+}
+
 Vector<String> TildeValue::resolve_as_list(RefPtr<Shell> shell)
 {
     StringBuilder builder;

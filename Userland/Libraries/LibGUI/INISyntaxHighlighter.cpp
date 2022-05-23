@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2020, Hüseyin Aslıtürk <asliturk@hotmail.com>
+ * Copyright (c) 2022, the SerenityOS developers.
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -10,12 +11,12 @@
 
 namespace GUI {
 
-static Syntax::TextStyle style_for_token_type(const Gfx::Palette& palette, IniToken::Type type)
+static Syntax::TextStyle style_for_token_type(Gfx::Palette const& palette, IniToken::Type type)
 {
     switch (type) {
     case IniToken::Type::LeftBracket:
     case IniToken::Type::RightBracket:
-    case IniToken::Type::section:
+    case IniToken::Type::Section:
         return { palette.syntax_keyword(), true };
     case IniToken::Type::Name:
         return { palette.syntax_identifier() };
@@ -36,7 +37,7 @@ bool IniSyntaxHighlighter::is_identifier(u64 token) const
     return ini_token == GUI::IniToken::Type::Name;
 }
 
-void IniSyntaxHighlighter::rehighlight(const Palette& palette)
+void IniSyntaxHighlighter::rehighlight(Palette const& palette)
 {
     auto text = m_client->get_text();
     IniLexer lexer(text);
@@ -74,10 +75,6 @@ Vector<IniSyntaxHighlighter::MatchingTokenPair> IniSyntaxHighlighter::matching_t
 bool IniSyntaxHighlighter::token_types_equal(u64 token1, u64 token2) const
 {
     return static_cast<GUI::IniToken::Type>(token1) == static_cast<GUI::IniToken::Type>(token2);
-}
-
-IniSyntaxHighlighter::~IniSyntaxHighlighter()
-{
 }
 
 }

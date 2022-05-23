@@ -1,6 +1,7 @@
 /*
  * Copyright (c) 2019-2020, Jesse Buhagiar <jooster669@gmail.com>
  * Copyright (c) 2020-2021, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2022, the SerenityOS developers.
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -15,13 +16,13 @@
 #include <LibGUI/Button.h>
 #include <LibGUI/Clipboard.h>
 #include <LibGUI/ComboBox.h>
+#include <LibGUI/ConnectionToWindowServer.h>
 #include <LibGUI/Desktop.h>
 #include <LibGUI/FilePicker.h>
 #include <LibGUI/FileSystemModel.h>
 #include <LibGUI/IconView.h>
 #include <LibGUI/ItemListModel.h>
 #include <LibGUI/MessageBox.h>
-#include <LibGUI/WindowServerConnection.h>
 #include <LibGfx/Palette.h>
 #include <LibGfx/SystemTheme.h>
 
@@ -30,7 +31,8 @@
 
 namespace DisplaySettings {
 
-BackgroundSettingsWidget::BackgroundSettingsWidget()
+BackgroundSettingsWidget::BackgroundSettingsWidget(bool& background_settings_changed)
+    : m_background_settings_changed { background_settings_changed }
 {
     m_modes.append("tile");
     m_modes.append("center");
@@ -38,10 +40,6 @@ BackgroundSettingsWidget::BackgroundSettingsWidget()
 
     create_frame();
     load_current_settings();
-}
-
-BackgroundSettingsWidget::~BackgroundSettingsWidget()
-{
 }
 
 void BackgroundSettingsWidget::create_frame()
@@ -63,6 +61,7 @@ void BackgroundSettingsWidget::create_frame()
         }
 
         m_monitor_widget->set_wallpaper(path);
+        set_modified(true);
     };
 
     m_context_menu = GUI::Menu::construct();
@@ -73,7 +72,12 @@ void BackgroundSettingsWidget::create_frame()
     m_context_menu->add_action(*m_show_in_file_manager_action);
 
     m_context_menu->add_separator();
-    m_copy_action = GUI::CommonActions::make_copy_action([this](auto&) { GUI::Clipboard::the().set_plain_text(m_monitor_widget->wallpaper()); }, this);
+    m_copy_action = GUI::CommonActions::make_copy_action(
+        [this](auto&) {
+            auto url = URL::create_with_file_protocol(m_monitor_widget->wallpaper()).to_string();
+            GUI::Clipboard::the().set_data(url.bytes(), "text/uri-list");
+        },
+        this);
     m_context_menu->add_action(*m_copy_action);
 
     m_wallpaper_view->on_context_menu_request = [&](const GUI::ModelIndex& index, const GUI::ContextMenuEvent& event) {
@@ -89,26 +93,36 @@ void BackgroundSettingsWidget::create_frame()
             return;
         m_wallpaper_view->selection().clear();
         m_monitor_widget->set_wallpaper(path.value());
+        m_background_settings_changed = true;
+        set_modified(true);
     };
 
     m_mode_combo = *find_descendant_of_type_named<GUI::ComboBox>("mode_combo");
     m_mode_combo->set_only_allow_values_from_model(true);
     m_mode_combo->set_model(*GUI::ItemListModel<String>::create(m_modes));
-    m_mode_combo->on_change = [this](auto&, const GUI::ModelIndex& index) {
+    bool first_mode_change = true;
+    m_mode_combo->on_change = [this, first_mode_change](auto&, const GUI::ModelIndex& index) mutable {
         m_monitor_widget->set_wallpaper_mode(m_modes.at(index.row()));
+        m_background_settings_changed = !first_mode_change;
+        first_mode_change = false;
+        set_modified(true);
     };
 
     m_color_input = *find_descendant_of_type_named<GUI::ColorInput>("color_input");
     m_color_input->set_color_has_alpha_channel(false);
     m_color_input->set_color_picker_title("Select color for desktop");
-    m_color_input->on_change = [this] {
+    bool first_color_change = true;
+    m_color_input->on_change = [this, first_color_change]() mutable {
         m_monitor_widget->set_background_color(m_color_input->color());
+        m_background_settings_changed = !first_color_change;
+        first_color_change = false;
+        set_modified(true);
     };
 }
 
 void BackgroundSettingsWidget::load_current_settings()
 {
-    auto ws_config = Core::ConfigFile::open("/etc/WindowServer.ini");
+    auto ws_config = Core::ConfigFile::open("/etc/WindowServer.ini").release_value_but_fixme_should_propagate_errors();
 
     auto selected_wallpaper = Config::read_string("WindowManager", "Background", "Wallpaper", "");
     if (!selected_wallpaper.is_empty()) {
@@ -123,7 +137,7 @@ void BackgroundSettingsWidget::load_current_settings()
         mode = "center";
     }
     m_monitor_widget->set_wallpaper_mode(mode);
-    m_mode_combo->set_selected_index(m_modes.find_first_index(mode).value_or(0));
+    m_mode_combo->set_selected_index(m_modes.find_first_index(mode).value_or(0), GUI::AllowCallback::No);
 
     auto palette_desktop_color = palette().desktop_background();
     auto background_color = ws_config->read_entry("Background", "Color", "");
@@ -134,15 +148,14 @@ void BackgroundSettingsWidget::load_current_settings()
             palette_desktop_color = opt_color.value();
     }
 
-    m_color_input->set_color(palette_desktop_color);
+    m_color_input->set_color(palette_desktop_color, GUI::AllowCallback::No);
     m_monitor_widget->set_background_color(palette_desktop_color);
+    m_background_settings_changed = false;
 }
 
 void BackgroundSettingsWidget::apply_settings()
 {
-    if (GUI::Desktop::the().set_wallpaper(m_monitor_widget->wallpaper()))
-        Config::write_string("WindowManager", "Background", "Wallpaper", m_monitor_widget->wallpaper());
-    else
+    if (!GUI::Desktop::the().set_wallpaper(m_monitor_widget->wallpaper_bitmap(), m_monitor_widget->wallpaper()))
         GUI::MessageBox::show_error(window(), String::formatted("Unable to load file {} as wallpaper", m_monitor_widget->wallpaper()));
 
     GUI::Desktop::the().set_background_color(m_color_input->text());

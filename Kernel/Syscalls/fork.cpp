@@ -6,24 +6,33 @@
 
 #include <Kernel/Debug.h>
 #include <Kernel/FileSystem/Custody.h>
-#include <Kernel/FileSystem/OpenFileDescription.h>
 #include <Kernel/Memory/Region.h>
 #include <Kernel/PerformanceManager.h>
 #include <Kernel/Process.h>
+#include <Kernel/Scheduler.h>
 
 namespace Kernel {
 
 ErrorOr<FlatPtr> Process::sys$fork(RegisterState& regs)
 {
     VERIFY_PROCESS_BIG_LOCK_ACQUIRED(this);
-    REQUIRE_PROMISE(proc);
+    TRY(require_promise(Pledge::proc));
     RefPtr<Thread> child_first_thread;
     auto child_name = TRY(m_name->try_clone());
-    auto child = TRY(Process::try_create(child_first_thread, move(child_name), uid(), gid(), pid(), m_is_kernel_process, m_cwd, m_executable, m_tty, this));
-    child->m_veil_state = m_veil_state;
-    child->m_unveiled_paths = m_unveiled_paths.deep_copy();
+    auto child = TRY(Process::try_create(child_first_thread, move(child_name), uid(), gid(), pid(), m_is_kernel_process, current_directory(), m_executable, m_tty, this));
+    TRY(m_unveil_data.with([&](auto& parent_unveil_data) -> ErrorOr<void> {
+        return child->m_unveil_data.with([&](auto& child_unveil_data) -> ErrorOr<void> {
+            child_unveil_data.state = parent_unveil_data.state;
+            child_unveil_data.paths = TRY(parent_unveil_data.paths.deep_copy());
+            return {};
+        });
+    }));
 
-    TRY(child->m_fds.try_clone(m_fds));
+    TRY(child->m_fds.with_exclusive([&](auto& child_fds) {
+        return m_fds.with_exclusive([&](auto& parent_fds) {
+            return child_fds.try_clone(parent_fds);
+        });
+    }));
 
     child->m_pg = m_pg;
 
@@ -42,6 +51,13 @@ ErrorOr<FlatPtr> Process::sys$fork(RegisterState& regs)
 
     dbgln_if(FORK_DEBUG, "fork: child={}", child);
     child->address_space().set_enforces_syscall_regions(address_space().enforces_syscall_regions());
+
+    // A child created via fork(2) inherits a copy of its parent's signal mask
+    child_first_thread->update_signal_mask(Thread::current()->signal_mask());
+
+    // A child process created via fork(2) inherits a copy of its parent's alternate signal stack settings.
+    child_first_thread->m_alternative_signal_stack = Thread::current()->m_alternative_signal_stack;
+    child_first_thread->m_alternative_signal_stack_size = Thread::current()->m_alternative_signal_stack_size;
 
 #if ARCH(I386)
     auto& child_regs = child_first_thread->m_regs;
@@ -93,13 +109,14 @@ ErrorOr<FlatPtr> Process::sys$fork(RegisterState& regs)
     {
         SpinlockLocker lock(address_space().get_lock());
         for (auto& region : address_space().regions()) {
-            dbgln_if(FORK_DEBUG, "fork: cloning Region({}) '{}' @ {}", region, region->name(), region->vaddr());
-            auto region_clone = TRY(region->try_clone());
-            auto* child_region = TRY(child->address_space().add_region(move(region_clone)));
-            TRY(child_region->map(child->address_space().page_directory(), Memory::ShouldFlushTLB::No));
+            dbgln_if(FORK_DEBUG, "fork: cloning Region '{}' @ {}", region.name(), region.vaddr());
+            auto region_clone = TRY(region.try_clone());
+            TRY(region_clone->map(child->address_space().page_directory(), Memory::ShouldFlushTLB::No));
+            TRY(child->address_space().region_tree().place_specifically(*region_clone, region.range()));
+            auto* child_region = region_clone.leak_ptr();
 
-            if (region == m_master_tls_region.unsafe_ptr())
-                child->m_master_tls_region = child_region;
+            if (&region == m_master_tls_region.unsafe_ptr())
+                child->m_master_tls_region = TRY(child_region->try_make_weak_ptr());
         }
     }
 

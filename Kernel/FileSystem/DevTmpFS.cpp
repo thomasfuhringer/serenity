@@ -16,9 +16,7 @@ ErrorOr<NonnullRefPtr<DevTmpFS>> DevTmpFS::try_create()
     return adopt_nonnull_ref_or_enomem(new (nothrow) DevTmpFS);
 }
 
-DevTmpFS::DevTmpFS()
-{
-}
+DevTmpFS::DevTmpFS() = default;
 
 size_t DevTmpFS::allocate_inode_index()
 {
@@ -28,9 +26,7 @@ size_t DevTmpFS::allocate_inode_index()
     return 1 + m_next_inode_index.value();
 }
 
-DevTmpFS::~DevTmpFS()
-{
-}
+DevTmpFS::~DevTmpFS() = default;
 
 ErrorOr<void> DevTmpFS::initialize()
 {
@@ -48,7 +44,7 @@ DevTmpFSInode::DevTmpFSInode(DevTmpFS& fs)
 {
 }
 
-DevTmpFSInode::DevTmpFSInode(DevTmpFS& fs, unsigned major_number, unsigned minor_number)
+DevTmpFSInode::DevTmpFSInode(DevTmpFS& fs, MajorNumber major_number, MinorNumber minor_number)
     : Inode(fs, fs.allocate_inode_index())
     , m_major_number(major_number)
     , m_minor_number(minor_number)
@@ -75,7 +71,7 @@ ErrorOr<void> DevTmpFSInode::flush_metadata()
     return {};
 }
 
-ErrorOr<size_t> DevTmpFSInode::write_bytes(off_t, size_t, const UserOrKernelBuffer&, OpenFileDescription*)
+ErrorOr<size_t> DevTmpFSInode::write_bytes(off_t, size_t, UserOrKernelBuffer const&, OpenFileDescription*)
 {
     VERIFY_NOT_REACHED();
 }
@@ -167,9 +163,7 @@ StringView DevTmpFSLinkInode::name() const
     return m_name->view();
 }
 
-DevTmpFSLinkInode::~DevTmpFSLinkInode()
-{
-}
+DevTmpFSLinkInode::~DevTmpFSLinkInode() = default;
 
 DevTmpFSLinkInode::DevTmpFSLinkInode(DevTmpFS& fs, NonnullOwnPtr<KString> name)
     : DevTmpFSInode(fs)
@@ -206,9 +200,7 @@ DevTmpFSDirectoryInode::DevTmpFSDirectoryInode(DevTmpFS& fs, NonnullOwnPtr<KStri
     , m_name(move(name))
 {
 }
-DevTmpFSDirectoryInode::~DevTmpFSDirectoryInode()
-{
-}
+DevTmpFSDirectoryInode::~DevTmpFSDirectoryInode() = default;
 
 ErrorOr<void> DevTmpFSDirectoryInode::traverse_as_directory(Function<ErrorOr<void>(FileSystem::DirectoryEntryView const&)> callback) const
 {
@@ -258,13 +250,14 @@ ErrorOr<NonnullRefPtr<Inode>> DevTmpFSDirectoryInode::create_child(StringView na
     if (metadata.is_directory()) {
         auto name_kstring = TRY(KString::try_create(name));
         auto new_directory_inode = TRY(adopt_nonnull_ref_or_enomem(new (nothrow) DevTmpFSDirectoryInode(fs(), move(name_kstring))));
+        TRY(new_directory_inode->chmod(mode));
         m_nodes.append(*new_directory_inode);
         return new_directory_inode;
     }
     if (metadata.is_device()) {
         auto name_kstring = TRY(KString::try_create(name));
-        unsigned major = major_from_encoded_device(device_mode);
-        unsigned minor = minor_from_encoded_device(device_mode);
+        auto major = major_from_encoded_device(device_mode);
+        auto minor = minor_from_encoded_device(device_mode);
         auto new_device_inode = TRY(adopt_nonnull_ref_or_enomem(new (nothrow) DevTmpFSDeviceInode(fs(), major, minor, is_block_device(mode), move(name_kstring))));
         TRY(new_device_inode->chmod(mode));
         m_nodes.append(*new_device_inode);
@@ -285,9 +278,7 @@ DevTmpFSRootDirectoryInode::DevTmpFSRootDirectoryInode(DevTmpFS& fs)
 {
     m_mode = 0555;
 }
-DevTmpFSRootDirectoryInode::~DevTmpFSRootDirectoryInode()
-{
-}
+DevTmpFSRootDirectoryInode::~DevTmpFSRootDirectoryInode() = default;
 ErrorOr<void> DevTmpFSRootDirectoryInode::chmod(mode_t)
 {
     return EPERM;
@@ -298,16 +289,14 @@ ErrorOr<void> DevTmpFSRootDirectoryInode::chown(UserID, GroupID)
     return EPERM;
 }
 
-DevTmpFSDeviceInode::DevTmpFSDeviceInode(DevTmpFS& fs, unsigned major_number, unsigned minor_number, bool block_device, NonnullOwnPtr<KString> name)
+DevTmpFSDeviceInode::DevTmpFSDeviceInode(DevTmpFS& fs, MajorNumber major_number, MinorNumber minor_number, bool block_device, NonnullOwnPtr<KString> name)
     : DevTmpFSInode(fs, major_number, minor_number)
     , m_name(move(name))
     , m_block_device(block_device)
 {
 }
 
-DevTmpFSDeviceInode::~DevTmpFSDeviceInode()
-{
-}
+DevTmpFSDeviceInode::~DevTmpFSDeviceInode() = default;
 
 StringView DevTmpFSDeviceInode::name() const
 {
@@ -329,7 +318,7 @@ ErrorOr<size_t> DevTmpFSDeviceInode::read_bytes(off_t offset, size_t count, User
     return result.value();
 }
 
-ErrorOr<size_t> DevTmpFSDeviceInode::write_bytes(off_t offset, size_t count, const UserOrKernelBuffer& buffer, OpenFileDescription* description)
+ErrorOr<size_t> DevTmpFSDeviceInode::write_bytes(off_t offset, size_t count, UserOrKernelBuffer const& buffer, OpenFileDescription* description)
 {
     MutexLocker locker(m_inode_lock);
     VERIFY(!!description);

@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2018-2020, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2022, the SerenityOS developers.
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -7,13 +8,13 @@
 #include <LibGUI/BoxLayout.h>
 #include <LibGUI/Button.h>
 #include <LibGUI/ColorPicker.h>
+#include <LibGUI/ConnectionToWindowServer.h>
 #include <LibGUI/Frame.h>
 #include <LibGUI/Label.h>
 #include <LibGUI/Painter.h>
 #include <LibGUI/SpinBox.h>
 #include <LibGUI/TabWidget.h>
 #include <LibGUI/TextBox.h>
-#include <LibGUI/WindowServerConnection.h>
 #include <LibGfx/Palette.h>
 
 namespace GUI {
@@ -22,7 +23,7 @@ class ColorButton : public AbstractButton {
     C_OBJECT(ColorButton);
 
 public:
-    virtual ~ColorButton() override;
+    virtual ~ColorButton() override = default;
 
     void set_selected(bool selected);
     Color color() const { return m_color; }
@@ -137,7 +138,6 @@ public:
         auto window = Window::construct();
         window->set_main_widget(this);
         window->set_has_alpha_channel(true);
-        window->set_background_color(Color::Transparent);
         window->set_fullscreen(true);
         window->set_frameless(true);
         window->show();
@@ -147,7 +147,7 @@ public:
         return m_col;
     }
 
-    virtual ~ColorSelectOverlay() override { }
+    virtual ~ColorSelectOverlay() override = default;
     Function<void(Color)> on_color_changed;
 
 private:
@@ -159,10 +159,12 @@ private:
     virtual void mousedown_event(GUI::MouseEvent&) override { m_event_loop->quit(1); }
     virtual void mousemove_event(GUI::MouseEvent&) override
     {
-        auto new_col = WindowServerConnection::the().get_color_under_cursor();
+        auto new_col = ConnectionToWindowServer::the().get_color_under_cursor();
+        if (!new_col.has_value())
+            return;
         if (new_col == m_col)
             return;
-        m_col = new_col;
+        m_col = new_col.value();
         if (on_color_changed)
             on_color_changed(m_col);
     }
@@ -190,10 +192,6 @@ ColorPicker::ColorPicker(Color color, Window* parent_window, String title)
     resize(458, 326);
 
     build_ui();
-}
-
-ColorPicker::~ColorPicker()
-{
 }
 
 void ColorPicker::set_color_has_alpha_channel(bool has_alpha)
@@ -238,14 +236,14 @@ void ColorPicker::build_ui()
     ok_button.set_fixed_width(80);
     ok_button.set_text("OK");
     ok_button.on_click = [this](auto) {
-        done(ExecOK);
+        done(ExecResult::OK);
     };
 
     auto& cancel_button = button_container.add<Button>();
     cancel_button.set_fixed_width(80);
     cancel_button.set_text("Cancel");
     cancel_button.on_click = [this](auto) {
-        done(ExecCancel);
+        done(ExecResult::Cancel);
     };
 }
 
@@ -457,10 +455,6 @@ ColorButton::ColorButton(ColorPicker& picker, Color color)
     m_color = color;
 }
 
-ColorButton::~ColorButton()
-{
-}
-
 void ColorButton::set_selected(bool selected)
 {
     m_selected = selected;
@@ -470,7 +464,7 @@ void ColorButton::doubleclick_event(GUI::MouseEvent&)
 {
     click();
     m_selected = true;
-    m_picker.done(Dialog::ExecOK);
+    m_picker.done(Dialog::ExecResult::OK);
 }
 
 void ColorButton::paint_event(PaintEvent& event)

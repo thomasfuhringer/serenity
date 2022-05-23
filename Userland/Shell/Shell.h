@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2020-2021, the SerenityOS developers.
+ * Copyright (c) 2020-2022, the SerenityOS developers.
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -8,11 +8,14 @@
 
 #include "Job.h"
 #include "Parser.h"
+#include <AK/Array.h>
 #include <AK/CircularQueue.h>
 #include <AK/HashMap.h>
 #include <AK/NonnullOwnPtrVector.h>
+#include <AK/StackInfo.h>
 #include <AK/String.h>
 #include <AK/StringBuilder.h>
+#include <AK/StringView.h>
 #include <AK/Types.h>
 #include <AK/Vector.h>
 #include <LibCore/Notifier.h>
@@ -48,11 +51,14 @@
     __ENUMERATE_SHELL_BUILTIN(bg)      \
     __ENUMERATE_SHELL_BUILTIN(wait)    \
     __ENUMERATE_SHELL_BUILTIN(dump)    \
-    __ENUMERATE_SHELL_BUILTIN(kill)
+    __ENUMERATE_SHELL_BUILTIN(kill)    \
+    __ENUMERATE_SHELL_BUILTIN(noop)    \
+    __ENUMERATE_SHELL_BUILTIN(argsparser_parse)
 
 #define ENUMERATE_SHELL_OPTIONS()                                                                                    \
     __ENUMERATE_SHELL_OPTION(inline_exec_keep_empty_segments, false, "Keep empty segments in inline execute $(...)") \
-    __ENUMERATE_SHELL_OPTION(verbose, false, "Announce every command that is about to be executed")
+    __ENUMERATE_SHELL_OPTION(verbose, false, "Announce every command that is about to be executed")                  \
+    __ENUMERATE_SHELL_OPTION(invoke_program_for_autocomplete, false, "Attempt to use the program being completed itself for autocompletion via --complete")
 
 #define ENUMERATE_SHELL_IMMEDIATE_FUNCTIONS()           \
     __ENUMERATE_SHELL_IMMEDIATE_FUNCTION(concat_lists)  \
@@ -61,7 +67,9 @@
     __ENUMERATE_SHELL_IMMEDIATE_FUNCTION(remove_suffix) \
     __ENUMERATE_SHELL_IMMEDIATE_FUNCTION(remove_prefix) \
     __ENUMERATE_SHELL_IMMEDIATE_FUNCTION(regex_replace) \
-    __ENUMERATE_SHELL_IMMEDIATE_FUNCTION(split)
+    __ENUMERATE_SHELL_IMMEDIATE_FUNCTION(filter_glob)   \
+    __ENUMERATE_SHELL_IMMEDIATE_FUNCTION(split)         \
+    __ENUMERATE_SHELL_IMMEDIATE_FUNCTION(join)
 
 namespace Shell {
 
@@ -85,38 +93,82 @@ public:
         Optional<AST::Position> position;
     };
 
+    struct RunnablePath {
+        enum class Kind {
+            Builtin,
+            Function,
+            Alias,
+            Executable,
+        };
+
+        Kind kind;
+        String path;
+
+        bool operator<(RunnablePath const& other) const
+        {
+            return path < other.path;
+        }
+
+        bool operator==(RunnablePath const&) const = default;
+    };
+
+    struct RunnablePathComparator {
+        int operator()(RunnablePath const& lhs, RunnablePath const& rhs)
+        {
+            if (lhs.path > rhs.path)
+                return 1;
+
+            if (lhs.path < rhs.path)
+                return -1;
+
+            return 0;
+        }
+
+        int operator()(StringView lhs, RunnablePath const& rhs)
+        {
+            if (lhs > rhs.path)
+                return 1;
+
+            if (lhs < rhs.path)
+                return -1;
+
+            return 0;
+        }
+    };
+
     int run_command(StringView, Optional<SourcePosition> = {});
-    bool is_runnable(StringView);
-    RefPtr<Job> run_command(const AST::Command&);
+    Optional<RunnablePath> runnable_path_for(StringView);
+    Optional<String> help_path_for(Vector<RunnablePath> visited, RunnablePath const& runnable_path);
+    ErrorOr<RefPtr<Job>> run_command(const AST::Command&);
     NonnullRefPtrVector<Job> run_commands(Vector<AST::Command>&);
-    bool run_file(const String&, bool explicitly_invoked = true);
-    bool run_builtin(const AST::Command&, const NonnullRefPtrVector<AST::Rewiring>&, int& retval);
+    bool run_file(String const&, bool explicitly_invoked = true);
+    bool run_builtin(const AST::Command&, NonnullRefPtrVector<AST::Rewiring> const&, int& retval);
     bool has_builtin(StringView) const;
-    RefPtr<AST::Node> run_immediate_function(StringView name, AST::ImmediateExpression& invoking_node, const NonnullRefPtrVector<AST::Node>&);
+    RefPtr<AST::Node> run_immediate_function(StringView name, AST::ImmediateExpression& invoking_node, NonnullRefPtrVector<AST::Node> const&);
     static bool has_immediate_function(StringView);
     void block_on_job(RefPtr<Job>);
     void block_on_pipeline(RefPtr<AST::Pipeline>);
     String prompt() const;
 
-    static String expand_tilde(const String&);
+    static String expand_tilde(StringView expression);
     static Vector<String> expand_globs(StringView path, StringView base);
     static Vector<String> expand_globs(Vector<StringView> path_segments, StringView base);
     Vector<AST::Command> expand_aliases(Vector<AST::Command>);
     String resolve_path(String) const;
-    String resolve_alias(const String&) const;
+    String resolve_alias(StringView) const;
 
     static String find_in_path(StringView program_name);
 
     static bool has_history_event(StringView);
 
     RefPtr<AST::Value> get_argument(size_t) const;
-    RefPtr<AST::Value> lookup_local_variable(const String&) const;
-    String local_variable_or(const String&, const String&) const;
-    void set_local_variable(const String&, RefPtr<AST::Value>, bool only_in_current_frame = false);
-    void unset_local_variable(const String&, bool only_in_current_frame = false);
+    RefPtr<AST::Value> lookup_local_variable(StringView) const;
+    String local_variable_or(StringView, String const&) const;
+    void set_local_variable(String const&, RefPtr<AST::Value>, bool only_in_current_frame = false);
+    void unset_local_variable(StringView, bool only_in_current_frame = false);
 
     void define_function(String name, Vector<String> argnames, RefPtr<AST::Node> body);
-    bool has_function(const String&);
+    bool has_function(StringView);
     bool invoke_function(const AST::Command&, int& retval);
 
     String format(StringView, ssize_t& cursor) const;
@@ -135,7 +187,7 @@ public:
     };
 
     struct Frame {
-        Frame(NonnullOwnPtrVector<LocalFrame>& frames, const LocalFrame& frame)
+        Frame(NonnullOwnPtrVector<LocalFrame>& frames, LocalFrame const& frame)
             : frames(frames)
             , frame(frame)
         {
@@ -146,24 +198,65 @@ public:
 
     private:
         NonnullOwnPtrVector<LocalFrame>& frames;
-        const LocalFrame& frame;
+        LocalFrame const& frame;
         bool should_destroy_frame { true };
     };
 
     [[nodiscard]] Frame push_frame(String name);
     void pop_frame();
 
-    static String escape_token_for_double_quotes(const String& token);
-    static String escape_token_for_single_quotes(const String& token);
-    static String escape_token(const String& token);
-    static String unescape_token(const String& token);
+    struct Promise {
+        struct Data {
+            struct Unveil {
+                String path;
+                String access;
+            };
+            String exec_promises;
+            Vector<Unveil> unveils;
+        } data;
+
+        IntrusiveListNode<Promise> node;
+        using List = IntrusiveList<&Promise::node>;
+    };
+
+    struct ScopedPromise {
+        ScopedPromise(Promise::List& promises, Promise&& promise)
+            : promises(promises)
+            , promise(move(promise))
+        {
+            promises.append(this->promise);
+        }
+
+        ~ScopedPromise()
+        {
+            promises.remove(promise);
+        }
+
+        Promise::List& promises;
+        Promise promise;
+    };
+    [[nodiscard]] ScopedPromise promise(Promise::Data data)
+    {
+        return { m_active_promises, { move(data), {} } };
+    }
+
+    enum class EscapeMode {
+        Bareword,
+        SingleQuotedString,
+        DoubleQuotedString,
+    };
+    static String escape_token_for_double_quotes(StringView token);
+    static String escape_token_for_single_quotes(StringView token);
+    static String escape_token(StringView token, EscapeMode = EscapeMode::Bareword);
+    static String escape_token(Utf32View token, EscapeMode = EscapeMode::Bareword);
+    static String unescape_token(StringView token);
     enum class SpecialCharacterEscapeMode {
         Untouched,
         Escaped,
         QuotedAsEscape,
         QuotedAsHex,
     };
-    static SpecialCharacterEscapeMode special_character_escape_mode(u32 c);
+    static SpecialCharacterEscapeMode special_character_escape_mode(u32 c, EscapeMode);
 
     static bool is_glob(StringView);
     static Vector<StringView> split_path(StringView);
@@ -175,22 +268,26 @@ public:
 
     void highlight(Line::Editor&) const;
     Vector<Line::CompletionSuggestion> complete();
-    Vector<Line::CompletionSuggestion> complete_path(const String& base, const String&, size_t offset, ExecutableOnly executable_only);
-    Vector<Line::CompletionSuggestion> complete_program_name(const String&, size_t offset);
-    Vector<Line::CompletionSuggestion> complete_variable(const String&, size_t offset);
-    Vector<Line::CompletionSuggestion> complete_user(const String&, size_t offset);
-    Vector<Line::CompletionSuggestion> complete_option(const String&, const String&, size_t offset);
-    Vector<Line::CompletionSuggestion> complete_immediate_function_name(const String&, size_t offset);
+    Vector<Line::CompletionSuggestion> complete(StringView);
+    Vector<Line::CompletionSuggestion> complete_program_name(StringView, size_t offset, EscapeMode = EscapeMode::Bareword);
+    Vector<Line::CompletionSuggestion> complete_variable(StringView, size_t offset);
+    Vector<Line::CompletionSuggestion> complete_user(StringView, size_t offset);
+    Vector<Line::CompletionSuggestion> complete_immediate_function_name(StringView, size_t offset);
+
+    Vector<Line::CompletionSuggestion> complete_path(StringView base, StringView, size_t offset, ExecutableOnly executable_only, AST::Node const* command_node, AST::Node const*, EscapeMode = EscapeMode::Bareword);
+    Vector<Line::CompletionSuggestion> complete_option(StringView, StringView, size_t offset, AST::Node const* command_node, AST::Node const*);
+    ErrorOr<Vector<Line::CompletionSuggestion>> complete_via_program_itself(size_t offset, AST::Node const* command_node, AST::Node const*, EscapeMode escape_mode, StringView known_program_name);
 
     void restore_ios();
 
     u64 find_last_job_id() const;
-    const Job* find_job(u64 id, bool is_pid = false);
-    const Job* current_job() const { return m_current_job; }
-    void kill_job(const Job*, int sig);
+    Job const* find_job(u64 id, bool is_pid = false);
+    Job const* current_job() const { return m_current_job; }
+    void kill_job(Job const*, int sig);
 
     String get_history_path();
-    void print_path(const String& path);
+    void print_path(StringView path);
+    void cache_path();
 
     bool read_single_line();
 
@@ -212,11 +309,11 @@ public:
     char hostname[HostNameSize];
 
     uid_t uid;
-    int last_return_code { 0 };
+    Optional<int> last_return_code;
     Vector<String> directory_stack;
     CircularQueue<String, 8> cd_history; // FIXME: have a configurable cd history length
     HashMap<u64, NonnullRefPtr<Job>> jobs;
-    Vector<String, 256> cached_path;
+    Vector<RunnablePath, 256> cached_path;
 
     String current_script;
 
@@ -228,12 +325,15 @@ public:
         None,
         InternalControlFlowBreak,
         InternalControlFlowContinue,
+        InternalControlFlowInterrupted,
+        InternalControlFlowKilled,
         EvaluatedSyntaxError,
         NonExhaustiveMatchRules,
         InvalidGlobError,
         InvalidSliceContentsError,
         OpenFailure,
         OutOfMemory,
+        LaunchError,
     };
 
     void raise_error(ShellError kind, String description, Optional<AST::Position> position = {})
@@ -245,7 +345,7 @@ public:
     }
     bool has_error(ShellError err) const { return m_error == err; }
     bool has_any_error() const { return !has_error(ShellError::None); }
-    const String& error_description() const { return m_error_description; }
+    String const& error_description() const { return m_error_description; }
     ShellError take_error()
     {
         auto err = m_error;
@@ -259,6 +359,8 @@ public:
         switch (error) {
         case ShellError::InternalControlFlowBreak:
         case ShellError::InternalControlFlowContinue:
+        case ShellError::InternalControlFlowInterrupted:
+        case ShellError::InternalControlFlowKilled:
             return true;
         default:
             return false;
@@ -287,14 +389,13 @@ private:
     void save_to(JsonObject&);
     void bring_cursor_to_beginning_of_a_line() const;
 
-    Optional<int> resolve_job_spec(const String&);
-    void cache_path();
-    void add_entry_to_cache(const String&);
-    void remove_entry_from_cache(const String&);
+    Optional<int> resolve_job_spec(StringView);
+    void add_entry_to_cache(RunnablePath const&);
+    void remove_entry_from_cache(StringView);
     void stop_all_jobs();
-    const Job* m_current_job { nullptr };
-    LocalFrame* find_frame_containing_local_variable(const String& name);
-    const LocalFrame* find_frame_containing_local_variable(const String& name) const
+    Job const* m_current_job { nullptr };
+    LocalFrame* find_frame_containing_local_variable(StringView name);
+    LocalFrame const* find_frame_containing_local_variable(StringView name) const
     {
         return const_cast<Shell*>(this)->find_frame_containing_local_variable(name);
     }
@@ -302,32 +403,34 @@ private:
     void run_tail(RefPtr<Job>);
     void run_tail(const AST::Command&, const AST::NodeWithAction&, int head_exit_code);
 
-    [[noreturn]] void execute_process(Vector<const char*>&& argv);
+    [[noreturn]] void execute_process(Vector<char const*>&& argv);
 
     virtual void custom_event(Core::CustomEvent&) override;
 
 #define __ENUMERATE_SHELL_IMMEDIATE_FUNCTION(name) \
-    RefPtr<AST::Node> immediate_##name(AST::ImmediateExpression& invoking_node, const NonnullRefPtrVector<AST::Node>&);
+    RefPtr<AST::Node> immediate_##name(AST::ImmediateExpression& invoking_node, NonnullRefPtrVector<AST::Node> const&);
 
     ENUMERATE_SHELL_IMMEDIATE_FUNCTIONS();
 
 #undef __ENUMERATE_SHELL_IMMEDIATE_FUNCTION
 
-    RefPtr<AST::Node> immediate_length_impl(AST::ImmediateExpression& invoking_node, const NonnullRefPtrVector<AST::Node>&, bool across);
+    RefPtr<AST::Node> immediate_length_impl(AST::ImmediateExpression& invoking_node, NonnullRefPtrVector<AST::Node> const&, bool across);
 
 #define __ENUMERATE_SHELL_BUILTIN(builtin) \
-    int builtin_##builtin(int argc, const char** argv);
+    int builtin_##builtin(int argc, char const** argv);
 
     ENUMERATE_SHELL_BUILTINS();
 
 #undef __ENUMERATE_SHELL_BUILTIN
 
-    constexpr static const char* builtin_names[] = {
-#define __ENUMERATE_SHELL_BUILTIN(builtin) #builtin,
+    static constexpr Array builtin_names = {
+#define __ENUMERATE_SHELL_BUILTIN(builtin) #builtin##sv,
 
         ENUMERATE_SHELL_BUILTINS()
 
 #undef __ENUMERATE_SHELL_BUILTIN
+
+            ":"sv, // POSIX-y name for "noop".
     };
 
     bool m_should_ignore_jobs_on_next_exit { false };
@@ -341,6 +444,7 @@ private:
 
     HashMap<String, ShellFunction> m_functions;
     NonnullOwnPtrVector<LocalFrame> m_local_frames;
+    Promise::List m_active_promises;
     NonnullRefPtrVector<AST::Redirection> m_global_redirections;
 
     HashMap<String, String> m_aliases;
@@ -361,6 +465,8 @@ private:
     mutable bool m_last_continuation_state { false }; // false == not needed.
 
     Optional<size_t> m_history_autosave_time;
+
+    StackInfo m_completion_stack_info;
 };
 
 [[maybe_unused]] static constexpr bool is_word_character(char c)
@@ -368,7 +474,7 @@ private:
     return c == '_' || (c <= 'Z' && c >= 'A') || (c <= 'z' && c >= 'a') || (c <= '9' && c >= '0');
 }
 
-inline size_t find_offset_into_node(const String& unescaped_text, size_t escaped_offset)
+inline size_t find_offset_into_node(StringView unescaped_text, size_t escaped_offset, Shell::EscapeMode escape_mode)
 {
     size_t unescaped_offset = 0;
     size_t offset = 0;
@@ -377,20 +483,41 @@ inline size_t find_offset_into_node(const String& unescaped_text, size_t escaped
             if (offset == escaped_offset)
                 return unescaped_offset;
 
-            switch (Shell::special_character_escape_mode(c)) {
+            switch (Shell::special_character_escape_mode(c, escape_mode)) {
             case Shell::SpecialCharacterEscapeMode::Untouched:
                 break;
             case Shell::SpecialCharacterEscapeMode::Escaped:
                 ++offset; // X -> \X
                 break;
             case Shell::SpecialCharacterEscapeMode::QuotedAsEscape:
-                offset += 3; // X -> "\Y"
+                switch (escape_mode) {
+                case Shell::EscapeMode::Bareword:
+                    offset += 3; // X -> "\Y"
+                    break;
+                case Shell::EscapeMode::SingleQuotedString:
+                    offset += 5; // X -> '"\Y"'
+                    break;
+                case Shell::EscapeMode::DoubleQuotedString:
+                    offset += 1; // X -> \Y
+                    break;
+                }
                 break;
             case Shell::SpecialCharacterEscapeMode::QuotedAsHex:
+                switch (escape_mode) {
+                case Shell::EscapeMode::Bareword:
+                    offset += 2; // X -> "\..."
+                    break;
+                case Shell::EscapeMode::SingleQuotedString:
+                    offset += 4; // X -> '"\..."'
+                    break;
+                case Shell::EscapeMode::DoubleQuotedString:
+                    // X -> \...
+                    break;
+                }
                 if (c > NumericLimits<u8>::max())
-                    offset += 11; // X -> "\uhhhhhhhh"
+                    offset += 8; // X -> "\uhhhhhhhh"
                 else
-                    offset += 5; // X -> "\xhh"
+                    offset += 3; // X -> "\xhh"
                 break;
             }
             ++offset;
@@ -404,5 +531,29 @@ inline size_t find_offset_into_node(const String& unescaped_text, size_t escaped
         return do_find_offset(view);
     return do_find_offset(unescaped_text);
 }
+
+}
+
+namespace AK {
+
+template<>
+struct Traits<Shell::Shell::RunnablePath> : public GenericTraits<Shell::Shell::RunnablePath> {
+    static constexpr bool is_trivial() { return false; }
+
+    static bool equals(Shell::Shell::RunnablePath const& self, Shell::Shell::RunnablePath const& other)
+    {
+        return self == other;
+    }
+
+    static bool equals(Shell::Shell::RunnablePath const& self, StringView other)
+    {
+        return self.path == other;
+    }
+
+    static bool equals(Shell::Shell::RunnablePath const& self, String const& other)
+    {
+        return self.path == other;
+    }
+};
 
 }

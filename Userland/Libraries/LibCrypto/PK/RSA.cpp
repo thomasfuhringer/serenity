@@ -56,7 +56,7 @@ RSA::KeyPairType RSA::parse_rsa_key(ReadonlyBytes der)
 
     bool has_read_error = false;
 
-    const auto check_if_pkcs8_rsa_key = [&] {
+    auto const check_if_pkcs8_rsa_key = [&] {
         // see if it's a sequence:
         auto tag_result = decoder.peek();
         if (tag_result.is_error()) {
@@ -199,7 +199,7 @@ RSA::KeyPairType RSA::parse_rsa_key(ReadonlyBytes der)
         auto data = data_result.release_value();
         // FIXME: This is pretty awkward, maybe just generate a zero'd out ByteBuffer from the parser instead?
         auto padded_data_result = ByteBuffer::create_zeroed(data.size_in_bytes());
-        if (!padded_data_result.has_value()) {
+        if (padded_data_result.is_error()) {
             dbgln_if(RSA_PARSE_DEBUG, "RSA PKCS#1 key parse failed: Not enough memory");
             return keypair;
         }

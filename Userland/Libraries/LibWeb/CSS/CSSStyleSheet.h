@@ -18,16 +18,18 @@ namespace Web::CSS {
 
 class CSSImportRule;
 
-class CSSStyleSheet final : public StyleSheet {
+class CSSStyleSheet final
+    : public StyleSheet
+    , public Weakable<CSSStyleSheet> {
 public:
     using WrapperType = Bindings::CSSStyleSheetWrapper;
 
-    static NonnullRefPtr<CSSStyleSheet> create(NonnullRefPtrVector<CSSRule> rules)
+    static NonnullRefPtr<CSSStyleSheet> create(NonnullRefPtrVector<CSSRule> rules, Optional<AK::URL> location)
     {
-        return adopt_ref(*new CSSStyleSheet(move(rules)));
+        return adopt_ref(*new CSSStyleSheet(move(rules), move(location)));
     }
 
-    virtual ~CSSStyleSheet() override;
+    virtual ~CSSStyleSheet() override = default;
 
     void set_owner_css_rule(CSSRule* rule) { m_owner_css_rule = rule; }
 
@@ -45,15 +47,19 @@ public:
     DOM::ExceptionOr<void> delete_rule(unsigned index);
 
     void for_each_effective_style_rule(Function<void(CSSStyleRule const&)> const& callback) const;
-    void evaluate_media_queries(DOM::Window const&);
+    // Returns whether the match state of any media queries changed after evaluation.
+    bool evaluate_media_queries(HTML::Window const&);
+
+    void set_style_sheet_list(Badge<StyleSheetList>, StyleSheetList*);
 
 private:
-    explicit CSSStyleSheet(NonnullRefPtrVector<CSSRule>);
+    explicit CSSStyleSheet(NonnullRefPtrVector<CSSRule>, Optional<AK::URL> location);
 
     NonnullRefPtr<CSSRuleList> m_rules;
 
-    // FIXME: Use WeakPtr.
-    CSSRule* m_owner_css_rule { nullptr };
+    WeakPtr<CSSRule> m_owner_css_rule;
+
+    WeakPtr<StyleSheetList> m_style_sheet_list;
 };
 
 }

@@ -7,36 +7,33 @@
 
 #include "TaskbarWindow.h"
 #include "ClockWidget.h"
+#include "QuickLaunchWidget.h"
 #include "TaskbarButton.h"
 #include <AK/Debug.h>
-#include <LibCore/ConfigFile.h>
 #include <LibCore/StandardPaths.h>
 #include <LibGUI/BoxLayout.h>
 #include <LibGUI/Button.h>
+#include <LibGUI/ConnectionToWindowMangerServer.h>
+#include <LibGUI/ConnectionToWindowServer.h>
 #include <LibGUI/Desktop.h>
 #include <LibGUI/Frame.h>
 #include <LibGUI/Icon.h>
 #include <LibGUI/Menu.h>
 #include <LibGUI/Painter.h>
 #include <LibGUI/Window.h>
-#include <LibGUI/WindowManagerServerConnection.h>
-#include <LibGUI/WindowServerConnection.h>
-#include <LibGfx/FontDatabase.h>
+#include <LibGfx/Font/FontDatabase.h>
 #include <LibGfx/Palette.h>
 #include <serenity.h>
 #include <stdio.h>
-
-constexpr const char* quick_launch = "QuickLaunch";
-constexpr int quick_launch_button_size = 24;
 
 class TaskbarWidget final : public GUI::Widget {
     C_OBJECT(TaskbarWidget);
 
 public:
-    virtual ~TaskbarWidget() override { }
+    virtual ~TaskbarWidget() override = default;
 
 private:
-    TaskbarWidget() { }
+    TaskbarWidget() = default;
 
     virtual void paint_event(GUI::PaintEvent& event) override
     {
@@ -75,7 +72,7 @@ TaskbarWindow::TaskbarWindow(NonnullRefPtr<GUI::Menu> start_menu)
     m_start_button->set_menu(m_start_menu);
 
     main_widget.add_child(*m_start_button);
-    create_quick_launch_bar();
+    main_widget.add<Taskbar::QuickLaunchWidget>();
 
     m_task_button_container = main_widget.add<GUI::Widget>();
     m_task_button_container->set_layout<GUI::HorizontalBoxLayout>();
@@ -88,7 +85,7 @@ TaskbarWindow::TaskbarWindow(NonnullRefPtr<GUI::Menu> start_menu)
     m_applet_area_container->set_frame_shape(Gfx::FrameShape::Box);
     m_applet_area_container->set_frame_shadow(Gfx::FrameShadow::Sunken);
 
-    main_widget.add<Taskbar::ClockWidget>();
+    m_clock_widget = main_widget.add<Taskbar::ClockWidget>();
 
     m_show_desktop_button = GUI::Button::construct();
     m_show_desktop_button->set_tooltip("Show Desktop");
@@ -102,99 +99,23 @@ TaskbarWindow::TaskbarWindow(NonnullRefPtr<GUI::Menu> start_menu)
     m_assistant_app_file = Desktop::AppFile::open(af_path);
 }
 
-TaskbarWindow::~TaskbarWindow()
+void TaskbarWindow::config_string_did_change(String const& domain, String const& group, String const& key, String const& value)
 {
+    VERIFY(domain == "Taskbar");
+    if (group == "Clock" && key == "TimeFormat") {
+        m_clock_widget->update_format(value);
+        update_applet_area();
+    }
 }
 
 void TaskbarWindow::show_desktop_button_clicked(unsigned)
 {
-    GUI::WindowManagerServerConnection::the().async_toggle_show_desktop();
+    GUI::ConnectionToWindowMangerServer::the().async_toggle_show_desktop();
 }
 
-void TaskbarWindow::config_key_was_removed(String const& domain, String const& group, String const& key)
+void TaskbarWindow::on_screen_rects_change(Vector<Gfx::IntRect, 4> const& rects, size_t main_screen_index)
 {
-    if (domain == "Taskbar" && group == quick_launch) {
-        auto button = m_quick_launch_bar->find_child_of_type_named<GUI::Button>(key);
-        if (button)
-            m_quick_launch_bar->remove_child(*button);
-    }
-}
-
-void TaskbarWindow::config_string_did_change(String const& domain, String const& group, String const& key, String const& value)
-{
-    if (domain == "Taskbar" && group == quick_launch) {
-        auto af_path = String::formatted("{}/{}", Desktop::AppFile::APP_FILES_DIRECTORY, value);
-        auto af = Desktop::AppFile::open(af_path);
-        if (!af->is_valid())
-            return;
-
-        auto button = m_quick_launch_bar->find_child_of_type_named<GUI::Button>(key);
-        if (button) {
-            set_quick_launch_button_data(*button, key, af);
-        } else {
-            auto& new_button = m_quick_launch_bar->add<GUI::Button>();
-            set_quick_launch_button_data(new_button, key, af);
-        }
-    }
-}
-
-void TaskbarWindow::create_quick_launch_bar()
-{
-    m_quick_launch_bar = main_widget()->add<GUI::Frame>();
-    m_quick_launch_bar->set_shrink_to_fit(true);
-    m_quick_launch_bar->set_layout<GUI::HorizontalBoxLayout>();
-    m_quick_launch_bar->layout()->set_spacing(0);
-    m_quick_launch_bar->set_frame_thickness(0);
-
-    auto config = Core::ConfigFile::open_for_app("Taskbar");
-
-    // FIXME: Core::ConfigFile does not keep the order of the entries.
-    for (auto& name : config->keys(quick_launch)) {
-        auto af_name = config->read_entry(quick_launch, name);
-        auto af_path = String::formatted("{}/{}", Desktop::AppFile::APP_FILES_DIRECTORY, af_name);
-        auto af = Desktop::AppFile::open(af_path);
-        if (!af->is_valid())
-            continue;
-        auto& button = m_quick_launch_bar->add<GUI::Button>();
-        set_quick_launch_button_data(button, name, af);
-    }
-    m_quick_launch_bar->set_fixed_height(24);
-}
-
-void TaskbarWindow::set_quick_launch_button_data(GUI::Button& button, String const& button_name, NonnullRefPtr<Desktop::AppFile> app_file)
-{
-    auto app_executable = app_file->executable();
-    auto app_run_in_terminal = app_file->run_in_terminal();
-    button.set_fixed_size(quick_launch_button_size, quick_launch_button_size);
-    button.set_button_style(Gfx::ButtonStyle::Coolbar);
-    button.set_icon(app_file->icon().bitmap_for_size(16));
-    button.set_tooltip(app_file->name());
-    button.set_name(button_name);
-    button.on_click = [app_executable, app_run_in_terminal](auto) {
-        pid_t pid = fork();
-        if (pid < 0) {
-            perror("fork");
-        } else if (pid == 0) {
-            if (chdir(Core::StandardPaths::home_directory().characters()) < 0) {
-                perror("chdir");
-                exit(1);
-            }
-            if (app_run_in_terminal)
-                execl("/bin/Terminal", "Terminal", "-e", app_executable.characters(), nullptr);
-            else
-                execl(app_executable.characters(), app_executable.characters(), nullptr);
-            perror("execl");
-            VERIFY_NOT_REACHED();
-        } else {
-            if (disown(pid) < 0)
-                perror("disown");
-        }
-    };
-}
-
-void TaskbarWindow::on_screen_rects_change(const Vector<Gfx::IntRect, 4>& rects, size_t main_screen_index)
-{
-    const auto& rect = rects[main_screen_index];
+    auto const& rect = rects[main_screen_index];
     Gfx::IntRect new_rect { rect.x(), rect.bottom() - taskbar_height() + 1, rect.width(), taskbar_height() };
     set_rect(new_rect);
     update_applet_area();
@@ -208,10 +129,10 @@ void TaskbarWindow::update_applet_area()
         return;
     main_widget()->do_layout();
     auto new_rect = Gfx::IntRect({}, m_applet_area_size).centered_within(m_applet_area_container->screen_relative_rect());
-    GUI::WindowManagerServerConnection::the().async_set_applet_area_position(new_rect.location());
+    GUI::ConnectionToWindowMangerServer::the().async_set_applet_area_position(new_rect.location());
 }
 
-NonnullRefPtr<GUI::Button> TaskbarWindow::create_button(const WindowIdentifier& identifier)
+NonnullRefPtr<GUI::Button> TaskbarWindow::create_button(WindowIdentifier const& identifier)
 {
     auto& button = m_task_button_container->add<TaskbarButton>(identifier);
     button.set_min_size(20, 21);
@@ -221,7 +142,7 @@ NonnullRefPtr<GUI::Button> TaskbarWindow::create_button(const WindowIdentifier& 
     return button;
 }
 
-void TaskbarWindow::add_window_button(::Window& window, const WindowIdentifier& identifier)
+void TaskbarWindow::add_window_button(::Window& window, WindowIdentifier const& identifier)
 {
     if (window.button())
         return;
@@ -235,9 +156,9 @@ void TaskbarWindow::add_window_button(::Window& window, const WindowIdentifier& 
         // false because window is the modal window's owner (which is not
         // active)
         if (window->is_minimized() || !button->is_checked()) {
-            GUI::WindowManagerServerConnection::the().async_set_active_window(identifier.client_id(), identifier.window_id());
+            GUI::ConnectionToWindowMangerServer::the().async_set_active_window(identifier.client_id(), identifier.window_id());
         } else {
-            GUI::WindowManagerServerConnection::the().async_set_window_minimized(identifier.client_id(), identifier.window_id(), true);
+            GUI::ConnectionToWindowMangerServer::the().async_set_window_minimized(identifier.client_id(), identifier.window_id(), true);
         }
     };
 }
@@ -288,14 +209,14 @@ void TaskbarWindow::event(Core::Event& event)
         // we adjust it so that the nearest button ends up being clicked anyways.
 
         auto& mouse_event = static_cast<GUI::MouseEvent&>(event);
-        const int ADJUSTMENT = 4;
+        int const ADJUSTMENT = 4;
         auto adjusted_x = AK::clamp(mouse_event.x(), ADJUSTMENT, width() - ADJUSTMENT);
         auto adjusted_y = AK::min(mouse_event.y(), height() - ADJUSTMENT);
         Gfx::IntPoint adjusted_point = { adjusted_x, adjusted_y };
 
         if (adjusted_point != mouse_event.position()) {
-            GUI::WindowServerConnection::the().async_set_global_cursor_position(position() + adjusted_point);
-            GUI::MouseEvent adjusted_event = { (GUI::Event::Type)mouse_event.type(), adjusted_point, mouse_event.buttons(), mouse_event.button(), mouse_event.modifiers(), mouse_event.wheel_delta() };
+            GUI::ConnectionToWindowServer::the().async_set_global_cursor_position(position() + adjusted_point);
+            GUI::MouseEvent adjusted_event = { (GUI::Event::Type)mouse_event.type(), adjusted_point, mouse_event.buttons(), mouse_event.button(), mouse_event.modifiers(), mouse_event.wheel_delta_x(), mouse_event.wheel_delta_y(), mouse_event.wheel_raw_delta_x(), mouse_event.wheel_raw_delta_y() };
             Window::event(adjusted_event);
             return;
         }
@@ -416,6 +337,24 @@ void TaskbarWindow::wm_event(GUI::WMEvent& event)
     case GUI::Event::WM_SuperSpaceKeyPressed: {
         if (!m_assistant_app_file->spawn())
             warnln("failed to spawn 'Assistant' when requested via Super+Space");
+        break;
+    }
+    case GUI::Event::WM_SuperDigitKeyPressed: {
+        auto& digit_event = static_cast<GUI::WMSuperDigitKeyPressedEvent&>(event);
+        auto index = digit_event.digit() != 0 ? digit_event.digit() - 1 : 9;
+
+        for (auto& widget : m_task_button_container->child_widgets()) {
+            // NOTE: The button might be invisible depending on the current workspace
+            if (!widget.is_visible())
+                continue;
+
+            if (index == 0) {
+                static_cast<TaskbarButton&>(widget).click();
+                break;
+            }
+
+            --index;
+        }
         break;
     }
     case GUI::Event::WM_WorkspaceChanged: {

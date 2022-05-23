@@ -17,7 +17,7 @@ class ArrayPrototype final : public Array {
 public:
     ArrayPrototype(GlobalObject&);
     virtual void initialize(GlobalObject&) override;
-    virtual ~ArrayPrototype() override;
+    virtual ~ArrayPrototype() override = default;
 
 private:
     JS_DECLARE_NATIVE_FUNCTION(filter);
@@ -54,6 +54,8 @@ private:
     JS_DECLARE_NATIVE_FUNCTION(keys);
     JS_DECLARE_NATIVE_FUNCTION(entries);
     JS_DECLARE_NATIVE_FUNCTION(copy_within);
+    JS_DECLARE_NATIVE_FUNCTION(group_by);
+    JS_DECLARE_NATIVE_FUNCTION(group_by_to_map);
 };
 
 }

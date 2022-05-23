@@ -7,21 +7,21 @@
 #include "ShutdownDialog.h"
 #include "TaskbarWindow.h"
 #include <AK/Debug.h>
-#include <AK/LexicalPath.h>
 #include <AK/QuickSort.h>
 #include <LibConfig/Client.h>
 #include <LibCore/ConfigFile.h>
-#include <LibCore/DirIterator.h>
 #include <LibCore/EventLoop.h>
 #include <LibCore/Process.h>
 #include <LibCore/StandardPaths.h>
 #include <LibCore/System.h>
 #include <LibDesktop/AppFile.h>
+#include <LibDesktop/Launcher.h>
 #include <LibGUI/ActionGroup.h>
 #include <LibGUI/Application.h>
+#include <LibGUI/ConnectionToWindowMangerServer.h>
+#include <LibGUI/ConnectionToWindowServer.h>
 #include <LibGUI/Menu.h>
-#include <LibGUI/WindowManagerServerConnection.h>
-#include <LibGUI/WindowServerConnection.h>
+#include <LibGfx/SystemTheme.h>
 #include <LibMain/Main.h>
 #include <WindowServer/Window.h>
 #include <serenity.h>
@@ -38,7 +38,7 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
 {
     TRY(Core::System::pledge("stdio recvfd sendfd proc exec rpath unix sigaction"));
     auto app = TRY(GUI::Application::try_create(arguments));
-    Config::pledge_domains("Taskbar");
+    Config::pledge_domain("Taskbar");
     Config::monitor_domain("Taskbar");
     app->event_loop().register_signal(SIGCHLD, [](int) {
         // Wait all available children
@@ -46,8 +46,10 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
             ;
     });
 
-    // We need to obtain the WM connection here as well before the pledge shortening.
-    GUI::WindowManagerServerConnection::the();
+    TRY(Core::System::pledge("stdio recvfd sendfd proc exec rpath unix"));
+
+    GUI::ConnectionToWindowMangerServer::the();
+    Desktop::Launcher::ensure_connection();
 
     TRY(Core::System::pledge("stdio recvfd sendfd proc exec rpath"));
 
@@ -75,14 +77,9 @@ struct AppMetadata {
 };
 Vector<AppMetadata> g_apps;
 
-struct ThemeMetadata {
-    String name;
-    String path;
-};
-
 Color g_menu_selection_color;
 
-Vector<ThemeMetadata> g_themes;
+Vector<Gfx::SystemThemeMetaData> g_themes;
 RefPtr<GUI::Menu> g_themes_menu;
 GUI::ActionGroup g_themes_group;
 
@@ -118,7 +115,7 @@ ErrorOr<NonnullRefPtr<GUI::Menu>> build_system_menu()
     system_menu->add_separator();
 
     // First we construct all the necessary app category submenus.
-    auto category_icons = Core::ConfigFile::open("/res/icons/SystemMenu.ini");
+    auto category_icons = TRY(Core::ConfigFile::open("/res/icons/SystemMenu.ini"));
     HashMap<String, NonnullRefPtr<GUI::Menu>> app_category_menus;
 
     Function<void(String const&)> create_category_menu;
@@ -153,14 +150,14 @@ ErrorOr<NonnullRefPtr<GUI::Menu>> build_system_menu()
         app_category_menus.set(category, category_menu);
     };
 
-    for (const auto& category : sorted_app_categories) {
+    for (auto const& category : sorted_app_categories) {
         if (category != "Settings"sv)
             create_category_menu(category);
     }
 
     // Then we create and insert all the app menu items into the right place.
     int app_identifier = 0;
-    for (const auto& app : g_apps) {
+    for (auto const& app : g_apps) {
         if (app.category == "Settings"sv) {
             ++app_identifier;
             continue;
@@ -211,17 +208,8 @@ ErrorOr<NonnullRefPtr<GUI::Menu>> build_system_menu()
     g_themes_menu = &system_menu->add_submenu("&Themes");
     g_themes_menu->set_icon(Gfx::Bitmap::try_load_from_file("/res/icons/16x16/themes.png").release_value_but_fixme_should_propagate_errors());
 
-    {
-        Core::DirIterator dt("/res/themes", Core::DirIterator::SkipDots);
-        while (dt.has_next()) {
-            auto theme_name = dt.next_path();
-            auto theme_path = String::formatted("/res/themes/{}", theme_name);
-            g_themes.append({ LexicalPath::title(theme_name), theme_path });
-        }
-        quick_sort(g_themes, [](auto& a, auto& b) { return a.name < b.name; });
-    }
-
-    auto current_theme_name = GUI::WindowServerConnection::the().get_system_theme();
+    g_themes = Gfx::list_installed_system_themes();
+    auto current_theme_name = GUI::ConnectionToWindowServer::the().get_system_theme();
 
     {
         int theme_identifier = 0;
@@ -229,7 +217,7 @@ ErrorOr<NonnullRefPtr<GUI::Menu>> build_system_menu()
             auto action = GUI::Action::create_checkable(theme.name, [theme_identifier](auto&) {
                 auto& theme = g_themes[theme_identifier];
                 dbgln("Theme switched to {} at path {}", theme.name, theme.path);
-                auto success = GUI::WindowServerConnection::the().set_system_theme(theme.path, theme.name);
+                auto success = GUI::ConnectionToWindowServer::the().set_system_theme(theme.path, theme.name, false);
                 VERIFY(success);
             });
             if (theme.name == current_theme_name)

@@ -1,16 +1,53 @@
 /*
- * Copyright (c) 2021, Matthew Olsson <mattco@serenityos.org>
+ * Copyright (c) 2021-2022, Matthew Olsson <mattco@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #include <LibPDF/ColorSpace.h>
 #include <LibPDF/CommonNames.h>
+#include <LibPDF/Document.h>
 #include <LibPDF/ObjectDerivatives.h>
 
 namespace PDF {
 
-RefPtr<DeviceGrayColorSpace> DeviceGrayColorSpace::the()
+PDFErrorOr<NonnullRefPtr<ColorSpace>> ColorSpace::create(Document* document, FlyString const& name, Page const& page)
+{
+    // Simple color spaces with no parameters, which can be specified directly
+    if (name == CommonNames::DeviceGray)
+        return DeviceGrayColorSpace::the();
+    if (name == CommonNames::DeviceRGB)
+        return DeviceRGBColorSpace::the();
+    if (name == CommonNames::DeviceCMYK)
+        return DeviceCMYKColorSpace::the();
+    if (name == CommonNames::Pattern)
+        TODO();
+
+    // The color space is a complex color space with parameters that resides in
+    // the resource dictionary
+    auto color_space_resource_dict = TRY(page.resources->get_dict(document, CommonNames::ColorSpace));
+    if (!color_space_resource_dict->contains(name))
+        TODO();
+
+    auto color_space_array = TRY(color_space_resource_dict->get_array(document, name));
+    auto color_space_name = TRY(color_space_array->get_name_at(document, 0))->name();
+
+    Vector<Value> parameters;
+    parameters.ensure_capacity(color_space_array->size() - 1);
+    for (size_t i = 1; i < color_space_array->size(); i++)
+        parameters.unchecked_append(color_space_array->at(i));
+
+    if (color_space_name == CommonNames::CalRGB)
+        return TRY(CalRGBColorSpace::create(document, move(parameters)));
+
+    if (color_space_name == CommonNames::ICCBased)
+        return TRY(ICCBasedColorSpace::create(document, page, move(parameters)));
+
+    dbgln("Unknown color space: {}", color_space_name);
+    TODO();
+}
+
+NonnullRefPtr<DeviceGrayColorSpace> DeviceGrayColorSpace::the()
 {
     static auto instance = adopt_ref(*new DeviceGrayColorSpace());
     return instance;
@@ -23,7 +60,7 @@ Color DeviceGrayColorSpace::color(Vector<Value> const& arguments) const
     return Color(gray, gray, gray);
 }
 
-RefPtr<DeviceRGBColorSpace> DeviceRGBColorSpace::the()
+NonnullRefPtr<DeviceRGBColorSpace> DeviceRGBColorSpace::the()
 {
     static auto instance = adopt_ref(*new DeviceRGBColorSpace());
     return instance;
@@ -38,7 +75,7 @@ Color DeviceRGBColorSpace::color(Vector<Value> const& arguments) const
     return Color(r, g, b);
 }
 
-RefPtr<DeviceCMYKColorSpace> DeviceCMYKColorSpace::the()
+NonnullRefPtr<DeviceCMYKColorSpace> DeviceCMYKColorSpace::the()
 {
     static auto instance = adopt_ref(*new DeviceCMYKColorSpace());
     return instance;
@@ -54,22 +91,22 @@ Color DeviceCMYKColorSpace::color(Vector<Value> const& arguments) const
     return Color::from_cmyk(c, m, y, k);
 }
 
-RefPtr<CalRGBColorSpace> CalRGBColorSpace::create(RefPtr<Document> document, Vector<Value>&& parameters)
+PDFErrorOr<NonnullRefPtr<CalRGBColorSpace>> CalRGBColorSpace::create(Document* document, Vector<Value>&& parameters)
 {
     if (parameters.size() != 1)
-        return {};
+        return Error { Error::Type::MalformedPDF, "RGB color space expects one parameter" };
 
     auto param = parameters[0];
-    if (!param.has<NonnullRefPtr<Object>>() || !param.get<NonnullRefPtr<Object>>()->is_dict())
-        return {};
+    if (!param.has<NonnullRefPtr<Object>>() || !param.get<NonnullRefPtr<Object>>()->is<DictObject>())
+        return Error { Error::Type::MalformedPDF, "RGB color space expects a dict parameter" };
 
-    auto dict = object_cast<DictObject>(param.get<NonnullRefPtr<Object>>());
+    auto dict = param.get<NonnullRefPtr<Object>>()->cast<DictObject>();
     if (!dict->contains(CommonNames::WhitePoint))
-        return {};
+        return Error { Error::Type::MalformedPDF, "RGB color space expects a Whitepoint key" };
 
-    auto white_point_array = dict->get_array(document, CommonNames::WhitePoint);
+    auto white_point_array = TRY(dict->get_array(document, CommonNames::WhitePoint));
     if (white_point_array->size() != 3)
-        return {};
+        return Error { Error::Type::MalformedPDF, "RGB color space expects 3 Whitepoint parameters" };
 
     auto color_space = adopt_ref(*new CalRGBColorSpace());
 
@@ -78,10 +115,10 @@ RefPtr<CalRGBColorSpace> CalRGBColorSpace::create(RefPtr<Document> document, Vec
     color_space->m_whitepoint[2] = white_point_array->at(2).to_float();
 
     if (color_space->m_whitepoint[1] != 1.0f)
-        return {};
+        return Error { Error::Type::MalformedPDF, "RGB color space expects 2nd Whitepoint to be 1.0" };
 
     if (dict->contains(CommonNames::BlackPoint)) {
-        auto black_point_array = dict->get_array(document, CommonNames::BlackPoint);
+        auto black_point_array = TRY(dict->get_array(document, CommonNames::BlackPoint));
         if (black_point_array->size() == 3) {
             color_space->m_blackpoint[0] = black_point_array->at(0).to_float();
             color_space->m_blackpoint[1] = black_point_array->at(1).to_float();
@@ -90,7 +127,7 @@ RefPtr<CalRGBColorSpace> CalRGBColorSpace::create(RefPtr<Document> document, Vec
     }
 
     if (dict->contains(CommonNames::Gamma)) {
-        auto gamma_array = dict->get_array(document, CommonNames::Gamma);
+        auto gamma_array = TRY(dict->get_array(document, CommonNames::Gamma));
         if (gamma_array->size() == 3) {
             color_space->m_gamma[0] = gamma_array->at(0).to_float();
             color_space->m_gamma[1] = gamma_array->at(1).to_float();
@@ -99,7 +136,7 @@ RefPtr<CalRGBColorSpace> CalRGBColorSpace::create(RefPtr<Document> document, Vec
     }
 
     if (dict->contains(CommonNames::Matrix)) {
-        auto matrix_array = dict->get_array(document, CommonNames::Matrix);
+        auto matrix_array = TRY(dict->get_array(document, CommonNames::Matrix));
         if (matrix_array->size() == 3) {
             color_space->m_matrix[0] = matrix_array->at(0).to_float();
             color_space->m_matrix[1] = matrix_array->at(1).to_float();
@@ -222,6 +259,28 @@ Color CalRGBColorSpace::color(Vector<Value> const& arguments) const
     auto blue = static_cast<u8>(srgb[2] * 255.0f);
 
     return Color(red, green, blue);
+}
+
+PDFErrorOr<NonnullRefPtr<ColorSpace>> ICCBasedColorSpace::create(Document* document, Page const& page, Vector<Value>&& parameters)
+{
+    if (parameters.is_empty())
+        return Error { Error::Type::MalformedPDF, "ICCBased color space expected one parameter" };
+
+    auto param = TRY(document->resolve(parameters[0]));
+    if (!param.has<NonnullRefPtr<Object>>() || !param.get<NonnullRefPtr<Object>>()->is<StreamObject>())
+        return Error { Error::Type::MalformedPDF, "ICCBased color space expects a stream parameter" };
+
+    auto dict = param.get<NonnullRefPtr<Object>>()->cast<StreamObject>()->dict();
+    if (!dict->contains(CommonNames::Alternate))
+        TODO();
+
+    auto alternate = TRY(dict->get_name(document, CommonNames::Alternate))->name();
+    return TRY(ColorSpace::create(document, alternate, page));
+}
+
+Color ICCBasedColorSpace::color(Vector<Value> const&) const
+{
+    VERIFY_NOT_REACHED();
 }
 
 }

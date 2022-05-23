@@ -37,11 +37,16 @@ class IDEController;
 class IDEChannel : public RefCounted<IDEChannel>
     , public IRQHandler {
     friend class IDEController;
-    AK_MAKE_ETERNAL
+
 public:
     enum class ChannelType : u8 {
         Primary,
         Secondary
+    };
+
+    enum class DeviceType : u8 {
+        Master,
+        Slave,
     };
 
     struct IOAddressGroup {
@@ -69,11 +74,11 @@ public:
         IOAddressGroup(IOAddressGroup const&) = default;
 
         // Disable default implementations that would use surprising integer promotion.
-        bool operator==(const IOAddressGroup&) const = delete;
-        bool operator<=(const IOAddressGroup&) const = delete;
-        bool operator>=(const IOAddressGroup&) const = delete;
-        bool operator<(const IOAddressGroup&) const = delete;
-        bool operator>(const IOAddressGroup&) const = delete;
+        bool operator==(IOAddressGroup const&) const = delete;
+        bool operator<=(IOAddressGroup const&) const = delete;
+        bool operator>=(IOAddressGroup const&) const = delete;
+        bool operator<(IOAddressGroup const&) const = delete;
+        bool operator>(IOAddressGroup const&) const = delete;
 
         IOAddress io_base() const { return m_io_base; };
         IOAddress control_base() const { return m_control_base; }
@@ -86,8 +91,8 @@ public:
     };
 
 public:
-    static NonnullRefPtr<IDEChannel> create(const IDEController&, IOAddressGroup, ChannelType type);
-    static NonnullRefPtr<IDEChannel> create(const IDEController&, u8 irq, IOAddressGroup, ChannelType type);
+    static NonnullRefPtr<IDEChannel> create(IDEController const&, IOAddressGroup, ChannelType type);
+    static NonnullRefPtr<IDEChannel> create(IDEController const&, u8 irq, IOAddressGroup, ChannelType type);
     virtual ~IDEChannel() override;
 
     RefPtr<StorageDevice> master_device() const;
@@ -100,6 +105,7 @@ public:
 private:
     void complete_current_request(AsyncDeviceRequest::RequestResult);
     void initialize();
+    static constexpr size_t m_logical_sector_size = 512;
 
 protected:
     enum class LBAMode : u8 {
@@ -113,10 +119,10 @@ protected:
         Write,
     };
 
-    IDEChannel(const IDEController&, IOAddressGroup, ChannelType type);
-    IDEChannel(const IDEController&, u8 irq, IOAddressGroup, ChannelType type);
+    IDEChannel(IDEController const&, IOAddressGroup, ChannelType type);
+    IDEChannel(IDEController const&, u8 irq, IOAddressGroup, ChannelType type);
     //^ IRQHandler
-    virtual bool handle_irq(const RegisterState&) override;
+    virtual bool handle_irq(RegisterState const&) override;
 
     virtual void send_ata_io_command(LBAMode lba_mode, Direction direction) const;
 
@@ -127,7 +133,7 @@ protected:
     StringView channel_type_string() const;
 
     void try_disambiguate_error();
-    bool wait_until_not_busy(bool slave, size_t milliseconds_timeout);
+    bool select_device_and_wait_until_not_busy(DeviceType, size_t milliseconds_timeout);
     bool wait_until_not_busy(size_t milliseconds_timeout);
 
     void start_request(AsyncBlockDeviceRequest&, bool, u16);

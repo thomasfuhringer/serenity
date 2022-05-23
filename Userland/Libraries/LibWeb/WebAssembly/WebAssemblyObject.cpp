@@ -104,7 +104,7 @@ JS_DEFINE_NATIVE_FUNCTION(WebAssemblyObject::validate)
     // Drop the module from the cache, we're never going to refer to it.
     ScopeGuard drop_from_cache {
         [&] {
-            s_compiled_modules.take_last();
+            (void)s_compiled_modules.take_last();
         }
     };
 
@@ -159,11 +159,9 @@ JS_DEFINE_NATIVE_FUNCTION(WebAssemblyObject::compile)
     // FIXME: This shouldn't block!
     auto buffer_or_error = vm.argument(0).to_object(global_object);
     JS::Value rejection_value;
-    if (buffer_or_error.is_error()) {
-        rejection_value = buffer_or_error.throw_completion().value();
-        vm.clear_exception();
-        vm.stop_unwind();
-    }
+    if (buffer_or_error.is_error())
+        rejection_value = *buffer_or_error.throw_completion().value();
+
     auto promise = JS::Promise::create(global_object);
     if (!rejection_value.is_empty()) {
         promise->reject(rejection_value);
@@ -172,7 +170,7 @@ JS_DEFINE_NATIVE_FUNCTION(WebAssemblyObject::compile)
     auto* buffer = buffer_or_error.release_value();
     auto result = parse_module(global_object, buffer);
     if (result.is_error())
-        promise->reject(result.release_error().value());
+        promise->reject(*result.release_error().value());
     else
         promise->fulfill(vm.heap().allocate<WebAssemblyModuleObject>(global_object, global_object, result.release_value()));
     return promise;
@@ -186,7 +184,7 @@ JS::ThrowCompletionOr<size_t> WebAssemblyObject::instantiate_module(Wasm::Module
     if (!import_argument.is_undefined()) {
         auto* import_object = TRY(import_argument.to_object(global_object));
         dbgln("Trying to resolve stuff because import object was specified");
-        for (const Wasm::Linker::Name& import_name : linker.unresolved_imports()) {
+        for (Wasm::Linker::Name const& import_name : linker.unresolved_imports()) {
             dbgln("Trying to resolve {}::{}", import_name.module, import_name.name);
             auto value_or_error = import_object->get(import_name.module);
             if (value_or_error.is_error())
@@ -212,13 +210,12 @@ JS::ThrowCompletionOr<size_t> WebAssemblyObject::instantiate_module(Wasm::Module
                     //        just extract its address and resolve to that.
                     Wasm::HostFunction host_function {
                         [&](auto&, auto& arguments) -> Wasm::Result {
-                            JS::MarkedValueList argument_values { vm.heap() };
+                            JS::MarkedVector<JS::Value> argument_values { vm.heap() };
                             for (auto& entry : arguments)
                                 argument_values.append(to_js_value(global_object, entry));
 
-                            auto result_or_error = vm.call(function, JS::js_undefined(), move(argument_values));
+                            auto result_or_error = JS::call(global_object, function, JS::js_undefined(), move(argument_values));
                             if (result_or_error.is_error()) {
-                                vm.clear_exception();
                                 return Wasm::Trap();
                             }
                             if (type.results().is_empty())
@@ -289,7 +286,7 @@ JS::ThrowCompletionOr<size_t> WebAssemblyObject::instantiate_module(Wasm::Module
                     resolved_imports.set(import_name, Wasm::ExternValue { address });
                     return {};
                 },
-                [&](const auto&) -> JS::ThrowCompletionOr<void> {
+                [&](auto const&) -> JS::ThrowCompletionOr<void> {
                     // FIXME: Implement these.
                     dbgln("Unimplemented import of non-function attempted");
                     return vm.throw_completion<JS::TypeError>(global_object, "LinkError: Not Implemented");
@@ -325,19 +322,17 @@ JS_DEFINE_NATIVE_FUNCTION(WebAssemblyObject::instantiate)
     auto promise = JS::Promise::create(global_object);
     bool should_return_module = false;
     if (buffer_or_error.is_error()) {
-        auto rejection_value = buffer_or_error.throw_completion().value();
-        vm.clear_exception();
-        vm.stop_unwind();
+        auto rejection_value = *buffer_or_error.throw_completion().value();
         promise->reject(rejection_value);
         return promise;
     }
     auto* buffer = buffer_or_error.release_value();
 
-    const Wasm::Module* module { nullptr };
+    Wasm::Module const* module { nullptr };
     if (is<JS::ArrayBuffer>(buffer) || is<JS::TypedArrayBase>(buffer)) {
         auto result = parse_module(global_object, buffer);
         if (result.is_error()) {
-            promise->reject(result.release_error().value());
+            promise->reject(*result.release_error().value());
             return promise;
         }
         module = &WebAssemblyObject::s_compiled_modules.at(result.release_value()).module;
@@ -353,7 +348,7 @@ JS_DEFINE_NATIVE_FUNCTION(WebAssemblyObject::instantiate)
 
     auto result = instantiate_module(*module, vm, global_object);
     if (result.is_error()) {
-        promise->reject(result.release_error().value());
+        promise->reject(*result.release_error().value());
     } else {
         auto instance_object = vm.heap().allocate<WebAssemblyInstanceObject>(global_object, global_object, result.release_value());
         if (should_return_module) {
@@ -391,7 +386,7 @@ JS::Value to_js_value(JS::GlobalObject& global_object, Wasm::Value& wasm_value)
     VERIFY_NOT_REACHED();
 }
 
-JS::ThrowCompletionOr<Wasm::Value> to_webassembly_value(JS::GlobalObject& global_object, JS::Value value, const Wasm::ValueType& type)
+JS::ThrowCompletionOr<Wasm::Value> to_webassembly_value(JS::GlobalObject& global_object, JS::Value value, Wasm::ValueType const& type)
 {
     static ::Crypto::SignedBigInteger two_64 = "1"_sbigint.shift_left(64);
     auto& vm = global_object.vm();
@@ -444,7 +439,7 @@ JS::ThrowCompletionOr<Wasm::Value> to_webassembly_value(JS::GlobalObject& global
 JS::NativeFunction* create_native_function(JS::GlobalObject& global_object, Wasm::FunctionAddress address, String const& name)
 {
     Optional<Wasm::FunctionType> type;
-    WebAssemblyObject::s_abstract_machine.store().get(address)->visit([&](const auto& value) { type = value.type(); });
+    WebAssemblyObject::s_abstract_machine.store().get(address)->visit([&](auto const& value) { type = value.type(); });
     if (auto entry = WebAssemblyObject::s_global_cache.function_instances.get(address); entry.has_value())
         return *entry;
 

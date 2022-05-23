@@ -19,15 +19,13 @@ namespace JS {
 
 RefPtr<::JS::VM> g_vm;
 bool g_collect_on_every_allocation = false;
-#ifdef JS_TRACK_ZOMBIE_CELLS
-bool g_zombify_dead_cells = false;
-#endif
 bool g_run_bytecode = false;
 String g_currently_running_test;
 HashMap<String, FunctionWithLength> s_exposed_global_functions;
 Function<void()> g_main_hook;
+Function<NonnullOwnPtr<JS::Interpreter>()> g_create_interpreter_hook;
 HashMap<bool*, Tuple<String, String, char>> g_extra_args;
-IntermediateRunFileResult (*g_run_file)(const String&, JS::Interpreter&) = nullptr;
+IntermediateRunFileResult (*g_run_file)(String const&, JS::Interpreter&, JS::ExecutionContext&) = nullptr;
 String g_test_root;
 int g_test_argc;
 char** g_test_argv;
@@ -89,7 +87,8 @@ int main(int argc, char** argv)
         false;
 #endif
     bool print_json = false;
-    const char* specified_test_root = nullptr;
+    bool per_file = false;
+    char const* specified_test_root = nullptr;
     String common_path;
     String test_glob;
 
@@ -111,10 +110,8 @@ int main(int argc, char** argv)
         },
     });
     args_parser.add_option(print_json, "Show results as JSON", "json", 'j');
+    args_parser.add_option(per_file, "Show detailed per-file results as JSON (implies -j)", "per-file", 0);
     args_parser.add_option(g_collect_on_every_allocation, "Collect garbage after every allocation", "collect-often", 'g');
-#ifdef JS_TRACK_ZOMBIE_CELLS
-    args_parser.add_option(g_zombify_dead_cells, "Zombify dead cells (to catch missing GC marks)", "zombify-dead-cells", 'z');
-#endif
     args_parser.add_option(g_run_bytecode, "Use the bytecode interpreter", "run-bytecode", 'b');
     args_parser.add_option(JS::Bytecode::g_dump_bytecode, "Dump the bytecode", "dump-bytecode", 'd');
     args_parser.add_option(test_glob, "Only run tests matching the given glob", "filter", 'f', "glob");
@@ -123,6 +120,9 @@ int main(int argc, char** argv)
     args_parser.add_positional_argument(specified_test_root, "Tests root directory", "path", Core::ArgsParser::Required::No);
     args_parser.add_positional_argument(common_path, "Path to tests-common.js", "common-path", Core::ArgsParser::Required::No);
     args_parser.parse(argc, argv);
+
+    if (per_file)
+        print_json = true;
 
     test_glob = String::formatted("*{}*", test_glob);
 
@@ -141,7 +141,7 @@ int main(int argc, char** argv)
         test_root = String { specified_test_root };
     } else {
 #ifdef __serenity__
-        test_root = LexicalPath::join("/home/anon", String::formatted("{}-tests", program_name.split_view('-').last())).string();
+        test_root = LexicalPath::join("/home/anon/Tests", String::formatted("{}-tests", program_name.split_view('-').last())).string();
 #else
         char* serenity_source_dir = getenv("SERENITY_SOURCE_DIR");
         if (!serenity_source_dir) {
@@ -159,7 +159,7 @@ int main(int argc, char** argv)
 
     if (common_path.is_empty()) {
 #ifdef __serenity__
-        common_path = "/home/anon/js-tests/test-common.js";
+        common_path = "/home/anon/Tests/js-tests/test-common.js";
 #else
         char* serenity_source_dir = getenv("SERENITY_SOURCE_DIR");
         if (!serenity_source_dir) {
@@ -182,10 +182,12 @@ int main(int argc, char** argv)
     if (g_main_hook)
         g_main_hook();
 
-    if (!g_vm)
+    if (!g_vm) {
         g_vm = JS::VM::create();
+        g_vm->enable_default_host_import_module_dynamically_hook();
+    }
 
-    Test::JS::TestRunner test_runner(test_root, common_path, print_times, print_progress, print_json);
+    Test::JS::TestRunner test_runner(test_root, common_path, print_times, print_progress, print_json, per_file);
     test_runner.run(test_glob);
 
     g_vm = nullptr;

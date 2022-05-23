@@ -1,28 +1,30 @@
 /*
- * Copyright (c) 2020, the SerenityOS developers.
+ * Copyright (c) 2020-2022, the SerenityOS developers.
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #include "DHCPv4Client.h"
+#include <AK/Array.h>
 #include <AK/Debug.h>
 #include <AK/JsonArray.h>
 #include <AK/JsonObject.h>
 #include <AK/JsonParser.h>
 #include <AK/Random.h>
+#include <AK/ScopeGuard.h>
 #include <AK/Try.h>
 #include <LibCore/File.h>
 #include <LibCore/Timer.h>
 #include <stdio.h>
 
-static u8 mac_part(const Vector<String>& parts, size_t index)
+static u8 mac_part(Vector<String> const& parts, size_t index)
 {
     auto result = AK::StringUtils::convert_to_uint_from_hex(parts.at(index));
     VERIFY(result.has_value());
     return result.value();
 }
 
-static MACAddress mac_from_string(const String& str)
+static MACAddress mac_from_string(String const& str)
 {
     auto chunks = str.split(':');
     VERIFY(chunks.size() == 6); // should we...worry about this?
@@ -32,13 +34,15 @@ static MACAddress mac_from_string(const String& str)
     };
 }
 
-static bool send(const InterfaceDescriptor& iface, const DHCPv4Packet& packet, Core::Object*)
+static bool send(InterfaceDescriptor const& iface, DHCPv4Packet const& packet, Core::Object*)
 {
     int fd = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
     if (fd < 0) {
         dbgln("ERROR: socket :: {}", strerror(errno));
         return false;
     }
+
+    ScopeGuard socket_close_guard = [&] { close(fd); };
 
     if (setsockopt(fd, SOL_SOCKET, SO_BINDTODEVICE, iface.ifname.characters(), IFNAMSIZ) < 0) {
         dbgln("ERROR: setsockopt(SO_BINDTODEVICE) :: {}", strerror(errno));
@@ -63,7 +67,7 @@ static bool send(const InterfaceDescriptor& iface, const DHCPv4Packet& packet, C
     return true;
 }
 
-static void set_params(const InterfaceDescriptor& iface, const IPv4Address& ipv4_addr, const IPv4Address& netmask, const IPv4Address& gateway)
+static void set_params(InterfaceDescriptor const& iface, IPv4Address const& ipv4_addr, IPv4Address const& netmask, Optional<IPv4Address> const& gateway)
 {
     int fd = socket(AF_INET, SOCK_DGRAM, IPPROTO_IP);
     if (fd < 0) {
@@ -95,13 +99,16 @@ static void set_params(const InterfaceDescriptor& iface, const IPv4Address& ipv4
         dbgln("ERROR: ioctl(SIOCSIFNETMASK) :: {}", strerror(errno));
     }
 
+    if (!gateway.has_value())
+        return;
+
     // set the default gateway
     struct rtentry rt;
     memset(&rt, 0, sizeof(rt));
 
     rt.rt_dev = const_cast<char*>(iface.ifname.characters());
     rt.rt_gateway.sa_family = AF_INET;
-    ((sockaddr_in&)rt.rt_gateway).sin_addr.s_addr = gateway.to_in_addr_t();
+    ((sockaddr_in&)rt.rt_gateway).sin_addr.s_addr = gateway.value().to_in_addr_t();
     rt.rt_flags = RTF_UP | RTF_GATEWAY;
 
     if (ioctl(fd, SIOCADDRT, &rt) < 0) {
@@ -201,11 +208,7 @@ ErrorOr<DHCPv4Client::Interfaces> DHCPv4Client::get_discoverable_interfaces()
     };
 }
 
-DHCPv4Client::~DHCPv4Client()
-{
-}
-
-void DHCPv4Client::handle_offer(const DHCPv4Packet& packet, const ParsedDHCPv4Options& options)
+void DHCPv4Client::handle_offer(DHCPv4Packet const& packet, ParsedDHCPv4Options const& options)
 {
     dbgln("We were offered {} for {}", packet.yiaddr().to_string(), options.get<u32>(DHCPOption::IPAddressLeaseTime).value_or(0));
     auto* transaction = const_cast<DHCPv4Transaction*>(m_ongoing_transactions.get(packet.xid()).value_or(nullptr));
@@ -225,7 +228,7 @@ void DHCPv4Client::handle_offer(const DHCPv4Packet& packet, const ParsedDHCPv4Op
     dhcp_request(*transaction, packet);
 }
 
-void DHCPv4Client::handle_ack(const DHCPv4Packet& packet, const ParsedDHCPv4Options& options)
+void DHCPv4Client::handle_ack(DHCPv4Packet const& packet, ParsedDHCPv4Options const& options)
 {
     if constexpr (DHCPV4CLIENT_DEBUG) {
         dbgln("The DHCP server handed us {}", packet.yiaddr().to_string());
@@ -243,7 +246,7 @@ void DHCPv4Client::handle_ack(const DHCPv4Packet& packet, const ParsedDHCPv4Opti
     interface.current_ip_address = new_ip;
     auto lease_time = AK::convert_between_host_and_network_endian(options.get<u32>(DHCPOption::IPAddressLeaseTime).value_or(transaction->offered_lease_time));
     // set a timer for the duration of the lease, we shall renew if needed
-    Core::Timer::create_single_shot(
+    (void)Core::Timer::create_single_shot(
         lease_time * 1000,
         [this, transaction, interface = InterfaceDescriptor { interface }] {
             transaction->accepted_offer = false;
@@ -251,10 +254,15 @@ void DHCPv4Client::handle_ack(const DHCPv4Packet& packet, const ParsedDHCPv4Opti
             dhcp_discover(interface);
         },
         this);
-    set_params(transaction->interface, new_ip, options.get<IPv4Address>(DHCPOption::SubnetMask).value(), options.get_many<IPv4Address>(DHCPOption::Router, 1).first());
+
+    Optional<IPv4Address> gateway;
+    if (auto routers = options.get_many<IPv4Address>(DHCPOption::Router, 1); !routers.is_empty())
+        gateway = routers.first();
+
+    set_params(transaction->interface, new_ip, options.get<IPv4Address>(DHCPOption::SubnetMask).value(), gateway);
 }
 
-void DHCPv4Client::handle_nak(const DHCPv4Packet& packet, const ParsedDHCPv4Options& options)
+void DHCPv4Client::handle_nak(DHCPv4Packet const& packet, ParsedDHCPv4Options const& options)
 {
     dbgln("The DHCP server told us to go chase our own tail about {}", packet.yiaddr().to_string());
     dbgln("Here are the options: {}", options.to_string());
@@ -267,7 +275,7 @@ void DHCPv4Client::handle_nak(const DHCPv4Packet& packet, const ParsedDHCPv4Opti
     transaction->accepted_offer = false;
     transaction->has_ip = false;
     auto& iface = transaction->interface;
-    Core::Timer::create_single_shot(
+    (void)Core::Timer::create_single_shot(
         10000,
         [this, iface = InterfaceDescriptor { iface }] {
             dhcp_discover(iface);
@@ -275,7 +283,7 @@ void DHCPv4Client::handle_nak(const DHCPv4Packet& packet, const ParsedDHCPv4Opti
         this);
 }
 
-void DHCPv4Client::process_incoming(const DHCPv4Packet& packet)
+void DHCPv4Client::process_incoming(DHCPv4Packet const& packet)
 {
     auto options = packet.parse_options();
 
@@ -311,7 +319,7 @@ void DHCPv4Client::process_incoming(const DHCPv4Packet& packet)
     }
 }
 
-void DHCPv4Client::dhcp_discover(const InterfaceDescriptor& iface)
+void DHCPv4Client::dhcp_discover(InterfaceDescriptor const& iface)
 {
     auto transaction_id = get_random<u32>();
 
@@ -343,7 +351,7 @@ void DHCPv4Client::dhcp_discover(const InterfaceDescriptor& iface)
     m_ongoing_transactions.set(transaction_id, make<DHCPv4Transaction>(iface));
 }
 
-void DHCPv4Client::dhcp_request(DHCPv4Transaction& transaction, const DHCPv4Packet& offer)
+void DHCPv4Client::dhcp_request(DHCPv4Transaction& transaction, DHCPv4Packet const& offer)
 {
     auto& iface = transaction.interface;
     dbgln("Leasing the IP {} for adapter {}", offer.yiaddr().to_string(), iface.ifname);
@@ -362,6 +370,17 @@ void DHCPv4Client::dhcp_request(DHCPv4Transaction& transaction, const DHCPv4Pack
     // set packet options
     builder.set_message_type(DHCPMessageType::DHCPRequest);
     builder.add_option(DHCPOption::RequestedIPAddress, sizeof(IPv4Address), &offer.yiaddr());
+
+    auto maybe_dhcp_server_ip = offer.parse_options().get<IPv4Address>(DHCPOption::ServerIdentifier);
+    if (maybe_dhcp_server_ip.has_value())
+        builder.add_option(DHCPOption::ServerIdentifier, sizeof(IPv4Address), &maybe_dhcp_server_ip.value());
+
+    AK::Array<DHCPOption, 2> parameter_request_list = {
+        DHCPOption::SubnetMask,
+        DHCPOption::Router,
+    };
+    builder.add_option(DHCPOption::ParameterRequestList, parameter_request_list.size(), &parameter_request_list);
+
     auto& dhcp_packet = builder.build();
 
     // broadcast the "request" request

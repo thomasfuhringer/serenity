@@ -5,10 +5,11 @@
  */
 
 #include "TerminalSettingsWidget.h"
+#include <LibCore/ArgsParser.h>
 #include <LibCore/System.h>
 #include <LibGUI/Application.h>
+#include <LibGUI/ConnectionToWindowServer.h>
 #include <LibGUI/SettingsWindow.h>
-#include <LibGUI/WindowServerConnection.h>
 #include <LibMain/Main.h>
 
 // Including this after to avoid LibIPC errors
@@ -18,7 +19,12 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
 {
     TRY(Core::System::pledge("stdio rpath recvfd sendfd unix"));
     auto app = TRY(GUI::Application::try_create(arguments));
-    Config::pledge_domains("Terminal");
+    Config::pledge_domain("Terminal");
+
+    StringView selected_tab;
+    Core::ArgsParser args_parser;
+    args_parser.add_option(selected_tab, "Tab, one of 'terminal' or 'view'", "open-tab", 't', "tab");
+    args_parser.parse(arguments);
 
     TRY(Core::System::pledge("stdio rpath recvfd sendfd"));
     TRY(Core::System::unveil("/res", "r"));
@@ -28,8 +34,9 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
 
     auto window = TRY(GUI::SettingsWindow::create("Terminal Settings"));
     window->set_icon(app_icon.bitmap_for_size(16));
-    TRY(window->add_tab<TerminalSettingsMainWidget>("Terminal"));
-    TRY(window->add_tab<TerminalSettingsViewWidget>("View"));
+    (void)TRY(window->add_tab<TerminalSettingsMainWidget>("Terminal", "terminal"));
+    (void)TRY(window->add_tab<TerminalSettingsViewWidget>("View", "view"));
+    window->set_active_tab(selected_tab);
 
     window->show();
     return app->exec();

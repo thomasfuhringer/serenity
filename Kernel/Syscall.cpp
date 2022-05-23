@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2018-2021, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2022, the SerenityOS developers.
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -11,6 +12,7 @@
 #include <Kernel/Panic.h>
 #include <Kernel/PerformanceManager.h>
 #include <Kernel/Process.h>
+#include <Kernel/Scheduler.h>
 #include <Kernel/Sections.h>
 #include <Kernel/ThreadTracer.h>
 
@@ -88,8 +90,8 @@ UNMAP_AFTER_INIT void initialize()
     register_user_callable_interrupt_handler(syscall_vector, syscall_asm_entry);
 }
 
-using Handler = auto (Process::*)(FlatPtr, FlatPtr, FlatPtr, FlatPtr) -> ErrorOr<FlatPtr>;
-using HandlerWithRegisterState = auto (Process::*)(RegisterState&) -> ErrorOr<FlatPtr>;
+using Handler = auto(Process::*)(FlatPtr, FlatPtr, FlatPtr, FlatPtr) -> ErrorOr<FlatPtr>;
+using HandlerWithRegisterState = auto(Process::*)(RegisterState&) -> ErrorOr<FlatPtr>;
 
 struct HandlerMetadata {
     Handler handler;
@@ -105,7 +107,7 @@ static const HandlerMetadata s_syscall_table[] = {
 ErrorOr<FlatPtr> handle(RegisterState& regs, FlatPtr function, FlatPtr arg1, FlatPtr arg2, FlatPtr arg3, FlatPtr arg4)
 {
     VERIFY_INTERRUPTS_ENABLED();
-    auto current_thread = Thread::current();
+    auto* current_thread = Thread::current();
     auto& process = current_thread->process();
     current_thread->did_syscall();
 
@@ -116,14 +118,14 @@ ErrorOr<FlatPtr> handle(RegisterState& regs, FlatPtr function, FlatPtr arg1, Fla
         return ENOSYS;
     }
 
-    const auto syscall_metadata = s_syscall_table[function];
+    auto const syscall_metadata = s_syscall_table[function];
     if (syscall_metadata.handler == nullptr) {
         dbgln("Null syscall {} requested, you probably need to rebuild this program!", function);
         return ENOSYS;
     }
 
     MutexLocker mutex_locker;
-    const auto needs_big_lock = syscall_metadata.needs_lock == NeedsBigProcessLock::Yes;
+    auto const needs_big_lock = syscall_metadata.needs_lock == NeedsBigProcessLock::Yes;
     if (needs_big_lock) {
         mutex_locker.attach_and_lock(process.big_lock());
     };
@@ -164,8 +166,11 @@ ErrorOr<FlatPtr> handle(RegisterState& regs, FlatPtr function, FlatPtr arg1, Fla
 
 NEVER_INLINE void syscall_handler(TrapFrame* trap)
 {
+    // Make sure SMAP protection is enabled on syscall entry.
+    clac();
+
     auto& regs = *trap->regs;
-    auto current_thread = Thread::current();
+    auto* current_thread = Thread::current();
     VERIFY(current_thread->previous_mode() == Thread::PreviousMode::UserMode);
     auto& process = current_thread->process();
     if (process.is_dying()) {
@@ -175,15 +180,12 @@ NEVER_INLINE void syscall_handler(TrapFrame* trap)
         return;
     }
 
-    if (auto tracer = process.tracer(); tracer && tracer->is_tracing_syscalls()) {
+    if (auto* tracer = process.tracer(); tracer && tracer->is_tracing_syscalls()) {
         tracer->set_trace_syscalls(false);
         process.tracer_trap(*current_thread, regs); // this triggers SIGTRAP and stops the thread!
     }
 
     current_thread->yield_if_stopped();
-
-    // Make sure SMAP protection is enabled on syscall entry.
-    clac();
 
     // Apply a random offset in the range 0-255 to the stack pointer,
     // to make kernel stacks a bit less deterministic.
@@ -195,7 +197,7 @@ NEVER_INLINE void syscall_handler(TrapFrame* trap)
     asm volatile(""
                  : "=m"(*ptr));
 
-    static constexpr FlatPtr iopl_mask = 3u << 12;
+    constexpr FlatPtr iopl_mask = 3u << 12;
 
     FlatPtr flags = regs.flags();
     if ((flags & (iopl_mask)) != 0) {
@@ -219,7 +221,7 @@ NEVER_INLINE void syscall_handler(TrapFrame* trap)
         regs.set_return_reg(result.value());
     }
 
-    if (auto tracer = process.tracer(); tracer && tracer->is_tracing_syscalls()) {
+    if (auto* tracer = process.tracer(); tracer && tracer->is_tracing_syscalls()) {
         tracer->set_trace_syscalls(false);
         process.tracer_trap(*current_thread, regs); // this triggers SIGTRAP and stops the thread!
     }
@@ -233,6 +235,15 @@ NEVER_INLINE void syscall_handler(TrapFrame* trap)
 
     // Check if we're supposed to return to userspace or just die.
     current_thread->die_if_needed();
+
+    // Crash any processes which have commited a promise violation during syscall handling.
+    if (result.is_error() && result.error().code() == EPROMISEVIOLATION) {
+        VERIFY(current_thread->is_promise_violation_pending());
+        current_thread->set_promise_violation_pending(false);
+        process.crash(SIGABRT, 0);
+    } else {
+        VERIFY(!current_thread->is_promise_violation_pending());
+    }
 
     VERIFY(!g_scheduler_lock.is_locked_by_current_processor());
 }

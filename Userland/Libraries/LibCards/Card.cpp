@@ -1,17 +1,18 @@
 /*
  * Copyright (c) 2020, Till Mayer <till.mayer@web.de>
+ * Copyright (c) 2022, the SerenityOS developers.
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #include "Card.h"
 #include <LibGUI/Widget.h>
-#include <LibGfx/Font.h>
-#include <LibGfx/FontDatabase.h>
+#include <LibGfx/Font/Font.h>
+#include <LibGfx/Font/FontDatabase.h>
 
 namespace Cards {
 
-static const NonnullRefPtr<Gfx::CharacterBitmap> s_diamond = Gfx::CharacterBitmap::create_from_ascii(
+static constexpr Gfx::CharacterBitmap s_diamond {
     "    #    "
     "   ###   "
     "  #####  "
@@ -21,9 +22,10 @@ static const NonnullRefPtr<Gfx::CharacterBitmap> s_diamond = Gfx::CharacterBitma
     "  #####  "
     "   ###   "
     "    #    ",
-    9, 9);
+    9, 9
+};
 
-static const NonnullRefPtr<Gfx::CharacterBitmap> s_heart = Gfx::CharacterBitmap::create_from_ascii(
+static constexpr Gfx::CharacterBitmap s_heart {
     "  #   #  "
     " ### ### "
     "#########"
@@ -33,9 +35,10 @@ static const NonnullRefPtr<Gfx::CharacterBitmap> s_heart = Gfx::CharacterBitmap:
     "  #####  "
     "   ###   "
     "    #    ",
-    9, 9);
+    9, 9
+};
 
-static const NonnullRefPtr<Gfx::CharacterBitmap> s_spade = Gfx::CharacterBitmap::create_from_ascii(
+static constexpr Gfx::CharacterBitmap s_spade {
     "    #    "
     "   ###   "
     "  #####  "
@@ -45,9 +48,10 @@ static const NonnullRefPtr<Gfx::CharacterBitmap> s_spade = Gfx::CharacterBitmap:
     " ## # ## "
     "   ###   "
     "   ###   ",
-    9, 9);
+    9, 9
+};
 
-static const NonnullRefPtr<Gfx::CharacterBitmap> s_club = Gfx::CharacterBitmap::create_from_ascii(
+static constexpr Gfx::CharacterBitmap s_club {
     "    ###    "
     "   #####   "
     "   #####   "
@@ -57,15 +61,16 @@ static const NonnullRefPtr<Gfx::CharacterBitmap> s_club = Gfx::CharacterBitmap::
     "#### # ####"
     " ## ### ## "
     "    ###    ",
-    11, 9);
+    11, 9
+};
 
 static RefPtr<Gfx::Bitmap> s_background;
 static RefPtr<Gfx::Bitmap> s_background_inverted;
 
-Card::Card(Type type, uint8_t value)
+Card::Card(Suit suit, uint8_t value)
     : m_rect(Gfx::IntRect({}, { width, height }))
     , m_front(Gfx::Bitmap::try_create(Gfx::BitmapFormat::BGRA8888, { width, height }).release_value_but_fixme_should_propagate_errors())
-    , m_type(type)
+    , m_suit(suit)
     , m_value(value)
 {
     VERIFY(value < card_count);
@@ -105,26 +110,24 @@ Card::Card(Type type, uint8_t value)
     auto text_rect = Gfx::IntRect { 4, 6, font.width("10"), font.glyph_height() };
     painter.draw_text(text_rect, label, font, Gfx::TextAlignment::Center, color());
 
-    NonnullRefPtr<Gfx::CharacterBitmap> symbol = s_diamond;
-    switch (m_type) {
-    case Diamonds:
-        symbol = s_diamond;
-        break;
-    case Clubs:
-        symbol = s_club;
-        break;
-    case Spades:
-        symbol = s_spade;
-        break;
-    case Hearts:
-        symbol = s_heart;
-        break;
-    default:
-        VERIFY_NOT_REACHED();
-    }
+    auto const& symbol = [&]() -> Gfx::CharacterBitmap const& {
+        switch (m_suit) {
+        case Suit::Diamonds:
+            return s_diamond;
+        case Suit::Clubs:
+            return s_club;
+            break;
+        case Suit::Spades:
+            return s_spade;
+        case Suit::Hearts:
+            return s_heart;
+        default:
+            VERIFY_NOT_REACHED();
+        }
+    }();
 
     painter.draw_bitmap(
-        { text_rect.x() + (text_rect.width() - symbol->size().width()) / 2, text_rect.bottom() + 5 },
+        { text_rect.x() + (text_rect.width() - symbol.size().width()) / 2, text_rect.bottom() + 5 },
         symbol, color());
 
     for (int y = height / 2; y < height; ++y) {
@@ -136,10 +139,6 @@ Card::Card(Type type, uint8_t value)
     m_front_inverted = invert_bitmap(*m_front);
 }
 
-Card::~Card()
-{
-}
-
 void Card::draw(GUI::Painter& painter) const
 {
     VERIFY(!s_background.is_null());
@@ -149,7 +148,7 @@ void Card::draw(GUI::Painter& painter) const
         painter.blit(position(), m_upside_down ? *s_background : *m_front, m_front->rect());
 }
 
-void Card::clear(GUI::Painter& painter, const Color& background_color) const
+void Card::clear(GUI::Painter& painter, Color const& background_color) const
 {
     painter.fill_rect({ old_position(), { width, height } }, background_color);
 }
@@ -160,7 +159,7 @@ void Card::save_old_position()
     m_old_position_valid = true;
 }
 
-void Card::clear_and_draw(GUI::Painter& painter, const Color& background_color)
+void Card::clear_and_draw(GUI::Painter& painter, Color const& background_color)
 {
     if (is_old_position_valid())
         clear(painter, background_color);

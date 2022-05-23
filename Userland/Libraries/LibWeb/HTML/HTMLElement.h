@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2018-2020, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2018-2022, Andreas Kling <kling@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -19,14 +19,14 @@ class HTMLElement
 public:
     using WrapperType = Bindings::HTMLElementWrapper;
 
-    HTMLElement(DOM::Document&, QualifiedName);
+    HTMLElement(DOM::Document&, DOM::QualifiedName);
     virtual ~HTMLElement() override;
 
     String title() const { return attribute(HTML::AttributeNames::title); }
 
     virtual bool is_editable() const final;
     String content_editable() const;
-    DOM::ExceptionOr<void> set_content_editable(const String&);
+    DOM::ExceptionOr<void> set_content_editable(String const&);
 
     String inner_text();
     void set_inner_text(StringView);
@@ -40,12 +40,21 @@ public:
 
     NonnullRefPtr<DOMStringMap> dataset() const { return m_dataset; }
 
+    void focus();
+
+    void click();
+
+    bool fire_a_synthetic_pointer_event(FlyString const& type, DOM::Element& target, bool not_trusted);
+
+    // https://html.spec.whatwg.org/multipage/forms.html#category-label
+    virtual bool is_labelable() const { return false; }
+
 protected:
-    virtual void parse_attribute(const FlyString& name, const String& value) override;
+    virtual void parse_attribute(FlyString const& name, String const& value) override;
 
 private:
     // ^HTML::GlobalEventHandlers
-    virtual EventTarget& global_event_handlers_to_event_target() override { return *this; }
+    virtual DOM::EventTarget& global_event_handlers_to_event_target() override { return *this; }
 
     enum class ContentEditableState {
         True,
@@ -55,6 +64,12 @@ private:
     ContentEditableState content_editable_state() const;
 
     NonnullRefPtr<DOMStringMap> m_dataset;
+
+    // https://html.spec.whatwg.org/multipage/interaction.html#locked-for-focus
+    bool m_locked_for_focus { false };
+
+    // https://html.spec.whatwg.org/multipage/interaction.html#click-in-progress-flag
+    bool m_click_in_progress { false };
 };
 
 }

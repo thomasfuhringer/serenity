@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2018-2021, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2022, the SerenityOS developers.
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -197,7 +198,7 @@ bool Object::set_property(String const& name, JsonValue const& value)
     return it->value->set(value);
 }
 
-bool Object::is_ancestor_of(const Object& other) const
+bool Object::is_ancestor_of(Object const& other) const
 {
     if (&other == this)
         return false;
@@ -246,7 +247,7 @@ void Object::decrement_inspector_count(Badge<InspectorServerConnection>)
         did_end_inspection();
 }
 
-void Object::register_property(const String& name, Function<JsonValue()> getter, Function<bool(const JsonValue&)> setter)
+void Object::register_property(String const& name, Function<JsonValue()> getter, Function<bool(JsonValue const&)> setter)
 {
     m_properties.set(name, make<Property>(name, move(getter), move(setter)));
 }
@@ -258,10 +259,8 @@ void Object::set_event_filter(Function<bool(Core::Event&)> filter)
 
 static HashMap<StringView, ObjectClassRegistration*>& object_classes()
 {
-    static HashMap<StringView, ObjectClassRegistration*>* map;
-    if (!map)
-        map = new HashMap<StringView, ObjectClassRegistration*>;
-    return *map;
+    static HashMap<StringView, ObjectClassRegistration*> s_map;
+    return s_map;
 }
 
 ObjectClassRegistration::ObjectClassRegistration(StringView class_name, Function<RefPtr<Object>()> factory, ObjectClassRegistration* parent_class)
@@ -272,11 +271,7 @@ ObjectClassRegistration::ObjectClassRegistration(StringView class_name, Function
     object_classes().set(class_name, this);
 }
 
-ObjectClassRegistration::~ObjectClassRegistration()
-{
-}
-
-bool ObjectClassRegistration::is_derived_from(const ObjectClassRegistration& base_class) const
+bool ObjectClassRegistration::is_derived_from(ObjectClassRegistration const& base_class) const
 {
     if (&base_class == this)
         return true;
@@ -285,14 +280,14 @@ bool ObjectClassRegistration::is_derived_from(const ObjectClassRegistration& bas
     return m_parent_class->is_derived_from(base_class);
 }
 
-void ObjectClassRegistration::for_each(Function<void(const ObjectClassRegistration&)> callback)
+void ObjectClassRegistration::for_each(Function<void(ObjectClassRegistration const&)> callback)
 {
     for (auto& it : object_classes()) {
         callback(*it.value);
     }
 }
 
-const ObjectClassRegistration* ObjectClassRegistration::find(StringView class_name)
+ObjectClassRegistration const* ObjectClassRegistration::find(StringView class_name)
 {
     return object_classes().get(class_name).value_or(nullptr);
 }

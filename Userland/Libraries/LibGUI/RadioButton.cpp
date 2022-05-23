@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2018-2020, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2022, the SerenityOS developers.
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -7,7 +8,7 @@
 #include <LibGUI/Painter.h>
 #include <LibGUI/RadioButton.h>
 #include <LibGfx/Bitmap.h>
-#include <LibGfx/Font.h>
+#include <LibGfx/Font/Font.h>
 #include <LibGfx/Palette.h>
 #include <LibGfx/StylePainter.h>
 
@@ -22,10 +23,6 @@ RadioButton::RadioButton(String text)
     set_checkable(true);
     set_min_width(32);
     set_fixed_height(22);
-}
-
-RadioButton::~RadioButton()
-{
 }
 
 Gfx::IntSize RadioButton::circle_size()

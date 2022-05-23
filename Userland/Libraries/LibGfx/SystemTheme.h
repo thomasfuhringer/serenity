@@ -1,6 +1,7 @@
 /*
  * Copyright (c) 2018-2020, Andreas Kling <kling@serenityos.org>
  * Copyright (c) 2021, Sam Atkins <atkinssj@serenityos.org>
+ * Copyright (c) 2022, Filiph Sandström <filiph.sandstrom@filfatstudios.com>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -10,9 +11,11 @@
 #include <AK/Forward.h>
 #include <AK/String.h>
 #include <AK/Types.h>
+#include <AK/Vector.h>
 #include <LibCore/AnonymousBuffer.h>
 #include <LibCore/ConfigFile.h>
 #include <LibGfx/Color.h>
+#include <LibGfx/TextAlignment.h>
 
 namespace Gfx {
 
@@ -28,6 +31,8 @@ namespace Gfx {
     C(BaseText)                    \
     C(Button)                      \
     C(ButtonText)                  \
+    C(DisabledTextFront)           \
+    C(DisabledTextBack)            \
     C(DesktopBackground)           \
     C(FocusOutline)                \
     C(Gutter)                      \
@@ -78,6 +83,12 @@ namespace Gfx {
     C(SyntaxPunctuation)           \
     C(SyntaxString)                \
     C(SyntaxType)                  \
+    C(SyntaxFunction)              \
+    C(SyntaxVariable)              \
+    C(SyntaxCustomType)            \
+    C(SyntaxNamespace)             \
+    C(SyntaxMember)                \
+    C(SyntaxParameter)             \
     C(TextCursor)                  \
     C(ThreedHighlight)             \
     C(ThreedShadow1)               \
@@ -90,10 +101,16 @@ namespace Gfx {
     C(Window)                      \
     C(WindowText)
 
+#define ENUMERATE_ALIGNMENT_ROLES(C) \
+    C(TitleAlignment)
+
 #define ENUMERATE_FLAG_ROLES(C) \
-    C(IsDark)
+    C(IsDark)                   \
+    C(TitleButtonsIconOnly)
 
 #define ENUMERATE_METRIC_ROLES(C) \
+    C(BorderThickness)            \
+    C(BorderRadius)               \
     C(TitleHeight)                \
     C(TitleButtonWidth)           \
     C(TitleButtonHeight)
@@ -120,7 +137,7 @@ enum class ColorRole {
     DisabledText = ThreedShadow1,
 };
 
-inline const char* to_string(ColorRole role)
+inline char const* to_string(ColorRole role)
 {
     switch (role) {
     case ColorRole::NoRole:
@@ -131,6 +148,33 @@ inline const char* to_string(ColorRole role)
         return #role;
         ENUMERATE_COLOR_ROLES(__ENUMERATE_COLOR_ROLE)
 #undef __ENUMERATE_COLOR_ROLE
+    default:
+        VERIFY_NOT_REACHED();
+    }
+}
+
+enum class AlignmentRole {
+    NoRole,
+
+#undef __ENUMERATE_ALIGNMENT_ROLE
+#define __ENUMERATE_ALIGNMENT_ROLE(role) role,
+    ENUMERATE_ALIGNMENT_ROLES(__ENUMERATE_ALIGNMENT_ROLE)
+#undef __ENUMERATE_ALIGNMENT_ROLE
+
+        __Count,
+};
+
+inline char const* to_string(AlignmentRole role)
+{
+    switch (role) {
+    case AlignmentRole::NoRole:
+        return "NoRole";
+#undef __ENUMERATE_ALIGNMENT_ROLE
+#define __ENUMERATE_ALIGNMENT_ROLE(role) \
+    case AlignmentRole::role:            \
+        return #role;
+        ENUMERATE_ALIGNMENT_ROLES(__ENUMERATE_ALIGNMENT_ROLE)
+#undef __ENUMERATE_ALIGNMENT_ROLE
     default:
         VERIFY_NOT_REACHED();
     }
@@ -147,7 +191,7 @@ enum class FlagRole {
         __Count,
 };
 
-inline const char* to_string(FlagRole role)
+inline char const* to_string(FlagRole role)
 {
     switch (role) {
     case FlagRole::NoRole:
@@ -174,7 +218,7 @@ enum class MetricRole {
         __Count,
 };
 
-inline const char* to_string(MetricRole role)
+inline char const* to_string(MetricRole role)
 {
     switch (role) {
     case MetricRole::NoRole:
@@ -201,7 +245,7 @@ enum class PathRole {
         __Count,
 };
 
-inline const char* to_string(PathRole role)
+inline char const* to_string(PathRole role)
 {
     switch (role) {
     case PathRole::NoRole:
@@ -218,7 +262,8 @@ inline const char* to_string(PathRole role)
 }
 
 struct SystemTheme {
-    RGBA32 color[(int)ColorRole::__Count];
+    ARGB32 color[(int)ColorRole::__Count];
+    Gfx::TextAlignment alignment[(int)AlignmentRole::__Count];
     bool flag[(int)FlagRole::__Count];
     int metric[(int)MetricRole::__Count];
     char path[(int)PathRole::__Count][256]; // TODO: PATH_MAX?
@@ -228,6 +273,13 @@ Core::AnonymousBuffer& current_system_theme_buffer();
 void set_system_theme(Core::AnonymousBuffer);
 Core::AnonymousBuffer load_system_theme(Core::ConfigFile const&);
 Core::AnonymousBuffer load_system_theme(String const& path);
+
+struct SystemThemeMetaData {
+    String name;
+    String path;
+};
+
+Vector<SystemThemeMetaData> list_installed_system_themes();
 
 }
 

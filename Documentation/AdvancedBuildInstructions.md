@@ -13,7 +13,7 @@ set -e
 
 cat << 'EOF' > mnt/etc/Keyboard.ini
 [Mapping]
-Keymap=de
+Keymaps=de
 EOF
 
 # Add a file in anon's home dir
@@ -29,6 +29,7 @@ The `Meta/serenity.sh` script provides an abstraction over the build targets whi
 following build targets cannot be accessed through the script and have to be used directly by changing the current
 directory to `Build/i686` and then running `ninja <target>`:
 
+- `ninja limine-image`: Builds a disk image (`limine_disk_image`) with Limine
 - `ninja grub-image`: Builds a disk image (`grub_disk_image`) with GRUB
 - `ninja extlinux-image`: Builds a disk image (`extlinux_disk_image`) with extlinux
 - `ninja check-style`: Runs the same linters the CI does to verify project style on changed files
@@ -41,17 +42,23 @@ directory to `Build/i686` and then running `ninja <target>`:
 
 There are some optional features that can be enabled during compilation that are intended to help with specific types of development work or introduce experimental features. Currently, the following build options are available:
 - `ENABLE_ADDRESS_SANITIZER` and `ENABLE_KERNEL_ADDRESS_SANITIZER`: builds in runtime checks for memory corruption bugs (like buffer overflows and memory leaks) in Lagom test cases and the kernel, respectively.
+- `ENABLE_KERNEL_UNDEFINED_SANITIZER`: builds in runtime checks for detecting undefined behavior in the kernel.
 - `ENABLE_KERNEL_COVERAGE_COLLECTION`: enables the KCOV API and kernel coverage collection instrumentation. Only useful for coverage guided kernel fuzzing.
+- `ENABLE_USERSPACE_COVERAGE_COLLECTION`: enables coverage collection instrumentation for userspace. Currently only works with a Clang build.
 - `ENABLE_MEMORY_SANITIZER`: enables runtime checks for uninitialized memory accesses in Lagom test cases.
 - `ENABLE_UNDEFINED_SANITIZER`: builds in runtime checks for [undefined behavior](https://en.wikipedia.org/wiki/Undefined_behavior) (like null pointer dereferences and signed integer overflows) in Lagom test cases.
-- `ENABLE_FUZZER_SANITIZER`: builds [fuzzers](https://en.wikipedia.org/wiki/Fuzzing) for various parts of the system.
-- `ENABLE_EXTRA_KERNEL_DEBUG_SYMBOLS`: sets -Og and -ggdb3 compile options for building the Kernel. Allows for easier debugging of Kernel code. By default, the Kernel is built with -Os instead.
+- `ENABLE_COMPILER_EXPLORER_BUILD`: Skip building non-library entities in Lagom (this only applies to Lagom).
+- `ENABLE_FUZZERS`: builds [fuzzers](https://en.wikipedia.org/wiki/Fuzzing) for various parts of the system.
+- `ENABLE_FUZZERS_LIBFUZZER`: builds Clang libFuzzer-based [fuzzers](https://en.wikipedia.org/wiki/Fuzzing) for various parts of the system.
+- `ENABLE_FUZZERS_OSSFUZZ`: builds OSS-Fuzz compatible [fuzzers](https://en.wikipedia.org/wiki/Fuzzing) for various parts of the system.
+- `ENABLE_EXTRA_KERNEL_DEBUG_SYMBOLS`: sets -Og and -ggdb3 compile options for building the Kernel. Allows for easier debugging of Kernel code. By default, the Kernel is built with -O2 instead.
 - `ENABLE_ALL_THE_DEBUG_MACROS`: used for checking whether debug code compiles on CI. This should not be set normally, as it clutters the console output and makes the system run very slowly. Instead, enable only the needed debug macros, as described below.
 - `ENABLE_ALL_DEBUG_FACILITIES`: used for checking whether debug code compiles on CI. Enables both `ENABLE_ALL_THE_DEBUG_MACROS` and `ENABLE_EXTRA_KERNEL_DEBUG_SYMBOLS`.
 - `ENABLE_COMPILETIME_FORMAT_CHECK`: checks for the validity of `std::format`-style format string during compilation. Enabled by default.
 - `ENABLE_PCI_IDS_DOWNLOAD`: downloads the [`pci.ids` database](https://pci-ids.ucw.cz/) that contains information about PCI devices at build time, if not already present. Enabled by default.
 - `BUILD_LAGOM`: builds [Lagom](../Meta/Lagom/ReadMe.md), which makes various SerenityOS libraries and programs available on the host system.
 - `ENABLE_KERNEL_LTO`: builds the kernel with link-time optimization.
+- `ENABLE_MOLD_LINKER`: builds the userland with the [`mold` linker](https://github.com/rui314/mold). `mold` can be built by running `Toolchain/BuildMold.sh`.
 - `INCLUDE_WASM_SPEC_TESTS`: downloads and includes the WebAssembly spec testsuite tests. In order to use this option, you will need to install `prettier` and `wabt`. wabt version 1.0.23 or higher is required to pre-process the WebAssembly spec testsuite.
 - `SERENITY_TOOLCHAIN`: Specifies whether to use the established GNU toolchain, or the experimental Clang-based toolchain for building SerenityOS. See the [Clang-based toolchain](#clang-based-toolchain) section below.
 - `SERENITY_ARCH`: Specifies which architecture to build for. Currently supported options are `i686` and `x86_64`. `x86_64` requires a separate toolchain build from `i686`.
@@ -192,9 +199,6 @@ useful for stopping us from relying on compiler-specific behavior, and the built
 bugs.  Code compiled with both of these toolchains works identically in most cases, with the limitation that ports
 can't be built with Clang yet.
 
-Note that `Meta/serenity.sh` is not yet supported, so the appropriate `ninja` targets (`install`, `image` and `run`)
-need to be invoked manually.
-
 To build the Clang-based toolchain, run `BuildClang.sh` from the `Toolchain` directory. The script defaults to building
 the tooling needed for 32-bit SerenityOS, but the `ARCH=x86_64` environment variable can be set to build the 64-bit
 toolchain.
@@ -203,5 +207,6 @@ toolchain.
 intervals.  This generally happens if you have more CPU cores than free RAM in gigabytes. To fix this, limit the number
 of parallel compile tasks be setting the `MAKEJOBS` environment variable to a number less than your CPU core count.
 
-Once the build script finishes, you can use it to compile SerenityOS if you set the `SERENITY_TOOLCHAIN` build
-option to `Clang` as shown [above](#cmake-build-options).
+Once the build script finishes, you can use it to compile SerenityOS. Either set the `SERENITY_TOOLCHAIN` build
+option to `Clang` as shown [above](#cmake-build-options), or pass `Clang` as the TOOLCHAIN option to
+`Meta/serenity.sh`, for example: `Meta/serenity.sh run i686 Clang`.

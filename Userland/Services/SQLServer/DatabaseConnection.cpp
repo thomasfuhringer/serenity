@@ -5,7 +5,7 @@
  */
 
 #include <AK/LexicalPath.h>
-#include <SQLServer/ClientConnection.h>
+#include <SQLServer/ConnectionFromClient.h>
 #include <SQLServer/DatabaseConnection.h>
 #include <SQLServer/SQLStatement.h>
 
@@ -29,9 +29,8 @@ DatabaseConnection::DatabaseConnection(String database_name, int client_id)
     , m_connection_id(s_next_connection_id++)
     , m_client_id(client_id)
 {
-    LexicalPath path(database_name);
-    if (path.title() != database_name) {
-        auto client_connection = ClientConnection::client_connection_for(m_client_id);
+    if (LexicalPath path(m_database_name); (path.title() != m_database_name) || (path.dirname() != ".")) {
+        auto client_connection = ConnectionFromClient::client_connection_for(m_client_id);
         client_connection->async_connection_error(m_connection_id, (int)SQL::SQLErrorCode::InvalidDatabaseName, m_database_name);
         return;
     }
@@ -40,8 +39,12 @@ DatabaseConnection::DatabaseConnection(String database_name, int client_id)
     s_connections.set(m_connection_id, *this);
     deferred_invoke([this]() {
         m_database = SQL::Database::construct(String::formatted("/home/anon/sql/{}.db", m_database_name));
+        auto client_connection = ConnectionFromClient::client_connection_for(m_client_id);
+        if (auto maybe_error = m_database->open(); maybe_error.is_error()) {
+            client_connection->async_connection_error(m_connection_id, (int)SQL::SQLErrorCode::InternalError, maybe_error.error().string_literal());
+            return;
+        }
         m_accept_statements = true;
-        auto client_connection = ClientConnection::client_connection_for(m_client_id);
         if (client_connection)
             client_connection->async_connected(m_connection_id, m_database_name);
         else
@@ -56,7 +59,7 @@ void DatabaseConnection::disconnect()
     deferred_invoke([this]() {
         m_database = nullptr;
         s_connections.remove(m_connection_id);
-        auto client_connection = ClientConnection::client_connection_for(client_id());
+        auto client_connection = ConnectionFromClient::client_connection_for(client_id());
         if (client_connection)
             client_connection->async_disconnected(m_connection_id);
         else
@@ -67,7 +70,7 @@ void DatabaseConnection::disconnect()
 int DatabaseConnection::sql_statement(String const& sql)
 {
     dbgln_if(SQLSERVER_DEBUG, "DatabaseConnection::sql_statement(connection_id {}, database '{}', sql '{}'", connection_id(), m_database_name, sql);
-    auto client_connection = ClientConnection::client_connection_for(client_id());
+    auto client_connection = ConnectionFromClient::client_connection_for(client_id());
     if (!client_connection) {
         warnln("Cannot notify client of database disconnection. Client disconnected");
         return -1;

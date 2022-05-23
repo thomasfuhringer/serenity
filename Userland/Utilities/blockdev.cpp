@@ -10,11 +10,10 @@
 #include <fcntl.h>
 #include <stdio.h>
 #include <sys/ioctl.h>
-#include <unistd.h>
 
 static void fetch_ioctl(int fd, int request)
 {
-    size_t value;
+    u64 value;
     if (ioctl(fd, request, &value) < 0) {
         perror("ioctl");
         exit(1);
@@ -28,7 +27,7 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
     TRY(Core::System::unveil(nullptr, nullptr));
     TRY(Core::System::pledge("stdio rpath"));
 
-    const char* device = nullptr;
+    char const* device = nullptr;
 
     bool flag_get_disk_size = false;
     bool flag_get_block_size = false;

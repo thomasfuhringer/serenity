@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2018-2020, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2022, the SerenityOS developers.
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -11,12 +12,12 @@
 #include <LibGUI/ImageWidget.h>
 #include <LibGUI/Label.h>
 #include <LibGUI/Widget.h>
-#include <LibGfx/Font.h>
-#include <LibGfx/FontDatabase.h>
+#include <LibGfx/Font/Font.h>
+#include <LibGfx/Font/FontDatabase.h>
 
 namespace GUI {
 
-AboutDialog::AboutDialog(StringView name, const Gfx::Bitmap* icon, Window* parent_window, StringView version)
+AboutDialog::AboutDialog(StringView name, Gfx::Bitmap const* icon, Window* parent_window, StringView version)
     : Dialog(parent_window)
     , m_name(name)
     , m_icon(icon)
@@ -70,7 +71,7 @@ AboutDialog::AboutDialog(StringView name, const Gfx::Bitmap* icon, Window* paren
     if (m_name != "SerenityOS")
         make_label("SerenityOS");
     make_label(m_version_string);
-    make_label("Copyright \xC2\xA9 the SerenityOS developers, 2018-2021");
+    make_label("Copyright \xC2\xA9 the SerenityOS developers, 2018-2022");
 
     right_container.layout()->add_spacer();
 
@@ -81,12 +82,8 @@ AboutDialog::AboutDialog(StringView name, const Gfx::Bitmap* icon, Window* paren
     auto& ok_button = button_container.add<Button>("OK");
     ok_button.set_fixed_width(80);
     ok_button.on_click = [this](auto) {
-        done(Dialog::ExecOK);
+        done(ExecResult::OK);
     };
-}
-
-AboutDialog::~AboutDialog()
-{
 }
 
 }

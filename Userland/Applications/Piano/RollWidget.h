@@ -1,7 +1,8 @@
 /*
  * Copyright (c) 2018-2020, Andreas Kling <kling@serenityos.org>
  * Copyright (c) 2019-2020, William McPherson <willmcpherson2@gmail.com>
- * Copyright (c) 2021, kleines Filmröllchen <malu.bertsch@gmail.com>
+ * Copyright (c) 2021, kleines Filmröllchen <filmroellchen@serenityos.org>
+ * Copyright (c) 2022, the SerenityOS developers.
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -19,10 +20,10 @@ using LibDSP::RollNote;
 class RollWidget final : public GUI::AbstractScrollableWidget {
     C_OBJECT(RollWidget)
 public:
-    virtual ~RollWidget() override;
+    virtual ~RollWidget() override = default;
 
-    const KeysWidget* keys_widget() const { return m_keys_widget; }
-    void set_keys_widget(const KeysWidget* widget) { m_keys_widget = widget; }
+    KeysWidget const* keys_widget() const { return m_keys_widget; }
+    void set_keys_widget(KeysWidget const* widget) { m_keys_widget = widget; }
 
 private:
     explicit RollWidget(TrackManager&);
@@ -35,7 +36,7 @@ private:
     bool viewport_changed() const;
 
     TrackManager& m_track_manager;
-    const KeysWidget* m_keys_widget;
+    KeysWidget const* m_keys_widget;
 
     int m_roll_width { 0 };
     int m_num_notes { 0 };

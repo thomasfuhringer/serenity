@@ -11,20 +11,24 @@
 
 namespace Web::HTML {
 
-HTMLStyleElement::HTMLStyleElement(DOM::Document& document, QualifiedName qualified_name)
+HTMLStyleElement::HTMLStyleElement(DOM::Document& document, DOM::QualifiedName qualified_name)
     : HTMLElement(document, move(qualified_name))
 {
 }
 
-HTMLStyleElement::~HTMLStyleElement()
-{
-}
+HTMLStyleElement::~HTMLStyleElement() = default;
 
 void HTMLStyleElement::children_changed()
 {
 
     update_a_style_block();
     HTMLElement::children_changed();
+}
+
+void HTMLStyleElement::inserted()
+{
+    update_a_style_block();
+    return HTMLElement::inserted();
 }
 
 void HTMLStyleElement::removed_from(Node* old_parent)
@@ -68,7 +72,7 @@ static void add_a_css_style_sheet(DOM::Document& document, NonnullRefPtr<CSS::CS
 }
 
 // https://www.w3.org/TR/cssom/#create-a-css-style-sheet
-static void create_a_css_style_sheet(DOM::Document& document, String type, DOM::Element* owner_node, String media, String title, bool alternate, bool origin_clean, void* location, CSS::CSSStyleSheet* parent_style_sheet, CSS::CSSRule* owner_rule, NonnullRefPtr<CSS::CSSStyleSheet> sheet)
+static void create_a_css_style_sheet(DOM::Document& document, String type, DOM::Element* owner_node, String media, String title, bool alternate, bool origin_clean, String location, CSS::CSSStyleSheet* parent_style_sheet, CSS::CSSRule* owner_rule, NonnullRefPtr<CSS::CSSStyleSheet> sheet)
 {
     // 1. Create a new CSS style sheet object and set its properties as specified.
     // FIXME: We receive `sheet` from the caller already. This is weird.
@@ -81,7 +85,7 @@ static void create_a_css_style_sheet(DOM::Document& document, String type, DOM::
     sheet->set_title(move(title));
     sheet->set_alternate(alternate);
     sheet->set_origin_clean(origin_clean);
-    (void)location;
+    sheet->set_location(move(location));
 
     // 2. Then run the add a CSS style sheet steps for the newly created CSS style sheet.
     add_a_css_style_sheet(document, move(sheet));
@@ -93,7 +97,7 @@ static void create_a_css_style_sheet(DOM::Document& document, String type, DOM::
 // NOTE: This is basically done by children_changed() today:
 // The element's children changed steps run.
 //
-// NOTE: This is basically done by removed_from() today:
+// NOTE: This is basically done by inserted() and removed_from() today:
 // The element is not on the stack of open elements of an HTML parser or XML parser, and it becomes connected or disconnected.
 //
 // https://html.spec.whatwg.org/multipage/semantics.html#update-a-style-block
@@ -122,7 +126,7 @@ void HTMLStyleElement::update_a_style_block()
 
     // FIXME: This is a bit awkward, as the spec doesn't actually tell us when to parse the CSS text,
     //        so we just do it here and pass the parsed sheet to create_a_css_style_sheet().
-    auto sheet = parse_css(CSS::ParsingContext(document()), text_content());
+    auto sheet = parse_css_stylesheet(CSS::Parser::ParsingContext(document()), text_content());
     if (!sheet)
         return;
 
@@ -138,7 +142,7 @@ void HTMLStyleElement::update_a_style_block()
         in_a_document_tree() ? attribute(HTML::AttributeNames::title) : String::empty(),
         false,
         true,
-        nullptr,
+        {},
         nullptr,
         nullptr,
         sheet.release_nonnull());

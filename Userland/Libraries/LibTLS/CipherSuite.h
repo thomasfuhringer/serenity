@@ -31,6 +31,10 @@ enum class CipherSuite {
     DHE_RSA_WITH_AES_128_GCM_SHA256 = 0x009E,
     DHE_RSA_WITH_AES_256_GCM_SHA384 = 0x009F,
 
+    // RFC 5289 - ECDHE for AES-GCM
+    ECDHE_RSA_WITH_AES_128_GCM_SHA256 = 0xC02F,
+    ECDHE_RSA_WITH_AES_256_GCM_SHA384 = 0xC030,
+
     // All recommended cipher suites (according to https://ciphersuite.info/cs/)
 
     // RFC 5288 - DH, DHE and RSA for AES-GCM
@@ -184,5 +188,17 @@ constexpr size_t cipher_key_size(CipherAlgorithm algorithm)
         return 0;
     }
 }
+
+enum class NamedCurve : u16 {
+    secp256r1 = 23,
+    secp384r1 = 24,
+    secp521r1 = 25,
+    x25519 = 29,
+    x448 = 30,
+};
+
+enum class ECPointFormat : u8 {
+    Uncompressed = 0,
+};
 
 }

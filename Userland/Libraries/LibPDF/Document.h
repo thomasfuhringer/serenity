@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2021, Matthew Olsson <mattco@serenityos.org>
+ * Copyright (c) 2021-2022, Matthew Olsson <mattco@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -9,7 +9,10 @@
 #include <AK/Format.h>
 #include <AK/HashMap.h>
 #include <AK/RefCounted.h>
+#include <AK/Weakable.h>
 #include <LibGfx/Color.h>
+#include <LibPDF/Encryption.h>
+#include <LibPDF/Error.h>
 #include <LibPDF/ObjectDerivatives.h>
 #include <LibPDF/Parser.h>
 
@@ -20,6 +23,9 @@ struct Rectangle {
     float lower_left_y;
     float upper_right_x;
     float upper_right_y;
+
+    float width() const { return upper_right_x - lower_left_x; }
+    float height() const { return upper_right_y - lower_left_y; }
 };
 
 struct Page {
@@ -70,19 +76,30 @@ struct OutlineDict final : public RefCounted<OutlineDict> {
     OutlineDict() = default;
 };
 
-class Document final : public RefCounted<Document> {
+class Document final
+    : public RefCounted<Document>
+    , public Weakable<Document> {
 public:
-    static RefPtr<Document> create(ReadonlyBytes bytes);
+    static PDFErrorOr<NonnullRefPtr<Document>> create(ReadonlyBytes bytes);
+
+    // If a security handler is present, it is the caller's responsibility to ensure
+    // this document is unencrypted before calling this function. The user does not
+    // need to handle the case where the user password is the empty string.
+    PDFErrorOr<void> initialize();
+
+    ALWAYS_INLINE RefPtr<SecurityHandler> const& security_handler() const { return m_security_handler; }
 
     ALWAYS_INLINE RefPtr<OutlineDict> const& outline() const { return m_outline; }
 
-    [[nodiscard]] Value get_or_load_value(u32 index);
+    ALWAYS_INLINE RefPtr<DictObject> const& trailer() const { return m_trailer; }
+
+    [[nodiscard]] PDFErrorOr<Value> get_or_load_value(u32 index);
 
     [[nodiscard]] u32 get_first_page_index() const;
 
     [[nodiscard]] u32 get_page_count() const;
 
-    [[nodiscard]] Page get_page(u32 index);
+    [[nodiscard]] PDFErrorOr<Page> get_page(u32 index);
 
     ALWAYS_INLINE Value get_value(u32 index) const
     {
@@ -92,23 +109,25 @@ public:
     // Strips away the layer of indirection by turning indirect value
     // refs into the value they reference, and indirect values into
     // the value being wrapped.
-    Value resolve(Value const& value);
+    PDFErrorOr<Value> resolve(Value const& value);
 
     // Like resolve, but unwraps the Value into the given type. Accepts
     // any object type, and the three primitive Value types.
     template<IsValueType T>
-    UnwrappedValueType<T> resolve_to(Value const& value)
+    PDFErrorOr<UnwrappedValueType<T>> resolve_to(Value const& value)
     {
-        auto resolved = resolve(value);
+        auto resolved = TRY(resolve(value));
 
         if constexpr (IsSame<T, bool>)
             return resolved.get<bool>();
-        if constexpr (IsSame<T, int>)
+        else if constexpr (IsSame<T, int>)
             return resolved.get<int>();
-        if constexpr (IsSame<T, float>)
+        else if constexpr (IsSame<T, float>)
             return resolved.get<float>();
-        if constexpr (IsObject<T>)
-            return object_cast<T>(resolved.get<NonnullRefPtr<Object>>());
+        else if constexpr (IsSame<T, Object>)
+            return resolved.get<NonnullRefPtr<Object>>();
+        else if constexpr (IsObject<T>)
+            return resolved.get<NonnullRefPtr<Object>>()->cast<T>();
 
         VERIFY_NOT_REACHED();
     }
@@ -122,19 +141,23 @@ private:
     // parsing, as good PDF writers will layout the page tree in a balanced tree to
     // improve lookup time. This would reduce the initial overhead by not loading
     // every page tree node of, say, a 1000+ page PDF file.
-    bool build_page_tree();
-    bool add_page_tree_node_to_page_tree(NonnullRefPtr<DictObject> const& page_tree);
+    PDFErrorOr<void> build_page_tree();
+    PDFErrorOr<void> add_page_tree_node_to_page_tree(NonnullRefPtr<DictObject> const& page_tree);
 
-    void build_outline();
-    NonnullRefPtr<OutlineItem> build_outline_item(NonnullRefPtr<DictObject> const& outline_item_dict);
-    NonnullRefPtrVector<OutlineItem> build_outline_item_chain(Value const& first_ref, Value const& last_ref);
+    PDFErrorOr<void> build_outline();
+    PDFErrorOr<NonnullRefPtr<OutlineItem>> build_outline_item(NonnullRefPtr<DictObject> const& outline_item_dict);
+    PDFErrorOr<NonnullRefPtrVector<OutlineItem>> build_outline_item_chain(Value const& first_ref, Value const& last_ref);
+
+    PDFErrorOr<Destination> create_destination_from_parameters(NonnullRefPtr<ArrayObject>);
 
     NonnullRefPtr<Parser> m_parser;
     RefPtr<DictObject> m_catalog;
+    RefPtr<DictObject> m_trailer;
     Vector<u32> m_page_object_indices;
     HashMap<u32, Page> m_pages;
     HashMap<u32, Value> m_values;
     RefPtr<OutlineDict> m_outline;
+    RefPtr<SecurityHandler> m_security_handler;
 };
 
 }

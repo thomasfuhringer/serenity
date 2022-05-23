@@ -12,22 +12,21 @@ namespace Web::HTML {
 
 class BrowsingContextContainer : public HTMLElement {
 public:
-    BrowsingContextContainer(DOM::Document&, QualifiedName);
+    BrowsingContextContainer(DOM::Document&, DOM::QualifiedName);
     virtual ~BrowsingContextContainer() override;
 
     BrowsingContext* nested_browsing_context() { return m_nested_browsing_context; }
-    const BrowsingContext* nested_browsing_context() const { return m_nested_browsing_context; }
+    BrowsingContext const* nested_browsing_context() const { return m_nested_browsing_context; }
 
     const DOM::Document* content_document() const;
+    DOM::Document const* content_document_without_origin_check() const;
 
-    Origin content_origin() const;
-    bool may_access_from_origin(const Origin&) const;
-
-    void nested_browsing_context_did_load(Badge<FrameLoader>);
-
-    virtual void inserted() override;
+    DOM::Document const* get_svg_document() const;
 
 protected:
+    void create_new_nested_browsing_context();
+    void discard_nested_browsing_context();
+
     RefPtr<BrowsingContext> m_nested_browsing_context;
 
 private:

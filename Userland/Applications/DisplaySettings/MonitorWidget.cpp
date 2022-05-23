@@ -9,7 +9,7 @@
 #include <LibGUI/Desktop.h>
 #include <LibGUI/Painter.h>
 #include <LibGfx/Bitmap.h>
-#include <LibGfx/Font.h>
+#include <LibGfx/Font/Font.h>
 #include <LibThreading/BackgroundAction.h>
 
 REGISTER_WIDGET(DisplaySettings, MonitorWidget)
@@ -30,7 +30,7 @@ bool MonitorWidget::set_wallpaper(String path)
     if (!is_different_to_current_wallpaper_path(path))
         return false;
 
-    Threading::BackgroundAction<ErrorOr<NonnullRefPtr<Gfx::Bitmap>>>::construct(
+    (void)Threading::BackgroundAction<ErrorOr<NonnullRefPtr<Gfx::Bitmap>>>::construct(
         [path](auto&) -> ErrorOr<NonnullRefPtr<Gfx::Bitmap>> {
             if (path.is_empty())
                 return Error::from_errno(ENOENT);
@@ -58,7 +58,7 @@ bool MonitorWidget::set_wallpaper(String path)
     return true;
 }
 
-String MonitorWidget::wallpaper()
+StringView MonitorWidget::wallpaper() const
 {
     return m_desktop_wallpaper_path;
 }
@@ -72,7 +72,7 @@ void MonitorWidget::set_wallpaper_mode(String mode)
     update();
 }
 
-String MonitorWidget::wallpaper_mode()
+StringView MonitorWidget::wallpaper_mode() const
 {
     return m_desktop_wallpaper_mode;
 }

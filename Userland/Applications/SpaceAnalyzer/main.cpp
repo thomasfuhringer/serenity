@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2021, the SerenityOS developers.
+ * Copyright (c) 2021-2022, the SerenityOS developers.
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -8,6 +8,7 @@
 #include <AK/LexicalPath.h>
 #include <AK/Queue.h>
 #include <AK/QuickSort.h>
+#include <AK/StringView.h>
 #include <AK/URL.h>
 #include <Applications/SpaceAnalyzer/SpaceAnalyzerGML.h>
 #include <LibCore/DirIterator.h>
@@ -24,28 +25,29 @@
 #include <LibGUI/Menubar.h>
 #include <LibGUI/MessageBox.h>
 #include <LibGUI/Statusbar.h>
+#include <LibMain/Main.h>
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
-static const char* APP_NAME = "Space Analyzer";
+static constexpr StringView APP_NAME = "Space Analyzer";
 static constexpr size_t FILES_ENCOUNTERED_UPDATE_STEP_SIZE = 25;
 
 struct TreeNode : public SpaceAnalyzer::TreeMapNode {
     TreeNode(String name)
         : m_name(move(name)) {};
 
-    virtual String name() const { return m_name; }
-    virtual i64 area() const { return m_area; }
-    virtual size_t num_children() const
+    virtual String name() const override { return m_name; }
+    virtual i64 area() const override { return m_area; }
+    virtual size_t num_children() const override
     {
         if (m_children) {
             return m_children->size();
         }
         return 0;
     }
-    virtual const TreeNode& child_at(size_t i) const { return m_children->at(i); }
-    virtual void sort_children_by_area() const
+    virtual TreeNode const& child_at(size_t i) const override { return m_children->at(i); }
+    virtual void sort_children_by_area() const override
     {
         if (m_children) {
             Vector<TreeNode>* children = const_cast<Vector<TreeNode>*>(m_children.ptr());
@@ -63,7 +65,7 @@ struct Tree : public SpaceAnalyzer::TreeMap {
         : m_root(move(root_name)) {};
     virtual ~Tree() {};
     TreeNode m_root;
-    virtual const SpaceAnalyzer::TreeMapNode& root() const override
+    virtual SpaceAnalyzer::TreeMapNode const& root() const override
     {
         return m_root;
     };
@@ -276,7 +278,7 @@ static void analyze(RefPtr<Tree> tree, SpaceAnalyzer::TreeMapWidget& treemapwidg
     treemapwidget.set_tree(tree);
 }
 
-static bool is_removable(const String& absolute_path)
+static bool is_removable(String const& absolute_path)
 {
     VERIFY(!absolute_path.is_empty());
     int access_result = access(LexicalPath::dirname(absolute_path).characters(), W_OK);
@@ -285,22 +287,22 @@ static bool is_removable(const String& absolute_path)
     return access_result == 0;
 }
 
-static String get_absolute_path_to_selected_node(const SpaceAnalyzer::TreeMapWidget& treemapwidget, bool include_last_node = true)
+static String get_absolute_path_to_selected_node(SpaceAnalyzer::TreeMapWidget const& treemapwidget, bool include_last_node = true)
 {
     StringBuilder path_builder;
     for (size_t k = 0; k < treemapwidget.path_size() - (include_last_node ? 0 : 1); k++) {
         if (k != 0) {
             path_builder.append('/');
         }
-        const SpaceAnalyzer::TreeMapNode* node = treemapwidget.path_node(k);
+        SpaceAnalyzer::TreeMapNode const* node = treemapwidget.path_node(k);
         path_builder.append(node->name());
     }
     return path_builder.build();
 }
 
-int main(int argc, char* argv[])
+ErrorOr<int> serenity_main(Main::Arguments arguments)
 {
-    auto app = GUI::Application::construct(argc, argv);
+    auto app = TRY(GUI::Application::try_create(arguments));
 
     RefPtr<Tree> tree = adopt_ref(*new Tree(""));
 
@@ -317,6 +319,8 @@ int main(int argc, char* argv[])
     auto& breadcrumbbar = *mainwidget.find_descendant_of_type_named<GUI::Breadcrumbbar>("breadcrumbbar");
     auto& treemapwidget = *mainwidget.find_descendant_of_type_named<SpaceAnalyzer::TreeMapWidget>("tree_map");
     auto& statusbar = *mainwidget.find_descendant_of_type_named<GUI::Statusbar>("statusbar");
+
+    treemapwidget.set_focus(true);
 
     auto& file_menu = window->add_menu("&File");
     file_menu.add_action(GUI::Action::create("&Analyze", [&](auto&) {
@@ -356,7 +360,7 @@ int main(int argc, char* argv[])
                     "Deletion failed",
                     GUI::MessageBox::Type::Error,
                     GUI::MessageBox::InputType::YesNo);
-                if (retry_message_result == GUI::MessageBox::ExecYes) {
+                if (retry_message_result == GUI::MessageBox::ExecResult::Yes) {
                     try_again = true;
                 }
             } else {

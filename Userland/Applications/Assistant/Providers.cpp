@@ -5,7 +5,7 @@
  */
 
 #include "Providers.h"
-#include "FuzzyMatch.h"
+#include <AK/FuzzyMatch.h>
 #include <AK/LexicalPath.h>
 #include <AK/URL.h>
 #include <LibCore/DirIterator.h>
@@ -16,9 +16,8 @@
 #include <LibGUI/Clipboard.h>
 #include <LibGUI/FileIconProvider.h>
 #include <LibJS/Interpreter.h>
-#include <LibJS/Lexer.h>
-#include <LibJS/Parser.h>
 #include <LibJS/Runtime/GlobalObject.h>
+#include <LibJS/Script.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <serenity.h>
@@ -93,16 +92,15 @@ void CalculatorProvider::query(String const& query, Function<void(NonnullRefPtrV
     auto interpreter = JS::Interpreter::create<JS::GlobalObject>(*vm);
 
     auto source_code = query.substring(1);
-    auto parser = JS::Parser(JS::Lexer(source_code));
-    auto program = parser.parse_program();
-    if (parser.has_errors())
+    auto parse_result = JS::Script::parse(source_code, interpreter->realm());
+    if (parse_result.is_error())
         return;
 
-    interpreter->run(interpreter->global_object(), *program);
-    if (interpreter->exception())
+    auto completion = interpreter->run(parse_result.value());
+    if (completion.is_error())
         return;
 
-    auto result = interpreter->vm().last_value();
+    auto result = completion.release_value();
     String calculation;
     if (!result.is_number()) {
         calculation = "0";
@@ -125,7 +123,7 @@ FileProvider::FileProvider()
     build_filesystem_cache();
 }
 
-void FileProvider::query(const String& query, Function<void(NonnullRefPtrVector<Result>)> on_complete)
+void FileProvider::query(String const& query, Function<void(NonnullRefPtrVector<Result>)> on_complete)
 {
     build_filesystem_cache();
 
@@ -163,8 +161,8 @@ void FileProvider::build_filesystem_cache()
     m_building_cache = true;
     m_work_queue.enqueue("/");
 
-    Threading::BackgroundAction<int>::construct(
-        [this](auto&) {
+    (void)Threading::BackgroundAction<int>::construct(
+        [this, strong_ref = NonnullRefPtr(*this)](auto&) {
             String slash = "/";
             auto timer = Core::ElapsedTimer::start_new();
             while (!m_work_queue.is_empty()) {

@@ -1,12 +1,13 @@
 /*
- * Copyright (c) 2021, the SerenityOS developers.
+ * Copyright (c) 2021-2022, the SerenityOS developers.
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #include <AK/String.h>
 #include <LibCore/DateTime.h>
-#include <stdio.h>
+#include <LibCore/System.h>
+#include <LibMain/Main.h>
 #include <unistd.h>
 
 class DiscordianDate {
@@ -25,8 +26,8 @@ public:
         m_date = date_from_day_of_yold(day);
     }
 
-    const char* day_of_week() { return m_day_of_week.characters(); };
-    const char* season() { return m_season.characters(); };
+    char const* day_of_week() { return m_day_of_week.characters(); };
+    char const* season() { return m_season.characters(); };
     uint16_t year() { return yold(); };
     uint16_t yold() { return m_yold; };
     uint16_t day_of_year() { return day_of_yold(); };
@@ -42,9 +43,9 @@ public:
     }
 
 private:
-    static const int m_days_in_week = 5;
-    static const int m_days_in_season = 73;
-    static const int m_st_tibs_day_of_yold = 60;
+    static constexpr int m_days_in_week = 5;
+    static constexpr int m_days_in_season = 73;
+    static constexpr int m_st_tibs_day_of_yold = 60;
     Core::DateTime m_gregorian_date;
     String m_day_of_week;
     String m_season;
@@ -56,7 +57,7 @@ private:
         return (day % m_days_in_season == 0 ? m_days_in_season : day % m_days_in_season);
     }
 
-    const char* day_of_week_from_day_of_yold(uint16_t day)
+    char const* day_of_week_from_day_of_yold(uint16_t day)
     {
         if (is_st_tibs_day())
             return nullptr;
@@ -77,7 +78,7 @@ private:
         }
     }
 
-    const char* season_from_day_of_yold(uint16_t day)
+    char const* season_from_day_of_yold(uint16_t day)
     {
         if (is_st_tibs_day())
             return nullptr;
@@ -99,12 +100,9 @@ private:
     }
 };
 
-int main([[maybe_unused]] int argc, [[maybe_unused]] char** argv)
+ErrorOr<int> serenity_main(Main::Arguments)
 {
-    if (pledge("stdio", nullptr) < 0) {
-        perror("pledge");
-        return 1;
-    }
+    TRY(Core::System::pledge("stdio rpath"));
 
     auto date = Core::DateTime::now();
     outln("Today is {}", DiscordianDate(date).to_string());

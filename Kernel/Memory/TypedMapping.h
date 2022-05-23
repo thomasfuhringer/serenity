@@ -15,6 +15,7 @@ template<typename T>
 struct TypedMapping {
     const T* ptr() const { return reinterpret_cast<const T*>(region->vaddr().offset(offset).as_ptr()); }
     T* ptr() { return reinterpret_cast<T*>(region->vaddr().offset(offset).as_ptr()); }
+    VirtualAddress base_address() const { return region->vaddr().offset(offset); }
     const T* operator->() const { return ptr(); }
     T* operator->() { return ptr(); }
     const T& operator*() const { return *ptr(); }
@@ -24,26 +25,23 @@ struct TypedMapping {
 };
 
 template<typename T>
-static TypedMapping<T> map_typed(PhysicalAddress paddr, size_t length, Region::Access access = Region::Access::Read)
+static ErrorOr<TypedMapping<T>> map_typed(PhysicalAddress paddr, size_t length, Region::Access access = Region::Access::Read)
 {
     TypedMapping<T> table;
-    size_t mapping_length = page_round_up(paddr.offset_in_page() + length);
-    auto region_or_error = MM.allocate_kernel_region(paddr.page_base(), mapping_length, {}, access);
-    if (region_or_error.is_error())
-        TODO();
-    table.region = region_or_error.release_value();
+    auto mapping_length = TRY(page_round_up(paddr.offset_in_page() + length));
+    table.region = TRY(MM.allocate_kernel_region(paddr.page_base(), mapping_length, {}, access));
     table.offset = paddr.offset_in_page();
     return table;
 }
 
 template<typename T>
-static TypedMapping<T> map_typed(PhysicalAddress paddr)
+static ErrorOr<TypedMapping<T>> map_typed(PhysicalAddress paddr)
 {
     return map_typed<T>(paddr, sizeof(T));
 }
 
 template<typename T>
-static TypedMapping<T> map_typed_writable(PhysicalAddress paddr)
+static ErrorOr<TypedMapping<T>> map_typed_writable(PhysicalAddress paddr)
 {
     return map_typed<T>(paddr, sizeof(T), Region::Access::Read | Region::Access::Write);
 }

@@ -1,18 +1,19 @@
 /*
  * Copyright (c) 2018-2020, Andreas Kling <kling@serenityos.org>
  * Copyright (c) 2019-2020, William McPherson <willmcpherson2@gmail.com>
- * Copyright (c) 2021, kleines Filmröllchen <malu.bertsch@gmail.com>
+ * Copyright (c) 2021, kleines Filmröllchen <filmroellchen@serenityos.org>
+ * Copyright (c) 2022, the SerenityOS developers.
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #include "RollWidget.h"
 #include "TrackManager.h"
-#include <AK/Math.h>
+#include <AK/IntegralMath.h>
 #include <LibGUI/Painter.h>
 #include <LibGUI/Scrollbar.h>
-#include <LibGfx/Font.h>
-#include <LibGfx/FontDatabase.h>
+#include <LibGfx/Font/Font.h>
+#include <LibGfx/Font/FontDatabase.h>
 
 constexpr int note_height = 20;
 constexpr int max_note_width = note_height * 2;
@@ -26,10 +27,6 @@ RollWidget::RollWidget(TrackManager& track_manager)
     set_should_hide_unnecessary_scrollbars(true);
     set_content_size({ 0, roll_height });
     vertical_scrollbar().set_value(roll_height / 2);
-}
-
-RollWidget::~RollWidget()
-{
 }
 
 void RollWidget::paint_event(GUI::PaintEvent& event)
@@ -155,7 +152,7 @@ void RollWidget::paint_event(GUI::PaintEvent& event)
         }
 
         Gfx::IntRect note_name_rect(3, y, 1, note_height);
-        const char* note_name = note_names[note % notes_per_octave];
+        char const* note_name = note_names[note % notes_per_octave];
 
         painter.draw_text(note_name_rect, note_name, Gfx::TextAlignment::CenterLeft);
         note_name_rect.translate_by(Gfx::FontDatabase::default_font().width(note_name) + 2, 0);
@@ -239,7 +236,12 @@ void RollWidget::mouseup_event([[maybe_unused]] GUI::MouseEvent& event)
 void RollWidget::mousewheel_event(GUI::MouseEvent& event)
 {
     if (event.modifiers() & KeyModifier::Mod_Shift) {
-        horizontal_scrollbar().set_value(horizontal_scrollbar().value() + (event.wheel_delta() * horizontal_scroll_sensitivity));
+        horizontal_scrollbar().increase_slider_by(event.wheel_delta_y() * horizontal_scroll_sensitivity);
+        return;
+    }
+
+    if (event.wheel_delta_x() != 0) {
+        horizontal_scrollbar().increase_slider_by(event.wheel_delta_x() * horizontal_scroll_sensitivity);
         return;
     }
 
@@ -248,7 +250,7 @@ void RollWidget::mousewheel_event(GUI::MouseEvent& event)
         return;
     }
 
-    double multiplier = event.wheel_delta() >= 0 ? 0.5 : 2;
+    double multiplier = event.wheel_delta_y() >= 0 ? 0.5 : 2;
 
     if (m_zoom_level * multiplier > max_zoom)
         return;

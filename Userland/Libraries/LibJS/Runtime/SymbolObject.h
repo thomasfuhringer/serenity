@@ -18,18 +18,13 @@ public:
     static SymbolObject* create(GlobalObject&, Symbol&);
 
     SymbolObject(Symbol&, Object& prototype);
-    virtual ~SymbolObject() override;
+    virtual ~SymbolObject() override = default;
 
     Symbol& primitive_symbol() { return m_symbol; }
-    const Symbol& primitive_symbol() const { return m_symbol; }
+    Symbol const& primitive_symbol() const { return m_symbol; }
 
     String description() const { return m_symbol.description(); }
     bool is_global() const { return m_symbol.is_global(); }
-
-    virtual Value value_of() const override
-    {
-        return Value(&m_symbol);
-    }
 
 private:
     virtual void visit_edges(Visitor&) override;

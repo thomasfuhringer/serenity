@@ -8,6 +8,9 @@
 
 #include <AK/Types.h>
 
+#include <AK/Platform.h>
+VALIDATE_IS_X86()
+
 namespace Kernel {
 
 ALWAYS_INLINE void cli()
@@ -155,6 +158,28 @@ ALWAYS_INLINE u64 read_tsc()
     u32 msw;
     read_tsc(lsw, msw);
     return ((u64)msw << 32) | lsw;
+}
+
+ALWAYS_INLINE u32 rdrand()
+{
+    u32 value;
+    asm volatile(
+        "1:\n"
+        "rdrand %0\n"
+        "jnc 1b\n"
+        : "=r"(value)::"cc");
+    return value;
+}
+
+ALWAYS_INLINE u32 rdseed()
+{
+    u32 value;
+    asm volatile(
+        "1:\n"
+        "rdseed %0\n"
+        "jnc 1b\n"
+        : "=r"(value)::"cc");
+    return value;
 }
 
 void stac();

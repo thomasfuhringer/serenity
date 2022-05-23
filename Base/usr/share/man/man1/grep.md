@@ -10,8 +10,6 @@ $ grep [--recursive] [--extended-regexp] [--regexp Pattern] [-i] [--line-numbers
 
 ## Options:
 
-* `--help`: Display help message and exit
-* `--version`: Print version
 * `-r`, `--recursive`: Recursively scan files
 * `-E`, `--extended-regexp`: Extended regular expressions
 * `-e Pattern`, `--regexp Pattern`: Pattern

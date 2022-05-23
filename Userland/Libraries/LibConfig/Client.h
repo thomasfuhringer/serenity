@@ -11,14 +11,14 @@
 #include <LibCore/File.h>
 #include <LibCore/Promise.h>
 #include <LibCore/StandardPaths.h>
-#include <LibIPC/ServerConnection.h>
+#include <LibIPC/ConnectionToServer.h>
 
 namespace Config {
 
 class Client final
-    : public IPC::ServerConnection<ConfigClientEndpoint, ConfigServerEndpoint>
+    : public IPC::ConnectionToServer<ConfigClientEndpoint, ConfigServerEndpoint>
     , public ConfigClientEndpoint {
-    C_OBJECT(Client);
+    IPC_CLIENT_CONNECTION(Client, "/tmp/portal/config")
 
 public:
     void pledge_domains(Vector<String> const&);
@@ -39,8 +39,8 @@ public:
     static Client& the();
 
 private:
-    explicit Client()
-        : IPC::ServerConnection<ConfigClientEndpoint, ConfigServerEndpoint>(*this, "/tmp/portal/config")
+    explicit Client(NonnullOwnPtr<Core::Stream::LocalSocket> socket)
+        : IPC::ConnectionToServer<ConfigClientEndpoint, ConfigServerEndpoint>(*this, move(socket))
     {
     }
 
@@ -100,9 +100,9 @@ inline void pledge_domains(Vector<String> const& domains)
     Client::the().pledge_domains(domains);
 }
 
-inline void pledge_domains(String const& domains)
+inline void pledge_domain(String const& domain)
 {
-    Client::the().pledge_domains({ domains });
+    Client::the().pledge_domains({ domain });
 }
 
 inline void monitor_domain(String const& domain)

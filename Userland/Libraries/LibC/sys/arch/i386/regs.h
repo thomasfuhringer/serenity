@@ -6,82 +6,57 @@
 
 #pragma once
 
-#include <AK/Types.h>
+#include <AK/Platform.h>
 
-struct [[gnu::packed]] PtraceRegisters {
-#if ARCH(I386)
-    u32 eax;
-    u32 ecx;
-    u32 edx;
-    u32 ebx;
-    u32 esp;
-    u32 ebp;
-    u32 esi;
-    u32 edi;
-    u32 eip;
-    u32 eflags;
+#if defined(__cplusplus) && defined(__cpp_concepts)
+#    include <AK/Types.h>
 #else
-    u64 rax;
-    u64 rcx;
-    u64 rdx;
-    u64 rbx;
-    u64 rsp;
-    u64 rbp;
-    u64 rsi;
-    u64 rdi;
-    u64 rip;
-    u64 r8;
-    u64 r9;
-    u64 r10;
-    u64 r11;
-    u64 r12;
-    u64 r13;
-    u64 r14;
-    u64 r15;
-    u64 rflags;
+#    include <sys/types.h>
 #endif
-    u32 cs;
-    u32 ss;
-    u32 ds;
-    u32 es;
-    u32 fs;
-    u32 gs;
+
+#include <Kernel/Arch/mcontext.h>
 
 #ifdef __cplusplus
+struct [[gnu::packed]] PtraceRegisters : public __mcontext {
+#    if defined(__cplusplus) && defined(__cpp_concepts)
     FlatPtr ip() const
     {
-#    if ARCH(I386)
+#        if ARCH(I386)
         return eip;
-#    else
+#        else
         return rip;
-#    endif
+#        endif
     }
 
     void set_ip(FlatPtr ip)
     {
-#    if ARCH(I386)
+#        if ARCH(I386)
         eip = ip;
-#    else
+#        else
         rip = ip;
-#    endif
+#        endif
     }
 
     FlatPtr bp() const
     {
-#    if ARCH(I386)
+#        if ARCH(I386)
         return ebp;
-#    else
+#        else
         return rbp;
-#    endif
+#        endif
     }
 
     void set_bp(FlatPtr bp)
     {
-#    if ARCH(I386)
+#        if ARCH(I386)
         ebp = bp;
-#    else
+#        else
         rbp = bp;
-#    endif
+#        endif
     }
-#endif
+#    endif
 };
+
+#else
+typedef struct __mcontext PthreadRegisters;
+#endif

@@ -47,13 +47,13 @@ public:
 
 protected:
     explicit DevTmpFSInode(DevTmpFS&);
-    DevTmpFSInode(DevTmpFS&, unsigned, unsigned);
+    DevTmpFSInode(DevTmpFS&, MajorNumber, MinorNumber);
     virtual ErrorOr<size_t> read_bytes(off_t, size_t, UserOrKernelBuffer& buffer, OpenFileDescription*) const override;
     virtual ErrorOr<void> traverse_as_directory(Function<ErrorOr<void>(FileSystem::DirectoryEntryView const&)>) const override;
     virtual ErrorOr<NonnullRefPtr<Inode>> lookup(StringView name) override;
     virtual ErrorOr<void> flush_metadata() override;
     virtual InodeMetadata metadata() const override final;
-    virtual ErrorOr<size_t> write_bytes(off_t, size_t, const UserOrKernelBuffer& buffer, OpenFileDescription*) override;
+    virtual ErrorOr<size_t> write_bytes(off_t, size_t, UserOrKernelBuffer const& buffer, OpenFileDescription*) override;
     virtual ErrorOr<NonnullRefPtr<Inode>> create_child(StringView name, mode_t, dev_t, UserID, GroupID) override;
     virtual ErrorOr<void> add_child(Inode&, StringView name, mode_t) override;
     virtual ErrorOr<void> remove_child(StringView name) override;
@@ -64,10 +64,9 @@ protected:
     mode_t m_mode { 0600 };
     UserID m_uid { 0 };
     GroupID m_gid { 0 };
-    const unsigned m_major_number { 0 };
-    const unsigned m_minor_number { 0 };
+    const MajorNumber m_major_number { 0 };
+    const MinorNumber m_minor_number { 0 };
 
-protected:
     enum class Type {
         BlockDevice,
         CharacterDevice,
@@ -91,16 +90,16 @@ public:
     virtual ~DevTmpFSDeviceInode() override;
 
 private:
-    DevTmpFSDeviceInode(DevTmpFS&, unsigned, unsigned, bool, NonnullOwnPtr<KString> name);
+    DevTmpFSDeviceInode(DevTmpFS&, MajorNumber, MinorNumber, bool, NonnullOwnPtr<KString> name);
     // ^DevTmpFSInode
     virtual Type node_type() const override { return m_block_device ? Type::BlockDevice : Type::CharacterDevice; }
 
     // ^Inode
     virtual ErrorOr<size_t> read_bytes(off_t, size_t, UserOrKernelBuffer& buffer, OpenFileDescription*) const override;
-    virtual ErrorOr<size_t> write_bytes(off_t, size_t, const UserOrKernelBuffer& buffer, OpenFileDescription*) override;
+    virtual ErrorOr<size_t> write_bytes(off_t, size_t, UserOrKernelBuffer const& buffer, OpenFileDescription*) override;
 
     NonnullOwnPtr<KString> m_name;
-    const bool m_block_device;
+    bool const m_block_device;
 };
 
 class DevTmpFSLinkInode final : public DevTmpFSInode {
@@ -118,7 +117,7 @@ protected:
 
     // ^Inode
     virtual ErrorOr<size_t> read_bytes(off_t, size_t, UserOrKernelBuffer& buffer, OpenFileDescription*) const override;
-    virtual ErrorOr<size_t> write_bytes(off_t, size_t, const UserOrKernelBuffer& buffer, OpenFileDescription*) override;
+    virtual ErrorOr<size_t> write_bytes(off_t, size_t, UserOrKernelBuffer const& buffer, OpenFileDescription*) override;
 
     NonnullOwnPtr<KString> m_name;
     OwnPtr<KString> m_link;

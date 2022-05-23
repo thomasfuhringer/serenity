@@ -9,7 +9,6 @@
 #include <AK/String.h>
 #include <LibJS/Runtime/Environment.h>
 #include <LibJS/Runtime/EnvironmentCoordinate.h>
-#include <LibJS/Runtime/ExecutionContext.h>
 #include <LibJS/Runtime/PropertyKey.h>
 #include <LibJS/Runtime/Value.h>
 
@@ -25,7 +24,7 @@ public:
         Environment,
     };
 
-    Reference() { }
+    Reference() = default;
     Reference(BaseType type, PropertyKey name, bool strict)
         : m_base_type(type)
         , m_name(move(name))

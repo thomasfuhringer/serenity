@@ -22,12 +22,12 @@ namespace Kernel {
 #define PATA_PRIMARY_IRQ 14
 #define PATA_SECONDARY_IRQ 15
 
-UNMAP_AFTER_INIT NonnullRefPtr<IDEChannel> IDEChannel::create(const IDEController& controller, IOAddressGroup io_group, ChannelType type)
+UNMAP_AFTER_INIT NonnullRefPtr<IDEChannel> IDEChannel::create(IDEController const& controller, IOAddressGroup io_group, ChannelType type)
 {
     return adopt_ref(*new IDEChannel(controller, io_group, type));
 }
 
-UNMAP_AFTER_INIT NonnullRefPtr<IDEChannel> IDEChannel::create(const IDEController& controller, u8 irq, IOAddressGroup io_group, ChannelType type)
+UNMAP_AFTER_INIT NonnullRefPtr<IDEChannel> IDEChannel::create(IDEController const& controller, u8 irq, IOAddressGroup io_group, ChannelType type)
 {
     return adopt_ref(*new IDEChannel(controller, irq, io_group, type));
 }
@@ -51,7 +51,6 @@ UNMAP_AFTER_INIT void IDEChannel::initialize()
         dbgln_if(PATA_DEBUG, "IDEChannel: {} bus master base: {}", channel_type_string(), m_io_group.bus_master_base().value());
     else
         dbgln_if(PATA_DEBUG, "IDEChannel: {} bus master base disabled", channel_type_string());
-    m_parent_controller->enable_pin_based_interrupts();
 
     // reset the channel
     u8 device_control = m_io_group.control_base().in<u8>();
@@ -62,12 +61,12 @@ UNMAP_AFTER_INIT void IDEChannel::initialize()
     IO::delay(30000);
     m_io_group.control_base().out<u8>(device_control);
     // Wait up to 30 seconds before failing
-    if (!wait_until_not_busy(false, 30000)) {
+    if (!select_device_and_wait_until_not_busy(DeviceType::Master, 30000)) {
         dbgln("IDEChannel: reset failed, busy flag on master stuck");
         return;
     }
     // Wait up to 30 seconds before failing
-    if (!wait_until_not_busy(true, 30000)) {
+    if (!select_device_and_wait_until_not_busy(DeviceType::Slave, 30000)) {
         dbgln("IDEChannel: reset failed, busy flag on slave stuck");
         return;
     }
@@ -78,7 +77,7 @@ UNMAP_AFTER_INIT void IDEChannel::initialize()
     clear_pending_interrupts();
 }
 
-UNMAP_AFTER_INIT IDEChannel::IDEChannel(const IDEController& controller, u8 irq, IOAddressGroup io_group, ChannelType type)
+UNMAP_AFTER_INIT IDEChannel::IDEChannel(IDEController const& controller, u8 irq, IOAddressGroup io_group, ChannelType type)
     : IRQHandler(irq)
     , m_channel_type(type)
     , m_io_group(io_group)
@@ -87,7 +86,7 @@ UNMAP_AFTER_INIT IDEChannel::IDEChannel(const IDEController& controller, u8 irq,
     initialize();
 }
 
-UNMAP_AFTER_INIT IDEChannel::IDEChannel(const IDEController& controller, IOAddressGroup io_group, ChannelType type)
+UNMAP_AFTER_INIT IDEChannel::IDEChannel(IDEController const& controller, IOAddressGroup io_group, ChannelType type)
     : IRQHandler(type == ChannelType::Primary ? PATA_PRIMARY_IRQ : PATA_SECONDARY_IRQ)
     , m_channel_type(type)
     , m_io_group(io_group)
@@ -101,9 +100,7 @@ void IDEChannel::clear_pending_interrupts() const
     m_io_group.io_base().offset(ATA_REG_STATUS).in<u8>();
 }
 
-UNMAP_AFTER_INIT IDEChannel::~IDEChannel()
-{
-}
+UNMAP_AFTER_INIT IDEChannel::~IDEChannel() = default;
 
 void IDEChannel::start_request(AsyncBlockDeviceRequest& request, bool is_slave, u16 capabilities)
 {
@@ -132,7 +129,7 @@ void IDEChannel::complete_current_request(AsyncDeviceRequest::RequestResult resu
     // This is important so that we can safely write the buffer back,
     // which could cause page faults. Note that this may be called immediately
     // before Processor::deferred_call_queue returns!
-    g_io_work->queue([this, result]() {
+    auto work_item_creation_result = g_io_work->try_queue([this, result]() {
         dbgln_if(PATA_DEBUG, "IDEChannel::complete_current_request result: {}", (int)result);
         MutexLocker locker(m_lock);
         VERIFY(m_current_request);
@@ -140,6 +137,11 @@ void IDEChannel::complete_current_request(AsyncDeviceRequest::RequestResult resu
         m_current_request.clear();
         current_request->complete(result);
     });
+    if (work_item_creation_result.is_error()) {
+        auto current_request = m_current_request;
+        m_current_request.clear();
+        current_request->complete(AsyncDeviceRequest::OutOfMemory);
+    }
 }
 
 static void print_ide_status(u8 status)
@@ -191,7 +193,7 @@ void IDEChannel::try_disambiguate_error()
     }
 }
 
-bool IDEChannel::handle_irq(const RegisterState&)
+bool IDEChannel::handle_irq(RegisterState const&)
 {
     u8 status = m_io_group.io_base().offset(ATA_REG_STATUS).in<u8>();
 
@@ -221,7 +223,7 @@ bool IDEChannel::handle_irq(const RegisterState&)
     // Now schedule reading/writing the buffer as soon as we leave the irq handler.
     // This is important so that we can safely access the buffers, which could
     // trigger page faults
-    g_io_work->queue([this]() {
+    auto work_item_creation_result = g_io_work->try_queue([this]() {
         MutexLocker locker(m_lock);
         SpinlockLocker lock(m_request_lock);
         if (m_current_request->request_type() == AsyncBlockDeviceRequest::Read) {
@@ -252,6 +254,11 @@ bool IDEChannel::handle_irq(const RegisterState&)
             }
         }
     });
+    if (work_item_creation_result.is_error()) {
+        auto current_request = m_current_request;
+        m_current_request.clear();
+        current_request->complete(AsyncDeviceRequest::OutOfMemory);
+    }
     return true;
 }
 
@@ -261,10 +268,11 @@ static void io_delay()
         IO::in8(0x3f6);
 }
 
-bool IDEChannel::wait_until_not_busy(bool slave, size_t milliseconds_timeout)
+bool IDEChannel::select_device_and_wait_until_not_busy(DeviceType device_type, size_t milliseconds_timeout)
 {
     IO::delay(20);
-    m_io_group.io_base().offset(ATA_REG_HDDEVSEL).out<u8>(0xA0 | (slave << 4)); // First, we need to select the drive itself
+    u8 slave = device_type == DeviceType::Slave;
+    m_io_group.io_base().offset(ATA_REG_HDDEVSEL).out<u8>(0xA0 | (slave << 4));
     IO::delay(20);
     size_t time_elapsed = 0;
     while (m_io_group.control_base().in<u8>() & ATA_SR_BSY && time_elapsed <= milliseconds_timeout) {
@@ -303,10 +311,11 @@ UNMAP_AFTER_INIT void IDEChannel::detect_disks()
 
     // There are only two possible disks connected to a channel
     for (auto i = 0; i < 2; i++) {
-        // We need to select the drive and then we wait 20 microseconds... and it doesn't hurt anything so let's just do it.
-        IO::delay(20);
-        m_io_group.io_base().offset(ATA_REG_HDDEVSEL).out<u8>(0xA0 | (i << 4)); // First, we need to select the drive itself
-        IO::delay(20);
+
+        if (!select_device_and_wait_until_not_busy(i == 0 ? DeviceType::Master : DeviceType::Slave, 32000)) {
+            dbgln("IDEChannel: Timeout waiting for busy flag to clear during {} {} detection", channel_type_string(), channel_string(i));
+            continue;
+        }
 
         auto status = m_io_group.control_base().in<u8>();
         if (status == 0x0) {
@@ -379,8 +388,8 @@ UNMAP_AFTER_INIT void IDEChannel::detect_disks()
         }
 
         // FIXME: Handle possible OOM situation here.
-        ByteBuffer wbuf = ByteBuffer::create_uninitialized(512).release_value();
-        ByteBuffer bbuf = ByteBuffer::create_uninitialized(512).release_value();
+        ByteBuffer wbuf = ByteBuffer::create_uninitialized(m_logical_sector_size).release_value_but_fixme_should_propagate_errors();
+        ByteBuffer bbuf = ByteBuffer::create_uninitialized(m_logical_sector_size).release_value_but_fixme_should_propagate_errors();
         u8* b = bbuf.data();
         u16* w = (u16*)wbuf.data();
 
@@ -395,7 +404,7 @@ UNMAP_AFTER_INIT void IDEChannel::detect_disks()
         for (u32 i = 93; i > 54 && bbuf[i] == ' '; --i)
             bbuf[i] = 0;
 
-        volatile ATAIdentifyBlock& identify_block = (volatile ATAIdentifyBlock&)(*wbuf.data());
+        ATAIdentifyBlock volatile& identify_block = (ATAIdentifyBlock volatile&)(*wbuf.data());
 
         u16 capabilities = identify_block.capabilities[0];
 
@@ -408,13 +417,12 @@ UNMAP_AFTER_INIT void IDEChannel::detect_disks()
         if (identify_block.commands_and_feature_sets_supported[1] & (1 << 10))
             max_addressable_block = identify_block.user_addressable_logical_sectors_count;
 
-        dbgln("IDEChannel: {} {} {} device found: Name={}, Capacity={}, Capabilities={:#04x}", channel_type_string(), channel_string(i), !command_set_is_atapi ? "ATA" : "ATAPI", ((char*)bbuf.data() + 54), max_addressable_block * 512, capabilities);
-        // FIXME: Don't assume all drives will have logical sector size of 512 bytes.
+        dbgln("IDEChannel: {} {} {} device found: Name={}, Capacity={}, Capabilities={:#04x}", channel_type_string(), channel_string(i), !command_set_is_atapi ? "ATA" : "ATAPI", ((char*)bbuf.data() + 54), max_addressable_block * m_logical_sector_size, capabilities);
         ATADevice::Address address = { m_channel_type == ChannelType::Primary ? static_cast<u8>(0) : static_cast<u8>(1), static_cast<u8>(i) };
         if (i == 0) {
-            m_master = ATADiskDevice::create(m_parent_controller, address, capabilities, 512, max_addressable_block);
+            m_master = ATADiskDevice::create(m_parent_controller, address, capabilities, m_logical_sector_size, max_addressable_block);
         } else {
-            m_slave = ATADiskDevice::create(m_parent_controller, address, capabilities, 512, max_addressable_block);
+            m_slave = ATADiskDevice::create(m_parent_controller, address, capabilities, m_logical_sector_size, max_addressable_block);
         }
     }
 }
@@ -479,8 +487,9 @@ bool IDEChannel::ata_do_read_sector()
     VERIFY(!m_current_request.is_null());
     dbgln_if(PATA_DEBUG, "IDEChannel::ata_do_read_sector");
     auto& request = *m_current_request;
-    auto out_buffer = request.buffer().offset(m_current_request_block_index * 512);
-    auto result = request.write_to_buffer_buffered<512>(out_buffer, 512, [&](Bytes bytes) {
+    auto block_size = m_current_request->block_size();
+    auto out_buffer = request.buffer().offset(m_current_request_block_index * block_size);
+    auto result = request.write_to_buffer_buffered<m_logical_sector_size>(out_buffer, block_size, [&](Bytes bytes) {
         for (size_t i = 0; i < bytes.size(); i += sizeof(u16))
             *(u16*)bytes.offset_pointer(i) = IO::in16(m_io_group.io_base().offset(ATA_REG_DATA).get());
         return bytes.size();
@@ -520,9 +529,10 @@ void IDEChannel::ata_do_write_sector()
     u8 status = m_io_group.control_base().in<u8>();
     VERIFY(status & ATA_SR_DRQ);
 
-    auto in_buffer = request.buffer().offset(m_current_request_block_index * 512);
-    dbgln_if(PATA_DEBUG, "IDEChannel: Writing 512 bytes (part {}) (status={:#02x})...", m_current_request_block_index, status);
-    auto result = request.read_from_buffer_buffered<512>(in_buffer, 512, [&](ReadonlyBytes readonly_bytes) {
+    auto block_size = m_current_request->block_size();
+    auto in_buffer = request.buffer().offset(m_current_request_block_index * block_size);
+    dbgln_if(PATA_DEBUG, "IDEChannel: Writing {} bytes (part {}) (status={:#02x})...", block_size, m_current_request_block_index, status);
+    auto result = request.read_from_buffer_buffered<m_logical_sector_size>(in_buffer, block_size, [&](ReadonlyBytes readonly_bytes) {
         for (size_t i = 0; i < readonly_bytes.size(); i += sizeof(u16))
             IO::out16(m_io_group.io_base().offset(ATA_REG_DATA).get(), *(const u16*)readonly_bytes.offset(i));
         return readonly_bytes.size();

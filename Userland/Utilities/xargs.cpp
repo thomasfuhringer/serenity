@@ -8,6 +8,7 @@
 #include <AK/StdLibExtras.h>
 #include <AK/StringBuilder.h>
 #include <LibCore/ArgsParser.h>
+#include <LibCore/System.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <stdio.h>
@@ -27,9 +28,9 @@ bool read_items(FILE* fp, char entry_separator, Function<Decision(StringView)>);
 
 class ParsedInitialArguments {
 public:
-    ParsedInitialArguments(Vector<const char*>&, StringView placeholder);
+    ParsedInitialArguments(Vector<String>&, StringView placeholder);
 
-    void for_each_joined_argument(StringView, Function<void(const String&)>) const;
+    void for_each_joined_argument(StringView, Function<void(String const&)>) const;
 
     size_t size() const { return m_all_parts.size(); }
 
@@ -37,19 +38,16 @@ private:
     Vector<Vector<StringView>> m_all_parts;
 };
 
-int main(int argc, char** argv)
+ErrorOr<int> serenity_main(Main::Arguments main_arguments)
 {
-    if (pledge("stdio rpath proc exec", nullptr) < 0) {
-        perror("pledge");
-        return 1;
-    }
+    TRY(Core::System::pledge("stdio rpath proc exec"));
 
-    const char* placeholder = nullptr;
+    char const* placeholder = nullptr;
     bool split_with_nulls = false;
-    const char* specified_delimiter = "\n";
-    Vector<const char*> arguments;
+    char const* specified_delimiter = "\n";
+    Vector<String> arguments;
     bool verbose = false;
-    const char* file_to_read = "-";
+    char const* file_to_read = "-";
     int max_lines_for_one_command = 0;
     int max_bytes_for_one_command = ARG_MAX;
 
@@ -64,7 +62,7 @@ int main(int argc, char** argv)
     args_parser.add_option(max_lines_for_one_command, "Use at most max-lines lines to create a command", "line-limit", 'L', "max-lines");
     args_parser.add_option(max_bytes_for_one_command, "Use at most max-chars characters to create a command", "char-limit", 's', "max-chars");
     args_parser.add_positional_argument(arguments, "Command and any initial arguments for it", "command", Core::ArgsParser::Required::No);
-    args_parser.parse(argc, argv);
+    args_parser.parse(main_arguments);
 
     size_t max_bytes = min(ARG_MAX, max_bytes_for_one_command);
     size_t max_lines = max(max_lines_for_one_command, 0);
@@ -105,11 +103,7 @@ int main(int argc, char** argv)
     int devnull_fd = 0;
 
     if (is_stdin) {
-        devnull_fd = open("/dev/null", O_RDONLY | O_CLOEXEC);
-        if (devnull_fd < 0) {
-            perror("open");
-            return 1;
-        }
+        devnull_fd = TRY(Core::System::open("/dev/null", O_RDONLY | O_CLOEXEC));
     }
 
     size_t total_command_length = 0;
@@ -244,18 +238,16 @@ bool run_command(Vector<char*>&& child_argv, bool verbose, bool is_stdin, int de
     return true;
 }
 
-ParsedInitialArguments::ParsedInitialArguments(Vector<const char*>& arguments, StringView placeholder)
+ParsedInitialArguments::ParsedInitialArguments(Vector<String>& arguments, StringView placeholder)
 {
     m_all_parts.ensure_capacity(arguments.size());
     bool some_argument_has_placeholder = false;
 
-    for (auto argument : arguments) {
-        StringView arg { argument };
-
+    for (auto arg : arguments) {
         if (placeholder.is_empty()) {
             m_all_parts.append({ arg });
         } else {
-            auto parts = arg.split_view(placeholder, true);
+            auto parts = arg.view().split_view(placeholder, true);
             some_argument_has_placeholder = some_argument_has_placeholder || parts.size() > 1;
             m_all_parts.append(move(parts));
         }
@@ -270,7 +262,7 @@ ParsedInitialArguments::ParsedInitialArguments(Vector<const char*>& arguments, S
     }
 }
 
-void ParsedInitialArguments::for_each_joined_argument(StringView separator, Function<void(const String&)> callback) const
+void ParsedInitialArguments::for_each_joined_argument(StringView separator, Function<void(String const&)> callback) const
 {
     StringBuilder builder;
     for (auto& parts : m_all_parts) {

@@ -20,6 +20,10 @@ typedef uint32_t in_addr_t;
 #define INADDR_LOOPBACK 0x7f000001
 #define INADDR_BROADCAST 0xffffffff
 
+#define IN_CLASSA_NET 0xff000000
+#define IN_CLASSB_NET 0xffff0000
+#define IN_CLASSC_NET 0xffffff00
+
 #define IN_LOOPBACKNET 127
 
 #define IP_TOS 1
@@ -29,6 +33,9 @@ typedef uint32_t in_addr_t;
 #define IP_DROP_MEMBERSHIP 5
 #define IP_MULTICAST_IF 6
 #define IP_MULTICAST_TTL 7
+#define IP_BLOCK_SOURCE 8
+#define IP_UNBLOCK_SOURCE 9
+#define IP_OPTIONS 10
 
 #define IPTOS_LOWDELAY 16
 #define IPTOS_THROUGHPUT 8
@@ -92,7 +99,13 @@ struct in6_addr {
         0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 \
     }
 
-extern struct in6_addr in6addr_any;
+#define IN6ADDR_LOOPBACK_INIT                          \
+    {                                                  \
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1 \
+    }
+
+extern const struct in6_addr in6addr_any;
+extern const struct in6_addr in6addr_loopback;
 
 struct sockaddr_in6 {
     sa_family_t sin6_family;   // AF_INET6.

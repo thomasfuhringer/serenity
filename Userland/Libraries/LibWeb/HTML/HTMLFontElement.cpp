@@ -10,14 +10,12 @@
 
 namespace Web::HTML {
 
-HTMLFontElement::HTMLFontElement(DOM::Document& document, QualifiedName qualified_name)
+HTMLFontElement::HTMLFontElement(DOM::Document& document, DOM::QualifiedName qualified_name)
     : HTMLElement(document, move(qualified_name))
 {
 }
 
-HTMLFontElement::~HTMLFontElement()
-{
-}
+HTMLFontElement::~HTMLFontElement() = default;
 
 void HTMLFontElement::apply_presentational_hints(CSS::StyleProperties& style) const
 {

@@ -1,12 +1,21 @@
 /*
- * Copyright (c) 2021, Linus Groh <linusg@serenityos.org>
+ * Copyright (c) 2021-2022, Linus Groh <linusg@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <LibJS/Runtime/GlobalEnvironment.h>
+#include <LibJS/Runtime/GlobalObject.h>
 #include <LibJS/Runtime/Realm.h>
+#include <LibJS/Runtime/VM.h>
 
 namespace JS {
+
+// 9.3.1 CreateRealm ( ), https://tc39.es/ecma262/#sec-createrealm
+Realm* Realm::create(VM& vm)
+{
+    return vm.heap().allocate_without_global_object<Realm>();
+}
 
 // 9.3.3 SetRealmGlobalObject ( realmRec, globalObj, thisValue ), https://tc39.es/ecma262/#sec-setrealmglobalobject
 void Realm::set_global_object(GlobalObject& global_object, Object* this_value)
@@ -26,9 +35,9 @@ void Realm::set_global_object(GlobalObject& global_object, Object* this_value)
 
     // 5. Let newGlobalEnv be NewGlobalEnvironment(globalObj, thisValue).
     // 6. Set realmRec.[[GlobalEnv]] to newGlobalEnv.
-    m_global_environment = global_object.heap().allocate<GlobalEnvironment>(global_object, global_object, *this_value);
+    m_global_environment = global_object.heap().allocate_without_global_object<GlobalEnvironment>(global_object, *this_value);
 
-    // 7. Return realmRec.
+    // 7. Return unused.
 }
 
 void Realm::visit_edges(Visitor& visitor)

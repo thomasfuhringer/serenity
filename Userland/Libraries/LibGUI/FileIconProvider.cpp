@@ -1,9 +1,11 @@
 /*
  * Copyright (c) 2020-2021, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2022, the SerenityOS developers.
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <AK/Array.h>
 #include <AK/LexicalPath.h>
 #include <AK/String.h>
 #include <LibCore/ConfigFile.h>
@@ -64,7 +66,7 @@ static void initialize_if_needed()
     if (s_initialized)
         return;
 
-    auto config = Core::ConfigFile::open("/etc/FileIconProvider.ini");
+    auto config = Core::ConfigFile::open("/etc/FileIconProvider.ini").release_value_but_fixme_should_propagate_errors();
 
     s_symlink_emblem = Gfx::Bitmap::try_load_from_file("/res/icons/symlink-emblem.png").release_value_but_fixme_should_propagate_errors();
     s_symlink_emblem_small = Gfx::Bitmap::try_load_from_file("/res/icons/symlink-emblem-small.png").release_value_but_fixme_should_propagate_errors();
@@ -127,7 +129,7 @@ Icon FileIconProvider::filetype_image_icon()
     return s_filetype_image_icon;
 }
 
-Icon FileIconProvider::icon_for_path(const String& path)
+Icon FileIconProvider::icon_for_path(String const& path)
 {
     struct stat stat;
     if (::stat(path.characters(), &stat) < 0)
@@ -135,7 +137,7 @@ Icon FileIconProvider::icon_for_path(const String& path)
     return icon_for_path(path, stat.st_mode);
 }
 
-Icon FileIconProvider::icon_for_executable(const String& path)
+Icon FileIconProvider::icon_for_executable(String const& path)
 {
     static HashMap<String, Icon> app_icon_cache;
 
@@ -165,7 +167,7 @@ Icon FileIconProvider::icon_for_executable(const String& path)
         return s_executable_icon;
     }
 
-    auto image = ELF::Image((const u8*)mapped_file->data(), mapped_file->size());
+    auto image = ELF::Image((u8 const*)mapped_file->data(), mapped_file->size());
     if (!image.is_valid()) {
         app_icon_cache.set(path, s_executable_icon);
         return s_executable_icon;
@@ -174,14 +176,17 @@ Icon FileIconProvider::icon_for_executable(const String& path)
     // If any of the required sections are missing then use the defaults
     Icon icon;
     struct IconSection {
-        const char* section_name;
+        char const* section_name;
         int image_size;
     };
 
-    static const IconSection icon_sections[] = { { .section_name = "serenity_icon_s", .image_size = 16 }, { .section_name = "serenity_icon_m", .image_size = 32 } };
+    static constexpr Array<IconSection, 2> icon_sections = {
+        IconSection { .section_name = "serenity_icon_s", .image_size = 16 },
+        IconSection { .section_name = "serenity_icon_m", .image_size = 32 }
+    };
 
     bool had_error = false;
-    for (const auto& icon_section : icon_sections) {
+    for (auto const& icon_section : icon_sections) {
         auto section = image.lookup_section(icon_section.section_name);
 
         RefPtr<Gfx::Bitmap> bitmap;
@@ -212,7 +217,7 @@ Icon FileIconProvider::icon_for_executable(const String& path)
     return icon;
 }
 
-Icon FileIconProvider::icon_for_path(const String& path, mode_t mode)
+Icon FileIconProvider::icon_for_path(String const& path, mode_t mode)
 {
     initialize_if_needed();
     if (path == "/")
@@ -227,7 +232,11 @@ Icon FileIconProvider::icon_for_path(const String& path, mode_t mode)
         return s_directory_icon;
     }
     if (S_ISLNK(mode)) {
-        auto raw_symlink_target = Core::File::read_link(path);
+        auto raw_symlink_target_or_error = Core::File::read_link(path);
+        if (raw_symlink_target_or_error.is_error())
+            return s_symlink_icon;
+
+        auto raw_symlink_target = raw_symlink_target_or_error.release_value();
         if (raw_symlink_target.is_null())
             return s_symlink_icon;
 
@@ -267,8 +276,10 @@ Icon FileIconProvider::icon_for_path(const String& path, mode_t mode)
         return s_filetype_image_icon;
 
     for (auto& filetype : s_filetype_icons.keys()) {
-        auto patterns = s_filetype_patterns.get(filetype).value();
-        for (auto& pattern : patterns) {
+        auto pattern_it = s_filetype_patterns.find(filetype);
+        if (pattern_it == s_filetype_patterns.end())
+            continue;
+        for (auto& pattern : pattern_it->value) {
             if (path.matches(pattern, CaseSensitivity::CaseInsensitive))
                 return s_filetype_icons.get(filetype).value();
         }

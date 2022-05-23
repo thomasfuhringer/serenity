@@ -15,8 +15,8 @@
 namespace AK {
 
 struct FlyStringImplTraits : public Traits<StringImpl*> {
-    static unsigned hash(const StringImpl* s) { return s ? s->hash() : 0; }
-    static bool equals(const StringImpl* a, const StringImpl* b)
+    static unsigned hash(StringImpl const* s) { return s ? s->hash() : 0; }
+    static bool equals(StringImpl const* a, StringImpl const* b)
     {
         VERIFY(a);
         VERIFY(b);
@@ -36,7 +36,7 @@ void FlyString::did_destroy_impl(Badge<StringImpl>, StringImpl& impl)
     fly_impls().remove(&impl);
 }
 
-FlyString::FlyString(const String& string)
+FlyString::FlyString(String const& string)
 {
     if (string.is_null())
         return;
@@ -115,35 +115,19 @@ FlyString FlyString::to_lowercase() const
     return String(*m_impl).to_lowercase();
 }
 
-bool FlyString::operator==(const String& other) const
+bool FlyString::operator==(String const& other) const
 {
-    if (m_impl == other.impl())
-        return true;
-
-    if (!m_impl)
-        return !other.impl();
-
-    if (!other.impl())
-        return false;
-
-    if (length() != other.length())
-        return false;
-
-    return !__builtin_memcmp(characters(), other.characters(), length());
+    return m_impl == other.impl() || view() == other.view();
 }
 
 bool FlyString::operator==(StringView string) const
 {
-    return *this == String(string);
+    return view() == string;
 }
 
-bool FlyString::operator==(const char* string) const
+bool FlyString::operator==(char const* string) const
 {
-    if (is_null())
-        return !string;
-    if (!string)
-        return false;
-    return !__builtin_strcmp(m_impl->characters(), string);
+    return view() == string;
 }
 
 }

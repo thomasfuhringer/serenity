@@ -8,13 +8,11 @@
 
 namespace Web::HTML {
 
-HTMLSourceElement::HTMLSourceElement(DOM::Document& document, QualifiedName qualified_name)
+HTMLSourceElement::HTMLSourceElement(DOM::Document& document, DOM::QualifiedName qualified_name)
     : HTMLElement(document, move(qualified_name))
 {
 }
 
-HTMLSourceElement::~HTMLSourceElement()
-{
-}
+HTMLSourceElement::~HTMLSourceElement() = default;
 
 }

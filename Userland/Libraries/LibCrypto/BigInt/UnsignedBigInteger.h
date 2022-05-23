@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2020, Itamar S. <itamar8910@gmail.com>
+ * Copyright (c) 2022, the SerenityOS developers.
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -29,14 +30,14 @@ public:
     {
     }
 
-    explicit UnsignedBigInteger(const u8* ptr, size_t length);
+    explicit UnsignedBigInteger(u8 const* ptr, size_t length);
 
-    UnsignedBigInteger() { }
+    UnsignedBigInteger() = default;
 
     static UnsignedBigInteger create_invalid();
 
-    static UnsignedBigInteger import_data(StringView data) { return import_data((const u8*)data.characters_without_null_termination(), data.length()); }
-    static UnsignedBigInteger import_data(const u8* ptr, size_t length)
+    static UnsignedBigInteger import_data(StringView data) { return import_data((u8 const*)data.characters_without_null_termination(), data.length()); }
+    static UnsignedBigInteger import_data(u8 const* ptr, size_t length)
     {
         return UnsignedBigInteger(ptr, length);
     }
@@ -53,17 +54,17 @@ public:
 
     size_t export_data(Bytes, bool remove_leading_zeros = false) const;
 
-    static UnsignedBigInteger from_base(u16 N, const String& str);
+    static UnsignedBigInteger from_base(u16 N, StringView str);
     String to_base(u16 N) const;
 
     u64 to_u64() const;
     double to_double() const;
 
-    const Vector<Word, STARTING_WORD_SIZE>& words() const { return m_words; }
+    Vector<Word, STARTING_WORD_SIZE> const& words() const { return m_words; }
 
     void set_to_0();
     void set_to(Word other);
-    void set_to(const UnsignedBigInteger& other);
+    void set_to(UnsignedBigInteger const& other);
 
     void invalidate()
     {
@@ -72,6 +73,7 @@ public:
         m_cached_hash = 0;
     }
 
+    bool is_zero() const;
     bool is_odd() const { return m_words.size() && (m_words[0] & 1); }
     bool is_invalid() const { return m_is_invalid; }
 
@@ -82,24 +84,26 @@ public:
     void clamp_to_trimmed_length();
     void resize_with_leading_zeros(size_t num_words);
 
-    UnsignedBigInteger plus(const UnsignedBigInteger& other) const;
-    UnsignedBigInteger minus(const UnsignedBigInteger& other) const;
-    UnsignedBigInteger bitwise_or(const UnsignedBigInteger& other) const;
-    UnsignedBigInteger bitwise_and(const UnsignedBigInteger& other) const;
-    UnsignedBigInteger bitwise_xor(const UnsignedBigInteger& other) const;
-    UnsignedBigInteger bitwise_not() const;
+    size_t one_based_index_of_highest_set_bit() const;
+
+    UnsignedBigInteger plus(UnsignedBigInteger const& other) const;
+    UnsignedBigInteger minus(UnsignedBigInteger const& other) const;
+    UnsignedBigInteger bitwise_or(UnsignedBigInteger const& other) const;
+    UnsignedBigInteger bitwise_and(UnsignedBigInteger const& other) const;
+    UnsignedBigInteger bitwise_xor(UnsignedBigInteger const& other) const;
+    UnsignedBigInteger bitwise_not_fill_to_one_based_index(size_t) const;
     UnsignedBigInteger shift_left(size_t num_bits) const;
-    UnsignedBigInteger multiplied_by(const UnsignedBigInteger& other) const;
-    UnsignedDivisionResult divided_by(const UnsignedBigInteger& divisor) const;
+    UnsignedBigInteger multiplied_by(UnsignedBigInteger const& other) const;
+    UnsignedDivisionResult divided_by(UnsignedBigInteger const& divisor) const;
 
     u32 hash() const;
 
     void set_bit_inplace(size_t bit_index);
 
-    bool operator==(const UnsignedBigInteger& other) const;
-    bool operator!=(const UnsignedBigInteger& other) const;
-    bool operator<(const UnsignedBigInteger& other) const;
-    bool operator>(const UnsignedBigInteger& other) const;
+    bool operator==(UnsignedBigInteger const& other) const;
+    bool operator!=(UnsignedBigInteger const& other) const;
+    bool operator<(UnsignedBigInteger const& other) const;
+    bool operator>(UnsignedBigInteger const& other) const;
     bool operator>=(UnsignedBigInteger const& other) const;
 
 private:
@@ -129,7 +133,7 @@ struct AK::Formatter<Crypto::UnsignedBigInteger> : Formatter<StringView> {
 };
 
 inline Crypto::UnsignedBigInteger
-operator""_bigint(const char* string, size_t length)
+operator""_bigint(char const* string, size_t length)
 {
     return Crypto::UnsignedBigInteger::from_base(10, { string, length });
 }

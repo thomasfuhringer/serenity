@@ -8,14 +8,11 @@
 #include <AK/URL.h>
 #include <LibCore/AnonymousBuffer.h>
 #include <LibCore/DateTime.h>
-#include <LibCore/System.h>
+#include <LibCore/Proxy.h>
 #include <LibIPC/Decoder.h>
 #include <LibIPC/Dictionary.h>
 #include <LibIPC/File.h>
-#include <errno.h>
 #include <fcntl.h>
-#include <string.h>
-#include <sys/socket.h>
 
 namespace IPC {
 
@@ -125,10 +122,7 @@ ErrorOr<void> Decoder::decode(ByteBuffer& value)
         return {};
     }
 
-    if (auto buffer_result = ByteBuffer::create_uninitialized(length); buffer_result.has_value())
-        value = buffer_result.release_value();
-    else
-        return Error::from_errno(ENOMEM);
+    value = TRY(ByteBuffer::create_uninitialized(length));
 
     m_stream >> value.bytes();
     return m_stream.try_handle_any_error();
@@ -162,14 +156,9 @@ ErrorOr<void> Decoder::decode(Dictionary& dictionary)
 
 ErrorOr<void> Decoder::decode([[maybe_unused]] File& file)
 {
-#ifdef __serenity__
-    int fd = TRY(Core::System::recvfd(m_sockfd, O_CLOEXEC));
+    int fd = TRY(m_socket.receive_fd(O_CLOEXEC));
     file = File(fd, File::ConstructWithReceivedFileDescriptor);
     return {};
-#else
-    [[maybe_unused]] auto fd = m_sockfd;
-    return Error::from_string_literal("File descriptor passing not supported on this platform");
-#endif
 }
 
 ErrorOr<void> decode(Decoder& decoder, Core::AnonymousBuffer& buffer)
@@ -194,6 +183,16 @@ ErrorOr<void> decode(Decoder& decoder, Core::DateTime& datetime)
     i64 timestamp;
     TRY(decoder.decode(timestamp));
     datetime = Core::DateTime::from_timestamp(static_cast<time_t>(timestamp));
+    return {};
+}
+
+ErrorOr<void> decode(Decoder& decoder, Core::ProxyData& data)
+{
+    UnderlyingType<decltype(data.type)> type;
+    TRY(decoder.decode(type));
+    data.type = static_cast<Core::ProxyData::Type>(type);
+    TRY(decoder.decode(data.host_ipv4));
+    TRY(decoder.decode(data.port));
     return {};
 }
 

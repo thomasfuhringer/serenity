@@ -27,10 +27,10 @@ public:
         return adopt_ref(*new CSSStyleRule(move(selectors), move(declaration)));
     }
 
-    virtual ~CSSStyleRule() override;
+    virtual ~CSSStyleRule() override = default;
 
-    const NonnullRefPtrVector<Selector>& selectors() const { return m_selectors; }
-    const CSSStyleDeclaration& declaration() const { return m_declaration; }
+    NonnullRefPtrVector<Selector> const& selectors() const { return m_selectors; }
+    CSSStyleDeclaration const& declaration() const { return m_declaration; }
 
     virtual StringView class_name() const override { return "CSSStyleRule"; };
     virtual Type type() const override { return Type::Style; };

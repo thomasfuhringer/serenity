@@ -1,10 +1,11 @@
 /*
  * Copyright (c) 2018-2020, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2022, the SerenityOS developers.
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-#include <AK/Vector.h>
+#include <LibCore/Object.h>
 #include <LibGUI/AbstractTableView.h>
 #include <LibGUI/Action.h>
 #include <LibGUI/Button.h>
@@ -19,6 +20,8 @@ namespace GUI {
 
 AbstractTableView::AbstractTableView()
 {
+    REGISTER_BOOL_PROPERTY("column_headers_visible", column_headers_visible, set_column_headers_visible);
+
     set_selection_behavior(SelectionBehavior::SelectRows);
     m_corner_button = add<Button>();
     m_corner_button->move_to_back();
@@ -33,10 +36,6 @@ AbstractTableView::AbstractTableView()
     m_row_header->move_to_back();
     m_row_header->set_visible(false);
     set_should_hide_unnecessary_scrollbars(true);
-}
-
-AbstractTableView::~AbstractTableView()
-{
 }
 
 void AbstractTableView::select_all()
@@ -149,7 +148,9 @@ void AbstractTableView::update_content_size()
     int content_height = item_count() * row_height();
 
     set_content_size({ content_width, content_height });
-    set_size_occupied_by_fixed_elements({ row_header().width(), column_header().height() });
+    int row_width = row_header().is_visible() ? row_header().width() : 0;
+    int column_height = column_header().is_visible() ? column_header().height() : 0;
+    set_size_occupied_by_fixed_elements({ row_width, column_height });
     layout_headers();
 }
 
@@ -221,7 +222,7 @@ void AbstractTableView::mousedown_event(MouseEvent& event)
     AbstractView::mousedown_event(event);
 }
 
-ModelIndex AbstractTableView::index_at_event_position(const Gfx::IntPoint& position, bool& is_toggle) const
+ModelIndex AbstractTableView::index_at_event_position(Gfx::IntPoint const& position, bool& is_toggle) const
 {
     is_toggle = false;
     if (!model())
@@ -241,7 +242,7 @@ ModelIndex AbstractTableView::index_at_event_position(const Gfx::IntPoint& posit
     return {};
 }
 
-ModelIndex AbstractTableView::index_at_event_position(const Gfx::IntPoint& position) const
+ModelIndex AbstractTableView::index_at_event_position(Gfx::IntPoint const& position) const
 {
     bool is_toggle;
     auto index = index_at_event_position(position, is_toggle);
@@ -271,17 +272,21 @@ void AbstractTableView::move_cursor_relative(int vertical_steps, int horizontal_
     }
 }
 
-void AbstractTableView::scroll_into_view(const ModelIndex& index, bool scroll_horizontally, bool scroll_vertically)
+void AbstractTableView::scroll_into_view(ModelIndex const& index, bool scroll_horizontally, bool scroll_vertically)
 {
     Gfx::IntRect rect;
     switch (selection_behavior()) {
     case SelectionBehavior::SelectItems:
         rect = content_rect(index);
+        if (row_header().is_visible())
+            rect.set_left(rect.left() - row_header().width());
         break;
     case SelectionBehavior::SelectRows:
         rect = row_rect(index.row());
         break;
     }
+    if (column_header().is_visible())
+        rect.set_top(rect.top() - column_header().height());
     AbstractScrollableWidget::scroll_into_view(rect, scroll_horizontally, scroll_vertically);
 }
 
@@ -319,9 +324,15 @@ Gfx::IntRect AbstractTableView::content_rect(int row, int column) const
     return { row_rect.x() + x, row_rect.y(), column_width(column) + horizontal_padding() * 2, row_height() };
 }
 
-Gfx::IntRect AbstractTableView::content_rect(const ModelIndex& index) const
+Gfx::IntRect AbstractTableView::content_rect(ModelIndex const& index) const
 {
     return content_rect(index.row(), index.column());
+}
+
+Gfx::IntRect AbstractTableView::content_rect_minus_scrollbars(ModelIndex const& index) const
+{
+    auto naive_content_rect = content_rect(index.row(), index.column());
+    return { naive_content_rect.x() - horizontal_scrollbar().value(), naive_content_rect.y() - vertical_scrollbar().value(), naive_content_rect.width(), naive_content_rect.height() };
 }
 
 Gfx::IntRect AbstractTableView::row_rect(int item_index) const
@@ -332,7 +343,7 @@ Gfx::IntRect AbstractTableView::row_rect(int item_index) const
         row_height() };
 }
 
-Gfx::IntPoint AbstractTableView::adjusted_position(const Gfx::IntPoint& position) const
+Gfx::IntPoint AbstractTableView::adjusted_position(Gfx::IntPoint const& position) const
 {
     return position.translated(horizontal_scrollbar().value() - frame_thickness(), vertical_scrollbar().value() - frame_thickness());
 }
@@ -377,6 +388,11 @@ void AbstractTableView::set_column_visible(int column, bool visible)
 void AbstractTableView::set_column_headers_visible(bool visible)
 {
     column_header().set_visible(visible);
+}
+
+bool AbstractTableView::column_headers_visible() const
+{
+    return column_header().is_visible();
 }
 
 void AbstractTableView::did_scroll()
@@ -461,7 +477,7 @@ bool AbstractTableView::is_navigation(GUI::KeyEvent& event)
     }
 }
 
-Gfx::IntPoint AbstractTableView::automatic_scroll_delta_from_position(const Gfx::IntPoint& pos) const
+Gfx::IntPoint AbstractTableView::automatic_scroll_delta_from_position(Gfx::IntPoint const& pos) const
 {
     if (pos.y() > column_header().height() + autoscroll_threshold())
         return AbstractScrollableWidget::automatic_scroll_delta_from_position(pos);

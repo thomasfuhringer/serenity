@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2018-2020, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2021-2022, Sam Atkins <atkinssj@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -12,37 +13,109 @@ namespace Web::CSS {
 Selector::Selector(Vector<CompoundSelector>&& compound_selectors)
     : m_compound_selectors(move(compound_selectors))
 {
+    // FIXME: This assumes that only one pseudo-element is allowed in a selector, and that it appears at the end.
+    //        This is not true in Selectors-4!
+    if (!m_compound_selectors.is_empty()) {
+        for (auto const& simple_selector : m_compound_selectors.last().simple_selectors) {
+            if (simple_selector.type == SimpleSelector::Type::PseudoElement) {
+                m_pseudo_element = simple_selector.pseudo_element();
+                break;
+            }
+        }
+    }
 }
 
-Selector::~Selector()
-{
-}
-
+// https://www.w3.org/TR/selectors-4/#specificity-rules
 u32 Selector::specificity() const
 {
-    unsigned ids = 0;
-    unsigned tag_names = 0;
-    unsigned classes = 0;
+    if (m_specificity.has_value())
+        return *m_specificity;
+
+    constexpr u32 ids_shift = 16;
+    constexpr u32 classes_shift = 8;
+    constexpr u32 tag_names_shift = 0;
+    constexpr u32 ids_mask = 0xff << ids_shift;
+    constexpr u32 classes_mask = 0xff << classes_shift;
+    constexpr u32 tag_names_mask = 0xff << tag_names_shift;
+
+    u32 ids = 0;
+    u32 classes = 0;
+    u32 tag_names = 0;
+
+    auto count_specificity_of_most_complex_selector = [&](auto& selector_list) {
+        u32 max_selector_list_argument_specificity = 0;
+        for (auto const& complex_selector : selector_list) {
+            max_selector_list_argument_specificity = max(max_selector_list_argument_specificity, complex_selector.specificity());
+        }
+
+        u32 child_ids = (max_selector_list_argument_specificity & ids_mask) >> ids_shift;
+        u32 child_classes = (max_selector_list_argument_specificity & classes_mask) >> classes_shift;
+        u32 child_tag_names = (max_selector_list_argument_specificity & tag_names_mask) >> tag_names_shift;
+
+        ids += child_ids;
+        classes += child_classes;
+        tag_names += child_tag_names;
+    };
 
     for (auto& list : m_compound_selectors) {
         for (auto& simple_selector : list.simple_selectors) {
             switch (simple_selector.type) {
             case SimpleSelector::Type::Id:
+                // count the number of ID selectors in the selector (= A)
                 ++ids;
                 break;
             case SimpleSelector::Type::Class:
+            case SimpleSelector::Type::Attribute:
+                // count the number of class selectors, attributes selectors, and pseudo-classes in the selector (= B)
                 ++classes;
                 break;
+            case SimpleSelector::Type::PseudoClass: {
+                auto& pseudo_class = simple_selector.pseudo_class();
+                switch (pseudo_class.type) {
+                case SimpleSelector::PseudoClass::Type::Is:
+                case SimpleSelector::PseudoClass::Type::Not: {
+                    // The specificity of an :is(), :not(), or :has() pseudo-class is replaced by the
+                    // specificity of the most specific complex selector in its selector list argument.
+                    count_specificity_of_most_complex_selector(pseudo_class.argument_selector_list);
+                    break;
+                }
+                case SimpleSelector::PseudoClass::Type::NthChild:
+                case SimpleSelector::PseudoClass::Type::NthLastChild: {
+                    // Analogously, the specificity of an :nth-child() or :nth-last-child() selector
+                    // is the specificity of the pseudo class itself (counting as one pseudo-class selector)
+                    // plus the specificity of the most specific complex selector in its selector list argument (if any).
+                    ++classes;
+                    count_specificity_of_most_complex_selector(pseudo_class.argument_selector_list);
+                    break;
+                }
+                case SimpleSelector::PseudoClass::Type::Where:
+                    // The specificity of a :where() pseudo-class is replaced by zero.
+                    break;
+                default:
+                    ++classes;
+                    break;
+                }
+                break;
+            }
             case SimpleSelector::Type::TagName:
+            case SimpleSelector::Type::PseudoElement:
+                // count the number of type selectors and pseudo-elements in the selector (= C)
                 ++tag_names;
                 break;
-            default:
+            case SimpleSelector::Type::Universal:
+                // ignore the universal selector
                 break;
             }
         }
     }
 
-    return ids * 0x10000 + classes * 0x100 + tag_names;
+    // Due to storage limitations, implementations may have limitations on the size of A, B, or C.
+    // If so, values higher than the limit must be clamped to that limit, and not overflow.
+    m_specificity = (min(ids, 0xff) << ids_shift)
+        + (min(classes, 0xff) << classes_shift)
+        + (min(tag_names, 0xff) << tag_names_shift);
+
+    return *m_specificity;
 }
 
 // https://www.w3.org/TR/cssom/#serialize-a-simple-selector
@@ -56,13 +129,15 @@ String Selector::SimpleSelector::serialize() const
         // FIXME: 2. If the namespace prefix maps to a namespace that is the null namespace (not in a namespace) append "|" (U+007C) to s.
         // 3. If this is a type selector append the serialization of the element name as an identifier to s.
         if (type == Selector::SimpleSelector::Type::TagName) {
-            serialize_an_identifier(s, value);
+            serialize_an_identifier(s, name());
         }
         // 4. If this is a universal selector append "*" (U+002A) to s.
         if (type == Selector::SimpleSelector::Type::Universal)
             s.append('*');
         break;
-    case Selector::SimpleSelector::Type::Attribute:
+    case Selector::SimpleSelector::Type::Attribute: {
+        auto& attribute = this->attribute();
+
         // 1. Append "[" (U+005B) to s.
         s.append('[');
 
@@ -99,25 +174,41 @@ String Selector::SimpleSelector::serialize() const
 
             serialize_a_string(s, attribute.value);
         }
-        // FIXME: 5. If the attribute selector has the case-sensitivity flag present, append " i" (U+0020 U+0069) to s.
+
+        // 5. If the attribute selector has the case-insensitivity flag present, append " i" (U+0020 U+0069) to s.
+        //    If the attribute selector has the case-insensitivity flag present, append " s" (U+0020 U+0073) to s.
+        //    (the line just above is an addition to CSS OM to match Selectors Level 4 last draft)
+        switch (attribute.case_type) {
+        case Selector::SimpleSelector::Attribute::CaseType::CaseInsensitiveMatch:
+            s.append(" i");
+            break;
+        case Selector::SimpleSelector::Attribute::CaseType::CaseSensitiveMatch:
+            s.append(" s");
+            break;
+        default:
+            break;
+        }
 
         // 6. Append "]" (U+005D) to s.
         s.append(']');
         break;
+    }
 
     case Selector::SimpleSelector::Type::Class:
         // Append a "." (U+002E), followed by the serialization of the class name as an identifier to s.
         s.append('.');
-        serialize_an_identifier(s, value);
+        serialize_an_identifier(s, name());
         break;
 
     case Selector::SimpleSelector::Type::Id:
         // Append a "#" (U+0023), followed by the serialization of the ID as an identifier to s.
         s.append('#');
-        serialize_an_identifier(s, value);
+        serialize_an_identifier(s, name());
         break;
 
-    case Selector::SimpleSelector::Type::PseudoClass:
+    case Selector::SimpleSelector::Type::PseudoClass: {
+        auto& pseudo_class = this->pseudo_class();
+
         switch (pseudo_class.type) {
         case Selector::SimpleSelector::PseudoClass::Type::Link:
         case Selector::SimpleSelector::PseudoClass::Type::Visited:
@@ -130,6 +221,7 @@ String Selector::SimpleSelector::serialize() const
         case Selector::SimpleSelector::PseudoClass::Type::Root:
         case Selector::SimpleSelector::PseudoClass::Type::FirstOfType:
         case Selector::SimpleSelector::PseudoClass::Type::LastOfType:
+        case Selector::SimpleSelector::PseudoClass::Type::OnlyOfType:
         case Selector::SimpleSelector::PseudoClass::Type::Disabled:
         case Selector::SimpleSelector::PseudoClass::Type::Enabled:
         case Selector::SimpleSelector::PseudoClass::Type::Checked:
@@ -141,6 +233,8 @@ String Selector::SimpleSelector::serialize() const
         case Selector::SimpleSelector::PseudoClass::Type::NthChild:
         case Selector::SimpleSelector::PseudoClass::Type::NthLastChild:
         case Selector::SimpleSelector::PseudoClass::Type::Not:
+        case Selector::SimpleSelector::PseudoClass::Type::Is:
+        case Selector::SimpleSelector::PseudoClass::Type::Where:
             // Otherwise, append ":" (U+003A), followed by the name of the pseudo-class, followed by "(" (U+0028),
             // followed by the value of the pseudo-class argument(s) determined as per below, followed by ")" (U+0029), to s.
             s.append(':');
@@ -150,15 +244,22 @@ String Selector::SimpleSelector::serialize() const
                 || pseudo_class.type == Selector::SimpleSelector::PseudoClass::Type::NthLastChild) {
                 // The result of serializing the value using the rules to serialize an <an+b> value.
                 s.append(pseudo_class.nth_child_pattern.serialize());
-            } else if (pseudo_class.type == Selector::SimpleSelector::PseudoClass::Type::Not) {
+            } else if (pseudo_class.type == Selector::SimpleSelector::PseudoClass::Type::Not
+                || pseudo_class.type == Selector::SimpleSelector::PseudoClass::Type::Is
+                || pseudo_class.type == Selector::SimpleSelector::PseudoClass::Type::Where) {
                 // The result of serializing the value using the rules for serializing a group of selectors.
-                s.append(serialize_a_group_of_selectors(pseudo_class.not_selector));
+                // NOTE: `:is()` and `:where()` aren't in the spec for this yet, but it should be!
+                s.append(serialize_a_group_of_selectors(pseudo_class.argument_selector_list));
             }
             s.append(')');
             break;
         default:
             VERIFY_NOT_REACHED();
         }
+        break;
+    }
+    case Selector::SimpleSelector::Type::PseudoElement:
+        // Note: Pseudo-elements are dealt with in Selector::serialize()
         break;
     default:
         dbgln("FIXME: Unsupported simple selector serialization for type {}", to_underlying(type));
@@ -178,7 +279,7 @@ String Selector::serialize() const
         // 1. If there is only one simple selector in the compound selectors which is a universal selector, append the result of serializing the universal selector to s.
         if (compound_selector.simple_selectors.size() == 1
             && compound_selector.simple_selectors.first().type == Selector::SimpleSelector::Type::Universal) {
-            s.append(compound_selectors().first().simple_selectors.first().serialize());
+            s.append(compound_selector.simple_selectors.first().serialize());
         }
         // 2. Otherwise, for each simple selector in the compound selectors...
         //    FIXME: ...that is not a universal selector of which the namespace prefix maps to a namespace that is not the default namespace...
@@ -217,7 +318,7 @@ String Selector::serialize() const
             // append "::" followed by the name of the pseudo-element, to s.
             if (compound_selector.simple_selectors.last().type == Selector::SimpleSelector::Type::PseudoElement) {
                 s.append("::");
-                s.append(pseudo_element_name(compound_selector.simple_selectors.last().pseudo_element));
+                s.append(pseudo_element_name(compound_selector.simple_selectors.last().pseudo_element()));
             }
         }
     }
@@ -234,66 +335,20 @@ String serialize_a_group_of_selectors(NonnullRefPtrVector<Selector> const& selec
     return builder.to_string();
 }
 
-constexpr StringView pseudo_element_name(Selector::SimpleSelector::PseudoElement pseudo_element)
+Optional<Selector::PseudoElement> pseudo_element_from_string(StringView name)
 {
-    switch (pseudo_element) {
-    case Selector::SimpleSelector::PseudoElement::Before:
-        return "before"sv;
-    case Selector::SimpleSelector::PseudoElement::After:
-        return "after"sv;
-    case Selector::SimpleSelector::PseudoElement::FirstLine:
-        return "first-line"sv;
-    case Selector::SimpleSelector::PseudoElement::FirstLetter:
-        return "first-letter"sv;
-    case Selector::SimpleSelector::PseudoElement::None:
-        break;
+    if (name.equals_ignoring_case("after")) {
+        return Selector::PseudoElement::After;
+    } else if (name.equals_ignoring_case("before")) {
+        return Selector::PseudoElement::Before;
+    } else if (name.equals_ignoring_case("first-letter")) {
+        return Selector::PseudoElement::FirstLetter;
+    } else if (name.equals_ignoring_case("first-line")) {
+        return Selector::PseudoElement::FirstLine;
+    } else if (name.equals_ignoring_case("marker")) {
+        return Selector::PseudoElement::Marker;
     }
-    VERIFY_NOT_REACHED();
-}
-
-constexpr StringView pseudo_class_name(Selector::SimpleSelector::PseudoClass::Type pseudo_class)
-{
-    switch (pseudo_class) {
-    case Selector::SimpleSelector::PseudoClass::Type::Link:
-        return "link"sv;
-    case Selector::SimpleSelector::PseudoClass::Type::Visited:
-        return "visited"sv;
-    case Selector::SimpleSelector::PseudoClass::Type::Hover:
-        return "hover"sv;
-    case Selector::SimpleSelector::PseudoClass::Type::Focus:
-        return "focus"sv;
-    case Selector::SimpleSelector::PseudoClass::Type::FirstChild:
-        return "first-child"sv;
-    case Selector::SimpleSelector::PseudoClass::Type::LastChild:
-        return "last-child"sv;
-    case Selector::SimpleSelector::PseudoClass::Type::OnlyChild:
-        return "only-child"sv;
-    case Selector::SimpleSelector::PseudoClass::Type::Empty:
-        return "empty"sv;
-    case Selector::SimpleSelector::PseudoClass::Type::Root:
-        return "root"sv;
-    case Selector::SimpleSelector::PseudoClass::Type::FirstOfType:
-        return "first-of-type"sv;
-    case Selector::SimpleSelector::PseudoClass::Type::LastOfType:
-        return "last-of-type"sv;
-    case Selector::SimpleSelector::PseudoClass::Type::Disabled:
-        return "disabled"sv;
-    case Selector::SimpleSelector::PseudoClass::Type::Enabled:
-        return "enabled"sv;
-    case Selector::SimpleSelector::PseudoClass::Type::Checked:
-        return "checked"sv;
-    case Selector::SimpleSelector::PseudoClass::Type::Active:
-        return "active"sv;
-    case Selector::SimpleSelector::PseudoClass::Type::NthChild:
-        return "nth-child"sv;
-    case Selector::SimpleSelector::PseudoClass::Type::NthLastChild:
-        return "nth-last-child"sv;
-    case Selector::SimpleSelector::PseudoClass::Type::Not:
-        return "not"sv;
-    case Selector::SimpleSelector::PseudoClass::Type::None:
-        break;
-    }
-    VERIFY_NOT_REACHED();
+    return {};
 }
 
 }

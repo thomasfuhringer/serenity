@@ -14,16 +14,17 @@ class HTMLIFrameElement final : public BrowsingContextContainer {
 public:
     using WrapperType = Bindings::HTMLIFrameElementWrapper;
 
-    HTMLIFrameElement(DOM::Document&, QualifiedName);
+    HTMLIFrameElement(DOM::Document&, DOM::QualifiedName);
     virtual ~HTMLIFrameElement() override;
 
-    virtual RefPtr<Layout::Node> create_layout_node() override;
+    virtual RefPtr<Layout::Node> create_layout_node(NonnullRefPtr<CSS::StyleProperties>) override;
 
 private:
     virtual void inserted() override;
-    virtual void parse_attribute(const FlyString& name, const String& value) override;
+    virtual void removed_from(Node*) override;
+    virtual void parse_attribute(FlyString const& name, String const& value) override;
 
-    void load_src(const String&);
+    void load_src(String const&);
 };
 
 void run_iframe_load_event_steps(HTML::HTMLIFrameElement&);

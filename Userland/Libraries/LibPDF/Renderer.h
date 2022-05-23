@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2021, Matthew Olsson <mattco@serenityos.org>
+ * Copyright (c) 2021-2022, Matthew Olsson <mattco@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -8,9 +8,10 @@
 
 #include <AK/Format.h>
 #include <LibGfx/AffineTransform.h>
+#include <LibGfx/AntiAliasingPainter.h>
 #include <LibGfx/Bitmap.h>
-#include <LibGfx/Font.h>
-#include <LibGfx/FontDatabase.h>
+#include <LibGfx/Font/Font.h>
+#include <LibGfx/Font/FontDatabase.h>
 #include <LibGfx/Painter.h>
 #include <LibGfx/Path.h>
 #include <LibGfx/Point.h>
@@ -18,6 +19,7 @@
 #include <LibGfx/Size.h>
 #include <LibPDF/ColorSpace.h>
 #include <LibPDF/Document.h>
+#include <LibPDF/Fonts/PDFFont.h>
 #include <LibPDF/Object.h>
 
 namespace PDF {
@@ -51,13 +53,14 @@ enum class TextRenderingMode : u8 {
 };
 
 struct TextState {
-    float character_spacing { 3.0f };
-    float word_spacing { 5.0f };
+    float character_spacing { 0.0f };
+    float word_spacing { 0.0f };
     float horizontal_scaling { 1.0f };
     float leading { 0.0f };
     FlyString font_family { "Liberation Serif" };
     String font_variant { "Regular" };
     float font_size { 12.0f };
+    RefPtr<PDFFont> font;
     TextRenderingMode rendering_mode { TextRenderingMode::Fill };
     float rise { 0.0f };
     bool knockout { true };
@@ -79,25 +82,25 @@ struct GraphicsState {
 
 class Renderer {
 public:
-    static void render(Document&, Page const&, RefPtr<Gfx::Bitmap>);
+    static PDFErrorOr<void> render(Document&, Page const&, RefPtr<Gfx::Bitmap>);
 
 private:
     Renderer(RefPtr<Document>, Page const&, RefPtr<Gfx::Bitmap>);
 
-    void render();
+    PDFErrorOr<void> render();
 
-    void handle_command(Command const&);
+    PDFErrorOr<void> handle_operator(Operator const&);
 #define V(name, snake_name, symbol) \
-    void handle_##snake_name(Vector<Value> const& args);
-    ENUMERATE_COMMANDS(V)
+    PDFErrorOr<void> handle_##snake_name(Vector<Value> const& args);
+    ENUMERATE_OPERATORS(V)
 #undef V
-    void handle_text_next_line_show_string(Vector<Value> const& args);
-    void handle_text_next_line_show_string_set_spacing(Vector<Value> const& args);
+    PDFErrorOr<void> handle_text_next_line_show_string(Vector<Value> const& args);
+    PDFErrorOr<void> handle_text_next_line_show_string_set_spacing(Vector<Value> const& args);
 
-    void set_graphics_state_from_dict(NonnullRefPtr<DictObject>);
-    // shift is the manual advance given in the TJ command array
+    PDFErrorOr<void> set_graphics_state_from_dict(NonnullRefPtr<DictObject>);
+    // shift is the manual advance given in the TJ operator array
     void show_text(String const&, float shift = 0.0f);
-    RefPtr<ColorSpace> get_color_space(Value const&);
+    PDFErrorOr<NonnullRefPtr<ColorSpace>> get_color_space(Value const&);
 
     ALWAYS_INLINE GraphicsState const& state() const { return m_graphics_state_stack.last(); }
     ALWAYS_INLINE GraphicsState& state() { return m_graphics_state_stack.last(); }
@@ -119,6 +122,7 @@ private:
     RefPtr<Gfx::Bitmap> m_bitmap;
     Page const& m_page;
     Gfx::Painter m_painter;
+    Gfx::AntiAliasingPainter m_anti_aliasing_painter;
 
     Gfx::Path m_current_path;
     Vector<GraphicsState> m_graphics_state_stack;

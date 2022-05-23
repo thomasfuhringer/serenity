@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2018-2021, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2022, Dex♪ <dexes.ttp@gmail.com>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -10,56 +11,62 @@
 #include <LibCore/ElapsedTimer.h>
 #include <LibCore/EventLoop.h>
 #include <LibCore/File.h>
-#include <LibProtocol/Request.h>
-#include <LibProtocol/RequestClient.h>
 #include <LibWeb/Loader/ContentFilter.h>
 #include <LibWeb/Loader/LoadRequest.h>
+#include <LibWeb/Loader/ProxyMappings.h>
 #include <LibWeb/Loader/Resource.h>
 #include <LibWeb/Loader/ResourceLoader.h>
 
+#ifdef __serenity__
+#    include <serenity.h>
+#endif
+
 namespace Web {
+
+ResourceLoaderConnectorRequest::ResourceLoaderConnectorRequest() = default;
+
+ResourceLoaderConnectorRequest::~ResourceLoaderConnectorRequest() = default;
+
+ResourceLoaderConnector::ResourceLoaderConnector() = default;
+
+ResourceLoaderConnector::~ResourceLoaderConnector() = default;
+
+static RefPtr<ResourceLoader> s_resource_loader;
+
+void ResourceLoader::initialize(RefPtr<ResourceLoaderConnector> connector)
+{
+    if (connector)
+        s_resource_loader = ResourceLoader::try_create(connector.release_nonnull()).release_value_but_fixme_should_propagate_errors();
+}
 
 ResourceLoader& ResourceLoader::the()
 {
-    static ResourceLoader* s_the;
-    if (!s_the)
-        s_the = &ResourceLoader::construct().leak_ref();
-    return *s_the;
+    if (!s_resource_loader) {
+        dbgln("Web::ResourceLoader was not initialized");
+        VERIFY_NOT_REACHED();
+    }
+    return *s_resource_loader;
 }
 
-ResourceLoader::ResourceLoader()
-    : m_protocol_client(Protocol::RequestClient::construct())
+ErrorOr<NonnullRefPtr<ResourceLoader>> ResourceLoader::try_create(NonnullRefPtr<ResourceLoaderConnector> connector)
+{
+    return adopt_nonnull_ref_or_enomem(new (nothrow) ResourceLoader(move(connector)));
+}
+
+ResourceLoader::ResourceLoader(NonnullRefPtr<ResourceLoaderConnector> connector)
+    : m_connector(move(connector))
     , m_user_agent(default_user_agent)
 {
 }
 
-void ResourceLoader::load_sync(LoadRequest& request, Function<void(ReadonlyBytes, const HashMap<String, String, CaseInsensitiveStringTraits>& response_headers, Optional<u32> status_code)> success_callback, Function<void(const String&, Optional<u32> status_code)> error_callback)
-{
-    Core::EventLoop loop;
-
-    load(
-        request,
-        [&](auto data, auto& response_headers, auto status_code) {
-            success_callback(data, response_headers, status_code);
-            loop.quit(0);
-        },
-        [&](auto& string, auto status_code) {
-            if (error_callback)
-                error_callback(string, status_code);
-            loop.quit(0);
-        });
-
-    loop.exec();
-}
-
 void ResourceLoader::prefetch_dns(AK::URL const& url)
 {
-    m_protocol_client->ensure_connection(url, RequestServer::CacheLevel::ResolveOnly);
+    m_connector->prefetch_dns(url);
 }
 
 void ResourceLoader::preconnect(AK::URL const& url)
 {
-    m_protocol_client->ensure_connection(url, RequestServer::CacheLevel::CreateConnection);
+    m_connector->preconnect(url);
 }
 
 static HashMap<LoadRequest, NonnullRefPtr<Resource>> s_resource_cache;
@@ -107,22 +114,39 @@ static String sanitized_url_for_logging(AK::URL const& url)
     return url.to_string();
 }
 
-void ResourceLoader::load(LoadRequest& request, Function<void(ReadonlyBytes, const HashMap<String, String, CaseInsensitiveStringTraits>& response_headers, Optional<u32> status_code)> success_callback, Function<void(const String&, Optional<u32> status_code)> error_callback)
+static void emit_signpost(String const& message, int id)
+{
+#ifdef __serenity__
+    auto string_id = perf_register_string(message.characters(), message.length());
+    perf_event(PERF_EVENT_SIGNPOST, string_id, id);
+#else
+    (void)message;
+    (void)id;
+#endif
+}
+
+static size_t resource_id = 0;
+
+void ResourceLoader::load(LoadRequest& request, Function<void(ReadonlyBytes, HashMap<String, String, CaseInsensitiveStringTraits> const& response_headers, Optional<u32> status_code)> success_callback, Function<void(String const&, Optional<u32> status_code)> error_callback)
 {
     auto& url = request.url();
     request.start_timer();
-    dbgln("ResourceLoader: Starting load of: \"{}\"", sanitized_url_for_logging(url));
 
-    const auto log_success = [](const auto& request) {
-        auto& url = request.url();
+    auto id = resource_id++;
+    auto url_for_logging = sanitized_url_for_logging(url);
+    emit_signpost(String::formatted("Starting load: {}", url_for_logging), id);
+    dbgln("ResourceLoader: Starting load of: \"{}\"", url_for_logging);
+
+    auto const log_success = [url_for_logging, id](auto const& request) {
         auto load_time_ms = request.load_time().to_milliseconds();
-        dbgln("ResourceLoader: Finished load of: \"{}\", Duration: {}ms", sanitized_url_for_logging(url), load_time_ms);
+        emit_signpost(String::formatted("Finished load: {}", url_for_logging), id);
+        dbgln("ResourceLoader: Finished load of: \"{}\", Duration: {}ms", url_for_logging, load_time_ms);
     };
 
-    const auto log_failure = [](const auto& request, const auto error_message) {
-        auto& url = request.url();
+    auto const log_failure = [url_for_logging, id](auto const& request, auto const error_message) {
         auto load_time_ms = request.load_time().to_milliseconds();
-        dbgln("ResourceLoader: Failed load of: \"{}\", \033[32;1mError: {}\033[0m, Duration: {}ms", sanitized_url_for_logging(url), error_message, load_time_ms);
+        emit_signpost(String::formatted("Failed load: {}", url_for_logging), id);
+        dbgln("ResourceLoader: Failed load of: \"{}\", \033[31;1mError: {}\033[0m, Duration: {}ms", url_for_logging, error_message, load_time_ms);
     };
 
     if (is_port_blocked(url.port_or_default())) {
@@ -140,8 +164,12 @@ void ResourceLoader::load(LoadRequest& request, Function<void(ReadonlyBytes, con
     if (url.protocol() == "about") {
         dbgln_if(SPAM_DEBUG, "Loading about: URL {}", url);
         log_success(request);
-        deferred_invoke([success_callback = move(success_callback)] {
-            success_callback(String::empty().to_byte_buffer(), {}, {});
+
+        HashMap<String, String, CaseInsensitiveStringTraits> response_headers;
+        response_headers.set("Content-Type", "text/html; charset=UTF-8");
+
+        deferred_invoke([success_callback = move(success_callback), response_headers = move(response_headers)] {
+            success_callback(String::empty().to_byte_buffer(), response_headers, {});
         });
         return;
     }
@@ -155,8 +183,8 @@ void ResourceLoader::load(LoadRequest& request, Function<void(ReadonlyBytes, con
         ByteBuffer data;
         if (url.data_payload_is_base64()) {
             auto data_maybe = decode_base64(url.data_payload());
-            if (!data_maybe.has_value()) {
-                auto error_message = "Base64 data contains an invalid character"sv;
+            if (data_maybe.is_error()) {
+                auto error_message = data_maybe.error().string_literal();
                 log_failure(request, error_message);
                 error_callback(error_message, {});
                 return;
@@ -193,15 +221,17 @@ void ResourceLoader::load(LoadRequest& request, Function<void(ReadonlyBytes, con
     }
 
     if (url.protocol() == "http" || url.protocol() == "https" || url.protocol() == "gemini") {
+        auto proxy = ProxyMappings::the().proxy_for_url(url);
+
         HashMap<String, String> headers;
         headers.set("User-Agent", m_user_agent);
-        headers.set("Accept-Encoding", "gzip, deflate");
+        headers.set("Accept-Encoding", "gzip, deflate, br");
 
         for (auto& it : request.headers()) {
             headers.set(it.key, it.value);
         }
 
-        auto protocol_request = protocol_client().start_request(request.method(), url, headers, request.body());
+        auto protocol_request = m_connector->start_request(request.method(), url, headers, request.body(), proxy);
         if (!protocol_request) {
             auto start_request_failure_msg = "Failed to initiate load"sv;
             log_failure(request, start_request_failure_msg);
@@ -214,11 +244,15 @@ void ResourceLoader::load(LoadRequest& request, Function<void(ReadonlyBytes, con
             --m_pending_loads;
             if (on_load_counter_change)
                 on_load_counter_change();
-            if (!success) {
-                auto http_load_failure_msg = "HTTP load failed"sv;
-                log_failure(request, http_load_failure_msg);
+            if (!success || (status_code.has_value() && *status_code >= 400 && *status_code <= 599)) {
+                StringBuilder error_builder;
+                if (status_code.has_value())
+                    error_builder.appendff("Load failed: {}", *status_code);
+                else
+                    error_builder.append("Load failed");
+                log_failure(request, error_builder.string_view());
                 if (error_callback)
-                    error_callback(http_load_failure_msg, {});
+                    error_callback(error_builder.to_string(), {});
                 return;
             }
             log_success(request);
@@ -228,7 +262,7 @@ void ResourceLoader::load(LoadRequest& request, Function<void(ReadonlyBytes, con
             });
         };
         protocol_request->set_should_buffer_all_input(true);
-        protocol_request->on_certificate_requested = []() -> Protocol::Request::CertificateAndKey {
+        protocol_request->on_certificate_requested = []() -> ResourceLoaderConnectorRequest::CertificateAndKey {
             return {};
         };
         ++m_pending_loads;
@@ -243,7 +277,7 @@ void ResourceLoader::load(LoadRequest& request, Function<void(ReadonlyBytes, con
         error_callback(not_implemented_error, {});
 }
 
-void ResourceLoader::load(const AK::URL& url, Function<void(ReadonlyBytes, const HashMap<String, String, CaseInsensitiveStringTraits>& response_headers, Optional<u32> status_code)> success_callback, Function<void(const String&, Optional<u32> status_code)> error_callback)
+void ResourceLoader::load(const AK::URL& url, Function<void(ReadonlyBytes, HashMap<String, String, CaseInsensitiveStringTraits> const& response_headers, Optional<u32> status_code)> success_callback, Function<void(String const&, Optional<u32> status_code)> error_callback)
 {
     LoadRequest request;
     request.set_url(url);
@@ -267,6 +301,12 @@ void ResourceLoader::clear_cache()
 {
     dbgln_if(CACHE_DEBUG, "Clearing {} items from ResourceLoader cache", s_resource_cache.size());
     s_resource_cache.clear();
+}
+
+void ResourceLoader::evict_from_cache(LoadRequest const& request)
+{
+    dbgln_if(CACHE_DEBUG, "Removing resource {} from cache", request.url());
+    s_resource_cache.remove(request);
 }
 
 }

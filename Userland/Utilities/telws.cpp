@@ -9,18 +9,15 @@
 #include <AK/URL.h>
 #include <LibCore/ArgsParser.h>
 #include <LibCore/EventLoop.h>
-#include <LibCore/File.h>
-#include <LibCore/Notifier.h>
+#include <LibCore/System.h>
 #include <LibLine/Editor.h>
+#include <LibMain/Main.h>
 #include <LibProtocol/WebSocket.h>
 #include <LibProtocol/WebSocketClient.h>
 
-int main(int argc, char** argv)
+ErrorOr<int> serenity_main(Main::Arguments arguments)
 {
-    if (pledge("stdio unix inet accept rpath wpath cpath fattr tty sigaction", nullptr) < 0) {
-        perror("pledge");
-        return 1;
-    }
+    TRY(Core::System::pledge("stdio unix inet accept rpath wpath cpath fattr tty sigaction"));
 
     Core::ArgsParser args_parser;
 
@@ -30,7 +27,7 @@ int main(int argc, char** argv)
     args_parser.add_positional_argument(url_string, "URL to connect to", "url", Core::ArgsParser::Required::Yes);
     args_parser.add_option(origin, "URL to use as origin", "origin", 'o', "origin");
 
-    args_parser.parse(argc, argv);
+    args_parser.parse(arguments);
 
     URL url(url_string);
 
@@ -40,9 +37,16 @@ int main(int argc, char** argv)
     }
 
     Core::EventLoop loop;
+
+    auto maybe_websocket_client = Protocol::WebSocketClient::try_create();
+    if (maybe_websocket_client.is_error()) {
+        warnln("Failed to connect to the websocket server: {}\n", maybe_websocket_client.error());
+        return maybe_websocket_client.release_error();
+    }
+    auto websocket_client = maybe_websocket_client.release_value();
+
     RefPtr<Line::Editor> editor = Line::Editor::construct();
     bool should_quit = false;
-    auto websocket_client = Protocol::WebSocketClient::construct();
     auto socket = websocket_client->connect(url, origin);
     if (!socket) {
         warnln("Failed to start socket for '{}'\n", url);
@@ -70,15 +74,9 @@ int main(int argc, char** argv)
         Core::EventLoop::current().quit(0);
     };
 
-    if (pledge("stdio unix inet accept rpath wpath tty sigaction", nullptr) < 0) {
-        perror("pledge");
-        return 1;
-    }
+    TRY(Core::System::pledge("stdio unix inet accept rpath wpath tty sigaction"));
 
-    if (unveil(nullptr, nullptr) < 0) {
-        perror("unveil");
-        return 1;
-    }
+    TRY(Core::System::unveil(nullptr, nullptr));
 
     outln("Started server. Commands :");
     outln("- '<text>' send the text as message");
@@ -113,10 +111,10 @@ int main(int argc, char** argv)
                 }
                 auto base64_data = line.substring(8);
                 auto buffer = decode_base64(base64_data);
-                if (buffer.has_value()) {
-                    socket->send(buffer.value(), false);
+                if (buffer.is_error()) {
+                    outln("Could not send message : {}", buffer.error().string_literal());
                 } else {
-                    outln("Could not send message : Base64 string contains an invalid character.");
+                    socket->send(buffer.value(), false);
                 }
                 continue;
             }

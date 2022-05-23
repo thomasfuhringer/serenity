@@ -50,10 +50,6 @@ void DataViewPrototype::initialize(GlobalObject& global_object)
     define_direct_property(*vm.well_known_symbol_to_string_tag(), js_string(global_object.heap(), vm.names.DataView.as_string()), Attribute::Configurable);
 }
 
-DataViewPrototype::~DataViewPrototype()
-{
-}
-
 // 25.3.1.1 GetViewValue ( view, requestIndex, isLittleEndian, type ), https://tc39.es/ecma262/#sec-getviewvalue
 template<typename T>
 static ThrowCompletionOr<Value> get_view_value(GlobalObject& global_object, Value request_index, Value is_little_endian)
@@ -118,7 +114,9 @@ static ThrowCompletionOr<Value> set_view_value(GlobalObject& global_object, Valu
     if (buffer_index.has_overflow() || end_index.has_overflow() || end_index.value() > view_size)
         return vm.throw_completion<RangeError>(global_object, ErrorType::DataViewOutOfRangeByteOffset, get_index, view_size);
 
-    return buffer->set_value<T>(buffer_index.value(), number_value, false, ArrayBuffer::Order::Unordered, little_endian);
+    buffer->set_value<T>(buffer_index.value(), number_value, false, ArrayBuffer::Order::Unordered, little_endian);
+
+    return js_undefined();
 }
 
 // 25.3.4.5 DataView.prototype.getBigInt64 ( byteOffset [ , littleEndian ] ), https://tc39.es/ecma262/#sec-dataview.prototype.getbigint64

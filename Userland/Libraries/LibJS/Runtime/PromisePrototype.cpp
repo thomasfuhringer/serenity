@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2021, Linus Groh <linusg@serenityos.org>
+ * Copyright (c) 2021-2022, Linus Groh <linusg@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -99,56 +99,60 @@ JS_DEFINE_NATIVE_FUNCTION(PromisePrototype::finally)
     // 6. Else,
     else {
         // a. Let thenFinallyClosure be a new Abstract Closure with parameters (value) that captures onFinally and C and performs the following steps when called:
-        // b. Let thenFinally be ! CreateBuiltinFunction(thenFinallyClosure, 1, "", « »).
-        auto* then_finally_function = NativeFunction::create(global_object, "", [constructor_handle = make_handle(constructor), on_finally_handle = make_handle(&on_finally.as_function())](auto& vm, auto& global_object) -> ThrowCompletionOr<Value> {
+        auto then_finally_closure = [constructor_handle = make_handle(constructor), on_finally_handle = make_handle(&on_finally.as_function())](auto& vm, auto& global_object) -> ThrowCompletionOr<Value> {
             auto& constructor = const_cast<FunctionObject&>(*constructor_handle.cell());
             auto& on_finally = const_cast<FunctionObject&>(*on_finally_handle.cell());
             auto value = vm.argument(0);
 
             // i. Let result be ? Call(onFinally, undefined).
-            auto result = TRY(vm.call(on_finally, js_undefined()));
+            auto result = TRY(call(global_object, on_finally, js_undefined()));
 
             // ii. Let promise be ? PromiseResolve(C, result).
             auto* promise = TRY(promise_resolve(global_object, constructor, result));
 
             // iii. Let returnValue be a new Abstract Closure with no parameters that captures value and performs the following steps when called:
-            // iv. Let valueThunk be ! CreateBuiltinFunction(returnValue, 0, "", « »).
-            auto* value_thunk = NativeFunction::create(global_object, "", [value](auto&, auto&) -> ThrowCompletionOr<Value> {
+            auto return_value = [value_handle = make_handle(value)](auto&, auto&) -> ThrowCompletionOr<Value> {
                 // 1. Return value.
-                return value;
-            });
+                return value_handle.value();
+            };
+
+            // iv. Let valueThunk be CreateBuiltinFunction(returnValue, 0, "", « »).
+            auto* value_thunk = NativeFunction::create(global_object, move(return_value), 0, "");
 
             // v. Return ? Invoke(promise, "then", « valueThunk »).
             return TRY(Value(promise).invoke(global_object, vm.names.then, value_thunk));
-        });
-        then_finally_function->define_direct_property(vm.names.length, Value(1), Attribute::Configurable);
-        then_finally = Value(then_finally_function);
+        };
+
+        // b. Let thenFinally be CreateBuiltinFunction(thenFinallyClosure, 1, "", « »).
+        then_finally = NativeFunction::create(global_object, move(then_finally_closure), 1, "");
 
         // c. Let catchFinallyClosure be a new Abstract Closure with parameters (reason) that captures onFinally and C and performs the following steps when called:
-        // d. Let catchFinally be ! CreateBuiltinFunction(catchFinallyClosure, 1, "", « »).
-        auto* catch_finally_function = NativeFunction::create(global_object, "", [constructor_handle = make_handle(constructor), on_finally_handle = make_handle(&on_finally.as_function())](auto& vm, auto& global_object) -> ThrowCompletionOr<Value> {
+        auto catch_finally_closure = [constructor_handle = make_handle(constructor), on_finally_handle = make_handle(&on_finally.as_function())](auto& vm, auto& global_object) -> ThrowCompletionOr<Value> {
             auto& constructor = const_cast<FunctionObject&>(*constructor_handle.cell());
             auto& on_finally = const_cast<FunctionObject&>(*on_finally_handle.cell());
             auto reason = vm.argument(0);
 
             // i. Let result be ? Call(onFinally, undefined).
-            auto result = TRY(vm.call(on_finally, js_undefined()));
+            auto result = TRY(call(global_object, on_finally, js_undefined()));
 
             // ii. Let promise be ? PromiseResolve(C, result).
             auto* promise = TRY(promise_resolve(global_object, constructor, result));
 
-            // iv. Let thrower be ! CreateBuiltinFunction(throwReason, 0, "", « »).
-            auto* thrower = NativeFunction::create(global_object, "", [reason](auto& vm, auto& global_object) -> ThrowCompletionOr<Value> {
+            // iii. Let throwReason be a new Abstract Closure with no parameters that captures reason and performs the following steps when called:
+            auto throw_reason = [reason_handle = make_handle(reason)](auto&, auto&) -> ThrowCompletionOr<Value> {
                 // 1. Return ThrowCompletion(reason).
-                vm.throw_exception(global_object, reason);
-                return throw_completion(reason);
-            });
+                return throw_completion(reason_handle.value());
+            };
+
+            // iv. Let thrower be CreateBuiltinFunction(throwReason, 0, "", « »).
+            auto* thrower = NativeFunction::create(global_object, move(throw_reason), 0, "");
 
             // v. Return ? Invoke(promise, "then", « thrower »).
             return TRY(Value(promise).invoke(global_object, vm.names.then, thrower));
-        });
-        catch_finally_function->define_direct_property(vm.names.length, Value(1), Attribute::Configurable);
-        catch_finally = Value(catch_finally_function);
+        };
+
+        // d. Let catchFinally be CreateBuiltinFunction(catchFinallyClosure, 1, "", « »).
+        catch_finally = NativeFunction::create(global_object, move(catch_finally_closure), 1, "");
     }
 
     // 7. Return ? Invoke(promise, "then", « thenFinally, catchFinally »).

@@ -14,10 +14,10 @@ class TypedArrayConstructor : public NativeFunction {
     JS_OBJECT(TypedArrayConstructor, NativeFunction);
 
 public:
-    TypedArrayConstructor(const FlyString& name, Object& prototype);
+    TypedArrayConstructor(FlyString const& name, Object& prototype);
     explicit TypedArrayConstructor(GlobalObject&);
     virtual void initialize(GlobalObject&) override;
-    virtual ~TypedArrayConstructor() override;
+    virtual ~TypedArrayConstructor() override = default;
 
     virtual ThrowCompletionOr<Value> call() override;
     virtual ThrowCompletionOr<Object*> construct(FunctionObject& new_target) override;

@@ -1,5 +1,6 @@
 /*
- * Copyright (c) 2021, Tim Flynn <trflynn89@pm.me>
+ * Copyright (c) 2021, Tim Flynn <trflynn89@serenityos.org>
+ * Copyright (c) 2022, Alex Major
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -11,6 +12,7 @@
 #include <LibCore/File.h>
 #include <LibCore/StandardPaths.h>
 #include <LibLine/Editor.h>
+#include <LibMain/Main.h>
 #include <LibSQL/AST/Lexer.h>
 #include <LibSQL/AST/Token.h>
 #include <LibSQL/SQLClient.h>
@@ -71,7 +73,7 @@ public:
             m_editor->set_prompt(prompt_for_level(open_indents));
         };
 
-        m_sql_client = SQL::SQLClient::construct();
+        m_sql_client = SQL::SQLClient::try_create().release_value_but_fixme_should_propagate_errors();
 
         m_sql_client->on_connected = [this](int connection_id, String const& connected_to_database) {
             outln("Connected to \033[33;1m{}\033[0m", connected_to_database);
@@ -225,8 +227,10 @@ private:
             bool is_first_token = true;
             bool is_command = false;
             bool last_token_ended_statement = false;
+            bool tokens_found = false;
 
             for (SQL::AST::Token token = lexer.next(); token.type() != SQL::AST::TokenType::Eof; token = lexer.next()) {
+                tokens_found = true;
                 switch (token.type()) {
                 case SQL::AST::TokenType::ParenOpen:
                     ++m_repl_line_level;
@@ -249,7 +253,8 @@ private:
                 is_first_token = false;
             }
 
-            m_repl_line_level = last_token_ended_statement ? 0 : (m_repl_line_level > 0 ? m_repl_line_level : 1);
+            if (tokens_found)
+                m_repl_line_level = last_token_ended_statement ? 0 : (m_repl_line_level > 0 ? m_repl_line_level : 1);
         } while ((m_repl_line_level > 0) || piece.is_empty());
 
         return piece.to_string();
@@ -267,7 +272,11 @@ private:
         }
 
         if (piece.starts_with('.')) {
-            handle_command(piece);
+            bool ready_for_input = handle_command(piece);
+            if (ready_for_input)
+                m_loop.deferred_invoke([this]() {
+                    read_sql();
+                });
         } else {
             auto statement_id = m_sql_client->sql_statement(m_connection_id, piece);
             m_sql_client->async_statement_execute(statement_id);
@@ -292,16 +301,20 @@ private:
         return prompt_builder.build();
     }
 
-    void handle_command(StringView command)
+    bool handle_command(StringView command)
     {
+        bool ready_for_input = true;
         if (command == ".exit" || command == ".quit") {
             m_keep_running = false;
+            ready_for_input = false;
         } else if (command.starts_with(".connect ")) {
             auto parts = command.split_view(' ');
-            if (parts.size() == 2)
+            if (parts.size() == 2) {
                 connect(parts[1]);
-            else
+                ready_for_input = false;
+            } else {
                 outln("\033[33;1mUsage: .connect <database name>\033[0m");
+            }
         } else if (command.starts_with(".read ")) {
             if (!m_input_file) {
                 auto parts = command.split_view(' ');
@@ -313,16 +326,14 @@ private:
             } else {
                 outln("\033[33;1mCannot recursively read sql files\033[0m");
             }
-            m_loop.deferred_invoke([this]() {
-                read_sql();
-            });
         } else {
             outln("\033[33;1mUnrecognized command:\033[0m {}", command);
         }
+        return ready_for_input;
     }
 };
 
-int main(int argc, char** argv)
+ErrorOr<int> serenity_main(Main::Arguments arguments)
 {
     String database_name(getlogin());
     String file_to_source;
@@ -336,7 +347,7 @@ int main(int argc, char** argv)
     args_parser.add_option(file_to_read, "File to read", "read", 'r', "file");
     args_parser.add_option(file_to_source, "File to source", "source", 's', "file");
     args_parser.add_option(suppress_sqlrc, "Don't read ~/.sqlrc", "no-sqlrc", 'n');
-    args_parser.parse(argc, argv);
+    args_parser.parse(arguments);
 
     SQLRepl repl(database_name);
 

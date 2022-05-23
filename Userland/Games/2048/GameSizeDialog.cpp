@@ -6,7 +6,7 @@
 
 #include "GameSizeDialog.h"
 #include "Game.h"
-#include <AK/Math.h>
+#include <AK/IntegralMath.h>
 #include <LibGUI/BoxLayout.h>
 #include <LibGUI/Button.h>
 #include <LibGUI/CheckBox.h>
@@ -16,7 +16,7 @@
 GameSizeDialog::GameSizeDialog(GUI::Window* parent, size_t board_size, size_t target, bool evil_ai)
     : GUI::Dialog(parent)
     , m_board_size(board_size)
-    , m_target_tile_power(AK::log2(target))
+    , m_target_tile_power(AK::log2(target) - 1)
     , m_evil_ai(evil_ai)
 {
     set_rect({ 0, 0, 250, 150 });
@@ -74,10 +74,10 @@ GameSizeDialog::GameSizeDialog(GUI::Window* parent, size_t board_size, size_t ta
     button_layout.set_spacing(10);
 
     buttonbox.add<GUI::Button>("Cancel").on_click = [this](auto) {
-        done(Dialog::ExecCancel);
+        done(ExecResult::Cancel);
     };
 
     buttonbox.add<GUI::Button>("OK").on_click = [this](auto) {
-        done(Dialog::ExecOK);
+        done(ExecResult::OK);
     };
 }

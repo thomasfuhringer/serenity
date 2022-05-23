@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2021, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2022, the SerenityOS developers.
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -10,10 +11,14 @@
 #include <LibGUI/BoxLayout.h>
 #include <LibGUI/HeaderView.h>
 #include <LibGUI/Painter.h>
-#include <LibGUI/SortingProxyModel.h>
 #include <LibGUI/TableView.h>
-#include <LibGfx/FontDatabase.h>
+#include <LibGUI/Widget.h>
+#include <LibGfx/Font/FontDatabase.h>
 #include <LibGfx/Palette.h>
+
+REGISTER_WIDGET(SystemMonitor, ProcessStateWidget)
+
+namespace SystemMonitor {
 
 class ProcessStateModel final
     : public GUI::Model
@@ -72,8 +77,15 @@ public:
                 break;
             }
         }
-        invalidate();
+        did_update(GUI::Model::UpdateFlag::DontInvalidateIndices);
     }
+
+    void set_pid(pid_t pid)
+    {
+        m_pid = pid;
+        refresh();
+    }
+    pid_t pid() const { return m_pid; }
 
 private:
     ProcessModel& m_target;
@@ -81,16 +93,20 @@ private:
     pid_t m_pid { -1 };
 };
 
-ProcessStateWidget::ProcessStateWidget(pid_t pid)
+ProcessStateWidget::ProcessStateWidget()
 {
     set_layout<GUI::VerticalBoxLayout>();
     layout()->set_margins(4);
     m_table_view = add<GUI::TableView>();
-    m_table_view->set_model(adopt_ref(*new ProcessStateModel(ProcessModel::the(), pid)));
+    m_table_view->set_model(adopt_ref(*new ProcessStateModel(ProcessModel::the(), 0)));
     m_table_view->column_header().set_visible(false);
     m_table_view->column_header().set_section_size(0, 90);
 }
 
-ProcessStateWidget::~ProcessStateWidget()
+void ProcessStateWidget::set_pid(pid_t pid)
 {
+    static_cast<ProcessStateModel*>(m_table_view->model())->set_pid(pid);
+    update();
+}
+
 }

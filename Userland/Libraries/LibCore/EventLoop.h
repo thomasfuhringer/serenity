@@ -1,5 +1,7 @@
 /*
  * Copyright (c) 2018-2020, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2022, kleines Filmröllchen <malu.bertsch@gmail.com>
+ * Copyright (c) 2022, the SerenityOS developers.
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -18,6 +20,7 @@
 #include <LibCore/DeferredInvocationContext.h>
 #include <LibCore/Event.h>
 #include <LibCore/Forward.h>
+#include <LibThreading/MutexProtected.h>
 #include <sys/time.h>
 #include <sys/types.h>
 
@@ -30,8 +33,14 @@ public:
         Yes,
     };
 
+    enum class ShouldWake {
+        No,
+        Yes
+    };
+
     explicit EventLoop(MakeInspectable = MakeInspectable::No);
     ~EventLoop();
+    static void initialize_wake_pipes();
 
     int exec();
 
@@ -40,15 +49,14 @@ public:
         PollForEvents,
     };
 
-    // processe events, generally called by exec() in a loop.
+    // process events, generally called by exec() in a loop.
     // this should really only be used for integrating with other event loops
-    void pump(WaitMode = WaitMode::WaitForEvents);
+    size_t pump(WaitMode = WaitMode::WaitForEvents);
 
     void spin_until(Function<bool()>);
 
-    void post_event(Object& receiver, NonnullOwnPtr<Event>&&);
+    void post_event(Object& receiver, NonnullOwnPtr<Event>&&, ShouldWake = ShouldWake::No);
 
-    static EventLoop& main();
     static EventLoop& current();
 
     bool was_exit_requested() const { return m_exit_requested; }
@@ -67,7 +75,8 @@ public:
         m_queued_events.extend(move(other.m_queued_events));
     }
 
-    static void wake();
+    static void wake_current();
+    void wake();
 
     static int register_signal(int signo, Function<void(int)> handler);
     static void unregister_signal(int handler_id);
@@ -99,7 +108,7 @@ private:
     public:
         QueuedEvent(Object& receiver, NonnullOwnPtr<Event>);
         QueuedEvent(QueuedEvent&&);
-        ~QueuedEvent();
+        ~QueuedEvent() = default;
 
         WeakPtr<Object> receiver;
         NonnullOwnPtr<Event> event;
@@ -111,7 +120,11 @@ private:
     bool m_exit_requested { false };
     int m_exit_code { 0 };
 
-    static int s_wake_pipe_fds[2];
+    static thread_local int s_wake_pipe_fds[2];
+    static thread_local bool s_wake_pipe_initialized;
+
+    // The wake pipe of this event loop needs to be accessible from other threads.
+    int (*m_wake_pipe_fds)[2];
 
     struct Private;
     NonnullOwnPtr<Private> m_private;

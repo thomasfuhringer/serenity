@@ -9,12 +9,12 @@
 #include <LibGUI/SeparatorWidget.h>
 #include <LibGUI/Widget.h>
 #include <LibGUI/Wizards/WizardPage.h>
-#include <LibGfx/FontDatabase.h>
+#include <LibGfx/Font/FontDatabase.h>
 #include <LibGfx/SystemTheme.h>
 
 namespace GUI {
 
-WizardPage::WizardPage(const String& title_text, const String& subtitle_text)
+WizardPage::WizardPage(String const& title_text, String const& subtitle_text)
     : AbstractWizardPage()
 {
     set_layout<VerticalBoxLayout>();
@@ -44,12 +44,12 @@ WizardPage::WizardPage(const String& title_text, const String& subtitle_text)
     m_body_widget->layout()->set_margins(20);
 }
 
-void WizardPage::set_page_title(const String& text)
+void WizardPage::set_page_title(String const& text)
 {
     m_title_label->set_text(text);
 }
 
-void WizardPage::set_page_subtitle(const String& text)
+void WizardPage::set_page_subtitle(String const& text)
 {
     m_subtitle_label->set_text(text);
 }

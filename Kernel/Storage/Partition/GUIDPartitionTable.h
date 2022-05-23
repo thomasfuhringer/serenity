@@ -1,11 +1,12 @@
 /*
- * Copyright (c) 2020, Liav A. <liavalb@hotmail.co.il>
+ * Copyright (c) 2020-2022, Liav A. <liavalb@hotmail.co.il>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #pragma once
 
+#include <AK/Error.h>
 #include <AK/RefPtr.h>
 #include <AK/Result.h>
 #include <AK/Types.h>
@@ -20,14 +21,14 @@ public:
     virtual ~GUIDPartitionTable() = default;
     ;
 
-    static Result<NonnullOwnPtr<GUIDPartitionTable>, PartitionTable::Error> try_to_initialize(const StorageDevice&);
-    explicit GUIDPartitionTable(const StorageDevice&);
+    static ErrorOr<NonnullOwnPtr<GUIDPartitionTable>> try_to_initialize(StorageDevice const&);
+    explicit GUIDPartitionTable(StorageDevice const&);
 
     virtual bool is_valid() const override { return m_valid; };
 
 private:
     bool is_unused_entry(Array<u8, 16>) const;
-    const GUIDPartitionHeader& header() const;
+    GUIDPartitionHeader const& header() const;
     bool initialize();
 
     bool m_valid { true };

@@ -7,6 +7,7 @@
 #include <AK/ByteBuffer.h>
 #include <AK/FlyString.h>
 #include <AK/Format.h>
+#include <AK/Function.h>
 #include <AK/Memory.h>
 #include <AK/StdLibExtras.h>
 #include <AK/String.h>
@@ -15,56 +16,29 @@
 
 namespace AK {
 
-bool String::operator==(const FlyString& fly_string) const
+bool String::operator==(FlyString const& fly_string) const
 {
-    return *this == String(fly_string.impl());
+    return m_impl == fly_string.impl() || view() == fly_string.view();
 }
 
-bool String::operator==(const String& other) const
+bool String::operator==(String const& other) const
 {
-    if (!m_impl)
-        return !other.m_impl;
-
-    if (!other.m_impl)
-        return false;
-
-    return *m_impl == *other.m_impl;
+    return m_impl == other.impl() || view() == other.view();
 }
 
 bool String::operator==(StringView other) const
 {
-    if (!m_impl)
-        return !other.m_characters;
-
-    if (!other.m_characters)
-        return false;
-
-    if (length() != other.length())
-        return false;
-
-    return !memcmp(characters(), other.characters_without_null_termination(), length());
+    return view() == other;
 }
 
-bool String::operator<(const String& other) const
+bool String::operator<(String const& other) const
 {
-    if (!m_impl)
-        return other.m_impl;
-
-    if (!other.m_impl)
-        return false;
-
-    return strcmp(characters(), other.characters()) < 0;
+    return view() < other.view();
 }
 
-bool String::operator>(const String& other) const
+bool String::operator>(String const& other) const
 {
-    if (!m_impl)
-        return other.m_impl;
-
-    if (!other.m_impl)
-        return false;
-
-    return strcmp(characters(), other.characters()) > 0;
+    return view() > other.view();
 }
 
 bool String::copy_characters_to_buffer(char* buffer, size_t buffer_size) const
@@ -150,7 +124,7 @@ Vector<String> String::split_limit(char separator, size_t limit, bool keep_empty
     return v;
 }
 
-Vector<StringView> String::split_view(const char separator, bool keep_empty) const
+Vector<StringView> String::split_view(Function<bool(char)> separator, bool keep_empty) const
 {
     if (is_empty())
         return {};
@@ -159,7 +133,7 @@ Vector<StringView> String::split_view(const char separator, bool keep_empty) con
     size_t substart = 0;
     for (size_t i = 0; i < length(); ++i) {
         char ch = characters()[i];
-        if (ch == separator) {
+        if (separator(ch)) {
             size_t sublen = i - substart;
             if (sublen != 0 || keep_empty)
                 v.append(substring_view(substart, sublen));
@@ -172,12 +146,17 @@ Vector<StringView> String::split_view(const char separator, bool keep_empty) con
     return v;
 }
 
+Vector<StringView> String::split_view(char const separator, bool keep_empty) const
+{
+    return split_view([separator](char ch) { return ch == separator; }, keep_empty);
+}
+
 ByteBuffer String::to_byte_buffer() const
 {
     if (!m_impl)
         return {};
     // FIXME: Handle OOM failure.
-    return ByteBuffer::copy(bytes()).release_value();
+    return ByteBuffer::copy(bytes()).release_value_but_fixme_should_propagate_errors();
 }
 
 template<typename T>
@@ -200,7 +179,8 @@ Optional<T> String::to_uint(TrimWhitespace trim_whitespace) const
 template Optional<u8> String::to_uint(TrimWhitespace) const;
 template Optional<u16> String::to_uint(TrimWhitespace) const;
 template Optional<u32> String::to_uint(TrimWhitespace) const;
-template Optional<u64> String::to_uint(TrimWhitespace) const;
+template Optional<unsigned long> String::to_uint(TrimWhitespace) const;
+template Optional<unsigned long long> String::to_uint(TrimWhitespace) const;
 
 bool String::starts_with(StringView str, CaseSensitivity case_sensitivity) const
 {
@@ -379,7 +359,7 @@ String escape_html_entities(StringView html)
     return builder.to_string();
 }
 
-String::String(const FlyString& string)
+String::String(FlyString const& string)
     : m_impl(string.impl())
 {
 }
@@ -408,45 +388,29 @@ String String::to_titlecase() const
     return StringUtils::to_titlecase(*this);
 }
 
-bool operator<(const char* characters, const String& string)
+bool operator<(char const* characters, String const& string)
 {
-    if (!characters)
-        return !string.is_null();
-
-    if (string.is_null())
-        return false;
-
-    return __builtin_strcmp(characters, string.characters()) < 0;
+    return string.view() > characters;
 }
 
-bool operator>=(const char* characters, const String& string)
+bool operator>=(char const* characters, String const& string)
 {
-    return !(characters < string);
+    return string.view() <= characters;
 }
 
-bool operator>(const char* characters, const String& string)
+bool operator>(char const* characters, String const& string)
 {
-    if (!characters)
-        return !string.is_null();
-
-    if (string.is_null())
-        return false;
-
-    return __builtin_strcmp(characters, string.characters()) > 0;
+    return string.view() < characters;
 }
 
-bool operator<=(const char* characters, const String& string)
+bool operator<=(char const* characters, String const& string)
 {
-    return !(characters > string);
+    return string.view() >= characters;
 }
 
-bool String::operator==(const char* cstring) const
+bool String::operator==(char const* cstring) const
 {
-    if (is_null())
-        return !cstring;
-    if (!cstring)
-        return false;
-    return !__builtin_strcmp(characters(), cstring);
+    return view() == cstring;
 }
 
 InputStream& operator>>(InputStream& stream, String& string)

@@ -19,20 +19,11 @@ WeakSet::WeakSet(Object& prototype)
 {
 }
 
-WeakSet::~WeakSet()
-{
-}
-
 void WeakSet::remove_dead_cells(Badge<Heap>)
 {
-    // FIXME: Do this in a single pass.
-    Vector<Cell*> to_remove;
-    for (auto* cell : m_values) {
-        if (cell->state() != Cell::State::Live)
-            to_remove.append(cell);
-    }
-    for (auto* cell : to_remove)
-        m_values.remove(cell);
+    m_values.remove_all_matching([](Cell* cell) {
+        return cell->state() != Cell::State::Live;
+    });
 }
 
 }

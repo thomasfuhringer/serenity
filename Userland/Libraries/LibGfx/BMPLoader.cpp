@@ -4,6 +4,7 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <AK/BuiltinWrappers.h>
 #include <AK/Debug.h>
 #include <AK/Function.h>
 #include <AK/String.h>
@@ -129,7 +130,7 @@ struct BMPLoadingContext {
     };
     State state { State::NotDecoded };
 
-    const u8* file_bytes { nullptr };
+    u8 const* file_bytes { nullptr };
     size_t file_size { 0 };
     u32 data_offset { 0 };
 
@@ -166,7 +167,7 @@ struct BMPLoadingContext {
 
 class InputStreamer {
 public:
-    InputStreamer(const u8* data, size_t size)
+    InputStreamer(u8 const* data, size_t size)
         : m_data_ptr(data)
         , m_size_remaining(size)
     {
@@ -216,7 +217,7 @@ public:
     size_t remaining() const { return m_size_remaining; }
 
 private:
-    const u8* m_data_ptr { nullptr };
+    u8 const* m_data_ptr { nullptr };
     size_t m_size_remaining { 0 };
 };
 
@@ -326,9 +327,9 @@ static void populate_dib_mask_info_if_needed(BMPLoadingContext& context)
             mask_sizes.append(0);
             continue;
         }
-        int trailing_zeros = count_trailing_zeroes_32(mask);
+        int trailing_zeros = count_trailing_zeroes(mask);
         // If mask is exactly `0xFFFFFFFF`, then we might try to count the trailing zeros of 0x00000000 here, so we need the safe version:
-        int size = count_trailing_zeroes_32_safe(~(mask >> trailing_zeros));
+        int size = count_trailing_zeroes_safe(~(mask >> trailing_zeros));
         if (size > 8) {
             // Drop lowest bits if mask is longer than 8 bits.
             trailing_zeros += size - 8;
@@ -926,7 +927,7 @@ static bool uncompress_bmp_rle_data(BMPLoadingContext& context, ByteBuffer& buff
         return false;
     }
     auto buffer_result = ByteBuffer::create_zeroed(buffer_size);
-    if (!buffer_result.has_value()) {
+    if (buffer_result.is_error()) {
         dbgln("Not enough memory for buffer allocation");
         return false;
     }
@@ -1299,16 +1300,14 @@ static bool decode_bmp_pixel_data(BMPLoadingContext& context)
     return true;
 }
 
-BMPImageDecoderPlugin::BMPImageDecoderPlugin(const u8* data, size_t data_size)
+BMPImageDecoderPlugin::BMPImageDecoderPlugin(u8 const* data, size_t data_size)
 {
     m_context = make<BMPLoadingContext>();
     m_context->file_bytes = data;
     m_context->file_size = data_size;
 }
 
-BMPImageDecoderPlugin::~BMPImageDecoderPlugin()
-{
-}
+BMPImageDecoderPlugin::~BMPImageDecoderPlugin() = default;
 
 IntSize BMPImageDecoderPlugin::size()
 {

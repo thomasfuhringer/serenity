@@ -17,7 +17,7 @@ struct QueryParam {
     String name;
     String value;
 };
-String url_encode(const Vector<QueryParam>&, AK::URL::PercentEncodeSet);
+String url_encode(Vector<QueryParam> const&, AK::URL::PercentEncodeSet);
 Vector<QueryParam> url_decode(StringView);
 
 class URLSearchParams : public Bindings::Wrappable
@@ -30,7 +30,7 @@ public:
         return adopt_ref(*new URLSearchParams(move(list)));
     }
 
-    static DOM::ExceptionOr<NonnullRefPtr<URLSearchParams>> create_with_global_object(Bindings::WindowObject&, const String& init);
+    static DOM::ExceptionOr<NonnullRefPtr<URLSearchParams>> create_with_global_object(Bindings::WindowObject&, Variant<Vector<Vector<String>>, OrderedHashMap<String, String>, String> const& init);
 
     void append(String const& name, String const& value);
     void delete_(String const& name);

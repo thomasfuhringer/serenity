@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2020-2021, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2022, the SerenityOS developers.
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -11,15 +12,11 @@
 
 namespace GUI {
 
-DropEvent::DropEvent(const Gfx::IntPoint& position, const String& text, NonnullRefPtr<Core::MimeData> mime_data)
+DropEvent::DropEvent(Gfx::IntPoint const& position, String const& text, NonnullRefPtr<Core::MimeData> mime_data)
     : Event(Event::Drop)
     , m_position(position)
     , m_text(text)
     , m_mime_data(move(mime_data))
-{
-}
-
-DropEvent::~DropEvent()
 {
 }
 
@@ -53,10 +50,6 @@ String KeyEvent::to_string() const
 ActionEvent::ActionEvent(Type type, Action& action)
     : Event(type)
     , m_action(action)
-{
-}
-
-ActionEvent::~ActionEvent()
 {
 }
 

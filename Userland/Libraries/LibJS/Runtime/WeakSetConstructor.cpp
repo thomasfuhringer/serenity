@@ -29,10 +29,6 @@ void WeakSetConstructor::initialize(GlobalObject& global_object)
     define_direct_property(vm.names.length, Value(0), Attribute::Configurable);
 }
 
-WeakSetConstructor::~WeakSetConstructor()
-{
-}
-
 // 24.4.1.1 WeakSet ( [ iterable ] ), https://tc39.es/ecma262/#sec-weakset-iterable
 ThrowCompletionOr<Value> WeakSetConstructor::call()
 {
@@ -55,8 +51,8 @@ ThrowCompletionOr<Object*> WeakSetConstructor::construct(FunctionObject& new_tar
     if (!adder.is_function())
         return vm.throw_completion<TypeError>(global_object, ErrorType::NotAFunction, "'add' property of WeakSet");
 
-    TRY(get_iterator_values(global_object, vm.argument(0), [&](Value iterator_value) -> Optional<Completion> {
-        TRY(vm.call(adder.as_function(), Value(weak_set), iterator_value));
+    (void)TRY(get_iterator_values(global_object, vm.argument(0), [&](Value iterator_value) -> Optional<Completion> {
+        TRY(JS::call(global_object, adder.as_function(), weak_set, iterator_value));
         return {};
     }));
 

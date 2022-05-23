@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2021, Tim Flynn <trflynn89@pm.me>
+ * Copyright (c) 2021, Tim Flynn <trflynn89@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -7,72 +7,110 @@
 #pragma once
 
 #include <AK/Format.h>
+#include <AK/HashFunctions.h>
 #include <AK/HashMap.h>
+#include <AK/JsonValue.h>
 #include <AK/LexicalPath.h>
 #include <AK/Optional.h>
 #include <AK/QuickSort.h>
 #include <AK/SourceGenerator.h>
 #include <AK/String.h>
+#include <AK/StringBuilder.h>
 #include <AK/StringView.h>
+#include <AK/Traits.h>
 #include <AK/Vector.h>
 #include <LibCore/DirIterator.h>
 #include <LibCore/File.h>
+#include <LibCore/Stream.h>
 #include <LibUnicode/Locale.h>
 
-template<typename StringIndexType>
-class UniqueStringStorage {
-public:
-    StringIndexType ensure(String string)
+template<class T>
+inline constexpr bool StorageTypeIsList = false;
+
+template<class T>
+inline constexpr bool StorageTypeIsList<Vector<T>> = true;
+
+template<typename T>
+concept IntegralOrEnum = Integral<T> || Enum<T>;
+
+template<IntegralOrEnum T>
+struct AK::Traits<Vector<T>> : public GenericTraits<Vector<T>> {
+    static unsigned hash(Vector<T> const& list)
     {
-        // We maintain a set of unique strings in two structures: a vector which owns the unique string,
-        // and a hash map which maps that string to its index in the vector. The vector is to ensure the
-        // strings are generated in an easily known order, and the map is to allow quickly deciding if a
-        // string is actually unique (otherwise, we'd have to linear-search the vector for each string).
+        auto hash = int_hash(static_cast<u32>(list.size()));
+
+        for (auto value : list) {
+            if constexpr (Enum<T>)
+                hash = pair_int_hash(hash, to_underlying(value));
+            else
+                hash = pair_int_hash(hash, value);
+        }
+
+        return hash;
+    }
+};
+
+template<typename StorageType, typename IndexType>
+class UniqueStorage {
+public:
+    IndexType ensure(StorageType value)
+    {
+        // We maintain a set of unique values in two structures: a vector which stores the values in
+        // the order they are added, and a hash map which maps that value to its index in the vector.
+        // The vector is to ensure the values are generated in an easily known order, and the map is
+        // to allow quickly deciding if a value is actually unique (otherwise, we'd have to linearly
+        // search the vector for each value).
         //
-        // Also note that index 0 will be reserved for the empty string, so the index returned from this
-        // method is actually the real index in the vector + 1.
-        if (auto index = m_unique_string_indices.get(string); index.has_value())
+        // Also note that index 0 will be reserved for the default-initialized value, so the index
+        // returned from this method is actually the real index in the vector + 1.
+        if (auto index = m_storage_indices.get(value); index.has_value())
             return *index;
 
-        m_unique_strings.append(move(string));
-        size_t index = m_unique_strings.size();
+        m_storage.append(move(value));
+        size_t index = m_storage.size();
 
-        VERIFY(index < NumericLimits<StringIndexType>::max());
+        VERIFY(index < NumericLimits<IndexType>::max());
 
-        auto string_index = static_cast<StringIndexType>(index);
-        m_unique_string_indices.set(m_unique_strings.last(), string_index);
+        auto storage_index = static_cast<IndexType>(index);
+        m_storage_indices.set(m_storage.last(), storage_index);
 
-        return string_index;
+        return storage_index;
     }
 
-    StringView get(StringIndexType index) const
+    StorageType const& get(IndexType index) const
     {
-        if (index == 0)
-            return {};
+        if (index == 0) {
+            static StorageType empty {};
+            return empty;
+        }
 
-        VERIFY(index <= m_unique_strings.size());
-        return m_unique_strings.at(index - 1);
+        VERIFY(index <= m_storage.size());
+        return m_storage.at(index - 1);
     }
 
-    void generate(SourceGenerator& generator)
+    void generate(SourceGenerator& generator, StringView type, StringView name, size_t max_values_per_row) requires(!StorageTypeIsList<StorageType>)
     {
-        generator.set("size"sv, String::number(m_unique_strings.size()));
+        generator.set("type"sv, type);
+        generator.set("name"sv, name);
+        generator.set("size"sv, String::number(m_storage.size()));
 
         generator.append(R"~~~(
-static constexpr Array<StringView, @size@ + 1> s_string_list { {
+static constexpr Array<@type@, @size@ + 1> @name@ { {
     {})~~~");
 
-        constexpr size_t max_strings_per_row = 40;
-        size_t strings_in_current_row = 1;
+        size_t values_in_current_row = 1;
 
-        for (auto const& string : m_unique_strings) {
-            if (strings_in_current_row++ > 0)
+        for (auto const& value : m_storage) {
+            if (values_in_current_row++ > 0)
                 generator.append(", ");
 
-            generator.append(String::formatted("\"{}\"sv", string));
+            if constexpr (IsSame<StorageType, String>)
+                generator.append(String::formatted("\"{}\"sv", value));
+            else
+                generator.append(String::formatted("{}", value));
 
-            if (strings_in_current_row == max_strings_per_row) {
-                strings_in_current_row = 0;
+            if (values_in_current_row == max_values_per_row) {
+                values_in_current_row = 0;
                 generator.append(",\n    ");
             }
         }
@@ -82,9 +120,75 @@ static constexpr Array<StringView, @size@ + 1> s_string_list { {
 )~~~");
     }
 
+    void generate(SourceGenerator& generator, StringView type, StringView name) requires(StorageTypeIsList<StorageType>)
+    {
+        generator.set("type"sv, type);
+        generator.set("name"sv, name);
+
+        for (size_t i = 0; i < m_storage.size(); ++i) {
+            auto const& list = m_storage[i];
+
+            generator.set("index"sv, String::number(i));
+            generator.set("size"sv, String::number(list.size()));
+
+            generator.append(R"~~~(
+static constexpr Array<@type@, @size@> @name@@index@ { {)~~~");
+
+            bool first = true;
+            for (auto const& value : list) {
+                generator.append(first ? " " : ", ");
+                generator.append(String::formatted("{}", value));
+                first = false;
+            }
+
+            generator.append(" } };");
+        }
+
+        generator.set("size"sv, String::number(m_storage.size()));
+
+        generator.append(R"~~~(
+
+static constexpr Array<Span<@type@ const>, @size@ + 1> @name@ { {
+    {})~~~");
+
+        constexpr size_t max_values_per_row = 10;
+        size_t values_in_current_row = 1;
+
+        for (size_t i = 0; i < m_storage.size(); ++i) {
+            if (values_in_current_row++ > 0)
+                generator.append(", ");
+
+            generator.set("index"sv, String::number(i));
+            generator.append("@name@@index@.span()");
+
+            if (values_in_current_row == max_values_per_row) {
+                values_in_current_row = 0;
+                generator.append(",\n    ");
+            }
+        }
+
+        generator.append(R"~~~(
+} };
+)~~~");
+    }
+
+    // clang-format off
+    // clang-format gets confused by the requires() clauses above, and formats this section very weirdly.
 private:
-    Vector<String> m_unique_strings;
-    HashMap<StringView, StringIndexType> m_unique_string_indices;
+    Vector<StorageType> m_storage;
+    HashMap<StorageType, IndexType> m_storage_indices;
+    // clang-format on
+};
+
+template<typename StringIndexType>
+class UniqueStringStorage : public UniqueStorage<String, StringIndexType> {
+    using Base = UniqueStorage<String, StringIndexType>;
+
+public:
+    void generate(SourceGenerator& generator)
+    {
+        Base::generate(generator, "StringView"sv, "s_string_list"sv, 40);
+    }
 };
 
 struct Alias {
@@ -136,6 +240,31 @@ struct CanonicalLanguageID {
     StringIndexType region { 0 };
     Vector<StringIndexType> variants {};
 };
+
+inline ErrorOr<NonnullOwnPtr<Core::Stream::BufferedFile>> open_file(StringView path, Core::Stream::OpenMode mode)
+{
+    if (path.is_empty())
+        return Error::from_string_literal("Provided path is empty, please provide all command line options"sv);
+
+    auto file = TRY(Core::Stream::File::open(path, mode));
+    return Core::Stream::BufferedFile::create(move(file));
+}
+
+inline ErrorOr<JsonValue> read_json_file(StringView path)
+{
+    auto file = TRY(open_file(path, Core::Stream::OpenMode::Read));
+
+    StringBuilder builder;
+    Array<u8, 4096> buffer;
+
+    // FIXME: When Core::Stream supports reading an entire file, use that.
+    while (TRY(file->can_read_line())) {
+        auto bytes_read = TRY(file->read(buffer));
+        TRY(builder.try_append(StringView { bytes_read }));
+    }
+
+    return JsonValue::from_string(builder.build());
+}
 
 inline ErrorOr<Core::DirIterator> path_to_dir_iterator(String path, StringView subpath = "main"sv)
 {
@@ -192,15 +321,21 @@ struct HashValueComparator
 template<typename ValueType>
 using HashValueMap = HashMap<unsigned, ValueType>;
 
+struct ValueFromStringOptions {
+    Optional<StringView> return_type {};
+    StringView return_format { "{}"sv };
+    CaseSensitivity sensitivity { CaseSensitivity::CaseSensitive };
+};
+
 template<typename ValueType>
-void generate_value_from_string(SourceGenerator& generator, StringView method_name_format, StringView value_type, StringView value_name, HashValueMap<ValueType> hashes, Optional<StringView> return_type = {}, StringView return_format = "{}"sv)
+void generate_value_from_string(SourceGenerator& generator, StringView method_name_format, StringView value_type, StringView value_name, HashValueMap<ValueType> hashes, ValueFromStringOptions options = {})
 {
     ensure_from_string_types_are_generated(generator);
 
     generator.set("method_name", String::formatted(method_name_format, value_name));
     generator.set("value_type", value_type);
     generator.set("value_name", value_name);
-    generator.set("return_type", return_type.has_value() ? *return_type : value_type);
+    generator.set("return_type", options.return_type.has_value() ? *options.return_type : value_type);
     generator.set("size", String::number(hashes.size()));
 
     generator.append(R"~~~(
@@ -233,13 +368,55 @@ Optional<@return_type@> @method_name@(StringView key)
         }
     }
 
-    generator.set("return_statement", String::formatted(return_format, "value->value"sv));
+    generator.set("return_statement", String::formatted(options.return_format, "value->value"sv));
     generator.append(R"~~~(
     } };
+)~~~");
 
-    if (auto const* value = binary_search(hash_pairs, key.hash(), nullptr, HashValueComparator<@value_type@> {}))
+    if (options.sensitivity == CaseSensitivity::CaseSensitive) {
+        generator.append(R"~~~(
+    auto hash = key.hash();
+)~~~");
+    } else {
+        generator.append(R"~~~(
+    auto hash = CaseInsensitiveStringViewTraits::hash(key);
+)~~~");
+    }
+
+    generator.append(R"~~~(
+    if (auto const* value = binary_search(hash_pairs, hash, nullptr, HashValueComparator<@value_type@> {}))
         return @return_statement@;
     return {};
+}
+)~~~");
+}
+
+template<typename IdentifierFormatter>
+void generate_value_to_string(SourceGenerator& generator, StringView method_name_format, StringView value_type, StringView value_name, IdentifierFormatter&& format_identifier, Span<String const> values)
+{
+    generator.set("method_name", String::formatted(method_name_format, value_name));
+    generator.set("value_type", value_type);
+    generator.set("value_name", value_name);
+
+    generator.append(R"~~~(
+StringView @method_name@(@value_type@ @value_name@)
+{
+    using enum @value_type@;
+
+    switch (@value_name@) {)~~~");
+
+    for (auto const& value : values) {
+        generator.set("enum_value", format_identifier(value_type, value));
+        generator.set("string_value", value);
+        generator.append(R"~~~(
+    case @enum_value@:
+        return "@string_value@"sv;)~~~");
+    }
+
+    generator.append(R"~~~(
+    }
+
+    VERIFY_NOT_REACHED();
 }
 )~~~");
 }
@@ -280,12 +457,18 @@ enum class @name@ : @underlying@ {)~~~");
 )~~~");
 }
 
-template<typename LocalesType, typename ListFormatter>
-void generate_mapping(SourceGenerator& generator, LocalesType const& locales, StringView type, StringView name, StringView format, ListFormatter&& format_list)
+template<typename LocalesType, typename IdentifierFormatter, typename ListFormatter>
+void generate_mapping(SourceGenerator& generator, LocalesType const& locales, StringView type, StringView name, StringView format, IdentifierFormatter&& format_identifier, ListFormatter&& format_list)
 {
-    auto format_mapping_name = [](StringView format, StringView name) {
-        auto mapping_name = name.to_lowercase_string().replace("-"sv, "_"sv, true);
-        return String::formatted(format, mapping_name);
+    auto format_mapping_name = [&](StringView format, StringView name) {
+        String mapping_name;
+
+        if constexpr (IsNullPointer<IdentifierFormatter>)
+            mapping_name = name.replace("-"sv, "_"sv, true);
+        else
+            mapping_name = format_identifier(type, name);
+
+        return String::formatted(format, mapping_name.to_lowercase());
     };
 
     Vector<String> mapping_names;
@@ -331,5 +514,33 @@ static constexpr Array<Span<@type@ const>, @size@> @name@ { {
 
     generator.append(R"~~~(
 } };
+)~~~");
+}
+
+template<typename T>
+void generate_available_values(SourceGenerator& generator, StringView name, Vector<T> const& values, Vector<Alias> const& aliases = {})
+{
+    generator.set("name", name);
+    generator.set("size", String::number(values.size()));
+
+    generator.append(R"~~~(
+Span<StringView const> @name@()
+{
+    static constexpr Array<StringView, @size@> values { {)~~~");
+
+    bool first = true;
+    for (auto const& value : values) {
+        generator.append(first ? " " : ", ");
+        first = false;
+
+        if (auto it = aliases.find_if([&](auto const& alias) { return alias.alias == value; }); it != aliases.end())
+            generator.append(String::formatted("\"{}\"sv", it->name));
+        else
+            generator.append(String::formatted("\"{}\"sv", value));
+    }
+
+    generator.append(R"~~~( } };
+    return values.span();
+}
 )~~~");
 }

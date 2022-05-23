@@ -11,12 +11,8 @@
 
 namespace JS {
 
-FunctionEnvironment::FunctionEnvironment(Environment* parent_scope)
-    : DeclarativeEnvironment(parent_scope)
-{
-}
-
-FunctionEnvironment::~FunctionEnvironment()
+FunctionEnvironment::FunctionEnvironment(Environment* parent_environment)
+    : DeclarativeEnvironment(parent_environment)
 {
 }
 
@@ -36,7 +32,7 @@ ThrowCompletionOr<Value> FunctionEnvironment::get_super_base() const
     // 1. Let home be envRec.[[FunctionObject]].[[HomeObject]].
     auto home_object = m_function_object->home_object();
 
-    // 2. If home has the value undefined, return undefined.
+    // 2. If home is undefined, return undefined.
     if (!home_object)
         return js_undefined();
 
@@ -81,6 +77,8 @@ ThrowCompletionOr<Value> FunctionEnvironment::get_this_binding(GlobalObject& glo
 // 9.1.1.3.1 BindThisValue ( V ), https://tc39.es/ecma262/#sec-bindthisvalue
 ThrowCompletionOr<Value> FunctionEnvironment::bind_this_value(GlobalObject& global_object, Value this_value)
 {
+    VERIFY(!this_value.is_empty());
+
     // 1. Assert: envRec.[[ThisBindingStatus]] is not lexical.
     VERIFY(m_this_binding_status != ThisBindingStatus::Lexical);
 

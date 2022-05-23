@@ -1,14 +1,16 @@
 /*
  * Copyright (c) 2021, Idan Horowitz <idan.horowitz@serenityos.org>
- * Copyright (c) 2021, Linus Groh <linusg@serenityos.org>
+ * Copyright (c) 2021-2022, Linus Groh <linusg@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #include <LibJS/Runtime/AbstractOperations.h>
 #include <LibJS/Runtime/Completion.h>
+#include <LibJS/Runtime/Date.h>
 #include <LibJS/Runtime/GlobalObject.h>
 #include <LibJS/Runtime/Temporal/Calendar.h>
+#include <LibJS/Runtime/Temporal/Duration.h>
 #include <LibJS/Runtime/Temporal/Instant.h>
 #include <LibJS/Runtime/Temporal/PlainDate.h>
 #include <LibJS/Runtime/Temporal/PlainDateConstructor.h>
@@ -35,6 +37,16 @@ void PlainDate::visit_edges(Visitor& visitor)
     visitor.visit(&m_calendar);
 }
 
+// 3.5.2 CreateISODateRecord ( year, month, day ), https://tc39.es/proposal-temporal/#sec-temporal-create-iso-date-record
+ISODateRecord create_iso_date_record(i32 year, u8 month, u8 day)
+{
+    // 1. Assert: IsValidISODate(year, month, day) is true.
+    VERIFY(is_valid_iso_date(year, month, day));
+
+    // 2. Return the Record { [[Year]]: year, [[Month]]: month, [[Day]]: day }.
+    return { .year = year, .month = month, .day = day };
+}
+
 // 3.5.1 CreateTemporalDate ( isoYear, isoMonth, isoDay, calendar [ , newTarget ] ), https://tc39.es/proposal-temporal/#sec-temporal-createtemporaldate
 ThrowCompletionOr<PlainDate*> create_temporal_date(GlobalObject& global_object, i32 iso_year, u8 iso_month, u8 iso_day, Object& calendar, FunctionObject const* new_target)
 {
@@ -45,15 +57,15 @@ ThrowCompletionOr<PlainDate*> create_temporal_date(GlobalObject& global_object, 
     // 3. Assert: isoDay is an integer.
     // 4. Assert: Type(calendar) is Object.
 
-    // 5. If ! IsValidISODate(isoYear, isoMonth, isoDay) is false, throw a RangeError exception.
+    // 5. If IsValidISODate(isoYear, isoMonth, isoDay) is false, throw a RangeError exception.
     if (!is_valid_iso_date(iso_year, iso_month, iso_day))
         return vm.throw_completion<RangeError>(global_object, ErrorType::TemporalInvalidPlainDate);
 
-    // 6. If ! ISODateTimeWithinLimits(isoYear, isoMonth, isoDay, 12, 0, 0, 0, 0, 0) is false, throw a RangeError exception.
+    // 6. If ISODateTimeWithinLimits(isoYear, isoMonth, isoDay, 12, 0, 0, 0, 0, 0) is false, throw a RangeError exception.
     if (!iso_date_time_within_limits(global_object, iso_year, iso_month, iso_day, 12, 0, 0, 0, 0, 0))
         return vm.throw_completion<RangeError>(global_object, ErrorType::TemporalInvalidPlainDate);
 
-    // 7. If newTarget is not present, set it to %Temporal.PlainDate%.
+    // 7. If newTarget is not present, set newTarget to %Temporal.PlainDate%.
     if (!new_target)
         new_target = global_object.temporal_plain_date_constructor();
 
@@ -68,15 +80,12 @@ ThrowCompletionOr<PlainDate*> create_temporal_date(GlobalObject& global_object, 
 }
 
 // 3.5.2 ToTemporalDate ( item [ , options ] ), https://tc39.es/proposal-temporal/#sec-temporal-totemporaldate
-ThrowCompletionOr<PlainDate*> to_temporal_date(GlobalObject& global_object, Value item, Object* options)
+ThrowCompletionOr<PlainDate*> to_temporal_date(GlobalObject& global_object, Value item, Object const* options)
 {
     auto& vm = global_object.vm();
 
-    // 1. If options is not present, set options to ! OrdinaryObjectCreate(null).
-    if (!options)
-        options = Object::create(global_object, nullptr);
-
-    // 2. Assert: Type(options) is Object.
+    // 1. If options is not present, set options to undefined.
+    // 2. Assert: Type(options) is Object or Undefined.
 
     // 3. If Type(item) is Object, then
     if (item.is_object()) {
@@ -117,12 +126,12 @@ ThrowCompletionOr<PlainDate*> to_temporal_date(GlobalObject& global_object, Valu
         // f. Let fields be ? PrepareTemporalFields(item, fieldNames, «»).
         auto* fields = TRY(prepare_temporal_fields(global_object, item_object, field_names, {}));
 
-        // g. Return ? DateFromFields(calendar, fields, options).
-        return date_from_fields(global_object, *calendar, *fields, *options);
+        // g. Return ? CalendarDateFromFields(calendar, fields, options).
+        return calendar_date_from_fields(global_object, *calendar, *fields, options);
     }
 
     // 4. Perform ? ToTemporalOverflow(options).
-    (void)TRY(to_temporal_overflow(global_object, *options));
+    (void)TRY(to_temporal_overflow(global_object, options));
 
     // 5. Let string be ? ToString(item).
     auto string = TRY(item.to_string(global_object));
@@ -130,7 +139,7 @@ ThrowCompletionOr<PlainDate*> to_temporal_date(GlobalObject& global_object, Valu
     // 6. Let result be ? ParseTemporalDateString(string).
     auto result = TRY(parse_temporal_date_string(global_object, string));
 
-    // 7. Assert: ! IsValidISODate(result.[[Year]], result.[[Month]], result.[[Day]]) is true.
+    // 7. Assert: IsValidISODate(result.[[Year]], result.[[Month]], result.[[Day]]) is true.
     VERIFY(is_valid_iso_date(result.year, result.month, result.day));
 
     // 8. Let calendar be ? ToTemporalCalendarWithISODefault(result.[[Calendar]]).
@@ -141,27 +150,26 @@ ThrowCompletionOr<PlainDate*> to_temporal_date(GlobalObject& global_object, Valu
 }
 
 // 3.5.3 DifferenceISODate ( y1, m1, d1, y2, m2, d2, largestUnit ), https://tc39.es/proposal-temporal/#sec-temporal-differenceisodate
-DifferenceISODateResult difference_iso_date(GlobalObject& global_object, i32 year1, u8 month1, u8 day1, i32 year2, u8 month2, u8 day2, StringView largest_unit)
+DateDurationRecord difference_iso_date(GlobalObject& global_object, i32 year1, u8 month1, u8 day1, i32 year2, u8 month2, u8 day2, StringView largest_unit)
 {
-    // 1. Assert: largestUnit is one of "year", "month", "week", or "day".
     VERIFY(largest_unit.is_one_of("year"sv, "month"sv, "week"sv, "day"sv));
 
-    // 2. If largestUnit is "year" or "month", then
+    // 1. If largestUnit is "year" or "month", then
     if (largest_unit.is_one_of("year"sv, "month"sv)) {
         // a. Let sign be -(! CompareISODate(y1, m1, d1, y2, m2, d2)).
         auto sign = -compare_iso_date(year1, month1, day1, year2, month2, day2);
 
-        // b. If sign is 0, return the Record { [[Years]]: 0, [[Months]]: 0, [[Weeks]]: 0, [[Days]]: 0 }.
+        // b. If sign is 0, return ! CreateDateDurationRecord(0, 0, 0, 0).
         if (sign == 0)
-            return { .years = 0, .months = 0, .weeks = 0, .days = 0 };
+            return create_date_duration_record(0, 0, 0, 0);
 
         // c. Let start be the Record { [[Year]]: y1, [[Month]]: m1, [[Day]]: d1 }.
-        auto start = ISODate { .year = year1, .month = month1, .day = day1 };
+        auto start = ISODateRecord { .year = year1, .month = month1, .day = day1 };
 
         // d. Let end be the Record { [[Year]]: y2, [[Month]]: m2, [[Day]]: d2 }.
-        auto end = ISODate { .year = year2, .month = month2, .day = day2 };
+        auto end = ISODateRecord { .year = year2, .month = month2, .day = day2 };
 
-        // e. Let years be end.[[Year]] − start.[[Year]].
+        // e. Let years be end.[[Year]] - start.[[Year]].
         double years = end.year - start.year;
 
         // f. Let mid be ! AddISODate(y1, m1, d1, years, 0, 0, 0, "constrain").
@@ -172,15 +180,15 @@ DifferenceISODateResult difference_iso_date(GlobalObject& global_object, i32 yea
 
         // h. If midSign is 0, then
         if (mid_sign == 0) {
-            // i. If largestUnit is "year", return the Record { [[Years]]: years, [[Months]]: 0, [[Weeks]]: 0, [[Days]]: 0 }.
+            // i. If largestUnit is "year", return ! CreateDateDurationRecord(years, 0, 0, 0).
             if (largest_unit == "year"sv)
-                return { .years = years, .months = 0, .weeks = 0, .days = 0 };
+                return create_date_duration_record(years, 0, 0, 0);
 
-            // ii. Return the Record { [[Years]]: 0, [[Months]]: years × 12, [[Weeks]]: 0, [[Days]]: 0 }.
-            return { .years = 0, .months = years * 12, .weeks = 0, .days = 0 };
+            // ii. Return ! CreateDateDurationRecord(0, years × 12, 0, 0).
+            return create_date_duration_record(0, years * 12, 0, 0);
         }
 
-        // i. Let months be end.[[Month]] − start.[[Month]].
+        // i. Let months be end.[[Month]] - start.[[Month]].
         double months = end.month - start.month;
 
         // j. If midSign is not equal to sign, then
@@ -200,12 +208,12 @@ DifferenceISODateResult difference_iso_date(GlobalObject& global_object, i32 yea
 
         // m. If midSign is 0, then
         if (mid_sign == 0) {
-            // i. If largestUnit is "year", return the Record { [[Years]]: years, [[Months]]: months, [[Weeks]]: 0, [[Days]]: 0 }.
+            // i. If largestUnit is "year", return ! CreateDateDurationRecord(years, months, 0, 0).
             if (largest_unit == "year"sv)
-                return { .years = years, .months = months, .weeks = 0, .days = 0 };
+                return create_date_duration_record(years, months, 0, 0);
 
-            // ii. Return the Record { [[Years]]: 0, [[Months]]: months + years × 12, [[Weeks]]: 0, [[Days]]: 0 }.
-            return { .years = 0, .months = months + years * 12, .weeks = 0, .days = 0 };
+            // ii. Return ! CreateDateDurationRecord(0, months + years × 12, 0, 0).
+            return create_date_duration_record(0, months + years * 12, 0, 0);
         }
 
         // n. If midSign is not equal to sign, then
@@ -224,10 +232,6 @@ DifferenceISODateResult difference_iso_date(GlobalObject& global_object, i32 yea
 
             // iii. Set mid to ! AddISODate(y1, m1, d1, years, months, 0, 0, "constrain").
             mid = MUST(add_iso_date(global_object, year1, month1, day1, years, months, 0, 0, "constrain"sv));
-
-            // FIXME: This is not used (spec issue, see https://github.com/tc39/proposal-temporal/issues/1483).
-            // iv. Set midSign to -(! CompareISODate(mid.[[Year]], mid.[[Month]], mid.[[Day]], y2, m2, d2)).
-            mid_sign = -compare_iso_date(mid.year, mid.month, mid.day, year2, month2, day2);
         }
 
         // o. Let days be 0.
@@ -259,82 +263,52 @@ DifferenceISODateResult difference_iso_date(GlobalObject& global_object, i32 yea
             years = 0;
         }
 
-        // t. Return the Record { [[Years]]: years, [[Months]]: months, [[Weeks]]: 0, [[Days]]: days }.
-        return { .years = years, .months = months, .weeks = 0, .days = days };
+        // t. Return ! CreateDateDurationRecord(years, months, 0, days).
+        return create_date_duration_record(years, months, 0, days);
     }
-    // 3. If largestUnit is "day" or "week", then
+    // 2. If largestUnit is "day" or "week", then
     else {
-        ISODate smaller;
-        ISODate greater;
-        i8 sign;
+        // a. Let epochDays1 be MakeDay(𝔽(y1), 𝔽(m1 - 1), 𝔽(d1)).
+        auto epoch_days_1 = make_day(year1, month1 - 1, day1);
 
-        // a. If ! CompareISODate(y1, m1, d1, y2, m2, d2) < 0, then
-        if (compare_iso_date(year1, month1, day1, year2, month2, day2) < 0) {
-            // i. Let smaller be the Record { [[Year]]: y1, [[Month]]: m1, [[Day]]: d1 }.
-            smaller = { .year = year1, .month = month1, .day = day1 };
+        // b. Assert: epochDays1 is finite.
+        VERIFY(isfinite(epoch_days_1));
 
-            // ii. Let greater be the Record { [[Year]]: y2, [[Month]]: m2, [[Day]]: d2 }.
-            greater = { .year = year2, .month = month2, .day = day2 };
+        // c. Let epochDays2 be MakeDay(𝔽(y2), 𝔽(m2 - 1), 𝔽(d2)).
+        auto epoch_days_2 = make_day(year2, month2 - 1, day2);
 
-            // iii. Let sign be 1.
-            sign = 1;
-        }
-        // b. Else,
-        else {
-            // i. Let smaller be the Record { [[Year]]: y2, [[Month]]: m2, [[Day]]: d2 }.
-            smaller = { .year = year2, .month = month2, .day = day2 };
+        // d. Assert: epochDays2 is finite.
+        VERIFY(isfinite(epoch_days_2));
 
-            // ii. Let greater be the Record { [[Year]]: y1, [[Month]]: m1, [[Day]]: d1 }.
-            greater = { .year = year1, .month = month1, .day = day1 };
-
-            // iii. Let sign be −1.
-            sign = -1;
-        }
-
-        // c. Let days be ! ToISODayOfYear(greater.[[Year]], greater.[[Month]], greater.[[Day]]) − ! ToISODayOfYear(smaller.[[Year]], smaller.[[Month]], smaller.[[Day]]).
-        double days = to_iso_day_of_year(greater.year, greater.month, greater.day) - to_iso_day_of_year(smaller.year, smaller.month, smaller.day);
-
-        // d. Let year be smaller.[[Year]].
-        auto year = smaller.year;
-
-        // e. Repeat, while year < greater.[[Year]],
-        while (year < greater.year) {
-            // i. Set days to days + ! ISODaysInYear(year).
-            days += iso_days_in_year(year);
-
-            // ii. Set year to year + 1.
-            year++;
-        }
+        // e. Let days be ℝ(epochDays2) - ℝ(epochDays1).
+        auto days = epoch_days_2 - epoch_days_1;
 
         // f. Let weeks be 0.
         double weeks = 0;
 
         // g. If largestUnit is "week", then
         if (largest_unit == "week"sv) {
-            // i. Set weeks to floor(days / 7).
-            weeks = floor(days / 7);
+            // i. Set weeks to RoundTowardsZero(days / 7).
+            weeks = trunc(days / 7);
 
-            // ii. Set days to days modulo 7.
+            // ii. Set days to remainder(days, 7).
             days = fmod(days, 7);
         }
 
-        // h. Return the Record { [[Years]]: 0, [[Months]]: 0, [[Weeks]]: weeks × sign, [[Days]]: days × sign }.
-        // NOTE: We set weeks and days conditionally to avoid negative zero for 0 * -1.
-        return { .years = 0, .months = 0, .weeks = (weeks != 0) ? weeks * sign : 0, .days = (days != 0) ? days * sign : 0 };
+        // h. Return ! CreateDateDurationRecord(0, 0, weeks, days).
+        return create_date_duration_record(0, 0, weeks, days);
     }
     VERIFY_NOT_REACHED();
 }
 
 // 3.5.4 RegulateISODate ( year, month, day, overflow ), https://tc39.es/proposal-temporal/#sec-temporal-regulateisodate
-ThrowCompletionOr<ISODate> regulate_iso_date(GlobalObject& global_object, double year, double month, double day, StringView overflow)
+ThrowCompletionOr<ISODateRecord> regulate_iso_date(GlobalObject& global_object, double year, double month, double day, StringView overflow)
 {
     auto& vm = global_object.vm();
-    // 1. Assert: year, month, and day are integers.
-    VERIFY(year == trunc(year) && month == trunc(month) && day == trunc(day));
-    // 2. Assert: overflow is either "constrain" or "reject".
-    // NOTE: Asserted by the VERIFY_NOT_REACHED at the end
 
-    // 3. If overflow is "reject", then
+    VERIFY(year == trunc(year) && month == trunc(month) && day == trunc(day));
+
+    // 1. If overflow is "reject", then
     if (overflow == "reject"sv) {
         // IMPLEMENTATION DEFINED: This is an optimization that allows us to treat these doubles as normal integers from this point onwards.
         // This does not change the exposed behavior as the call to IsValidISODate will immediately check that these values are valid ISO
@@ -345,14 +319,14 @@ ThrowCompletionOr<ISODate> regulate_iso_date(GlobalObject& global_object, double
         auto y = static_cast<i32>(year);
         auto m = static_cast<u8>(month);
         auto d = static_cast<u8>(day);
-        // a. If ! IsValidISODate(year, month, day) is false, throw a RangeError exception.
+        // a. If IsValidISODate(year, month, day) is false, throw a RangeError exception.
         if (!is_valid_iso_date(y, m, d))
             return vm.throw_completion<RangeError>(global_object, ErrorType::TemporalInvalidPlainDate);
 
         // b. Return the Record { [[Year]]: year, [[Month]]: month, [[Day]]: day }.
-        return ISODate { .year = y, .month = m, .day = d };
+        return ISODateRecord { .year = y, .month = m, .day = d };
     }
-    // 4. If overflow is "constrain", then
+    // 2. If overflow is "constrain", then
     else if (overflow == "constrain"sv) {
         // IMPLEMENTATION DEFINED: This is an optimization that allows us to treat this double as normal integer from this point onwards. This
         // does not change the exposed behavior as the parent's call to CreateTemporalDate will immediately check that this value is a valid
@@ -360,15 +334,17 @@ ThrowCompletionOr<ISODate> regulate_iso_date(GlobalObject& global_object, double
         if (!AK::is_within_range<i32>(year))
             return vm.throw_completion<RangeError>(global_object, ErrorType::TemporalInvalidPlainDate);
 
-        auto y = static_cast<i32>(year);
+        // a. Set month to the result of clamping month between 1 and 12.
+        month = clamp(month, 1, 12);
 
-        // a. Set month to ! ConstrainToRange(month, 1, 12).
-        month = constrain_to_range(month, 1, 12);
-        // b. Set day to ! ConstrainToRange(day, 1, ! ISODaysInMonth(year, month)).
-        day = constrain_to_range(day, 1, iso_days_in_month(y, month));
+        // b. Let daysInMonth be ! ISODaysInMonth(year, month).
+        auto days_in_month = iso_days_in_month(static_cast<i32>(year), static_cast<u8>(month));
 
-        // c. Return the Record { [[Year]]: year, [[Month]]: month, [[Day]]: day }.
-        return ISODate { .year = y, .month = static_cast<u8>(month), .day = static_cast<u8>(day) };
+        // c. Set day to the result of clamping day between 1 and daysInMonth.
+        day = clamp(day, 1, days_in_month);
+
+        // d. Return CreateISODateRecord(year, month, day).
+        return create_iso_date_record(static_cast<i32>(year), static_cast<u8>(month), static_cast<u8>(day));
     }
     VERIFY_NOT_REACHED();
 }
@@ -376,121 +352,39 @@ ThrowCompletionOr<ISODate> regulate_iso_date(GlobalObject& global_object, double
 // 3.5.5 IsValidISODate ( year, month, day ), https://tc39.es/proposal-temporal/#sec-temporal-isvalidisodate
 bool is_valid_iso_date(i32 year, u8 month, u8 day)
 {
-    // 1. Assert: year, month, and day are integers.
-
-    // 2. If month < 1 or month > 12, then
+    // 1. If month < 1 or month > 12, then
     if (month < 1 || month > 12) {
         // a. Return false.
         return false;
     }
 
-    // 3. Let daysInMonth be ! ISODaysInMonth(year, month).
+    // 2. Let daysInMonth be ! ISODaysInMonth(year, month).
     auto days_in_month = iso_days_in_month(year, month);
 
-    // 4. If day < 1 or day > daysInMonth, then
+    // 3. If day < 1 or day > daysInMonth, then
     if (day < 1 || day > days_in_month) {
         // a. Return false.
         return false;
     }
 
-    // 5. Return true.
+    // 4. Return true.
     return true;
 }
 
 // 3.5.6 BalanceISODate ( year, month, day ), https://tc39.es/proposal-temporal/#sec-temporal-balanceisodate
-ISODate balance_iso_date(double year_, double month_, double day)
+ISODateRecord balance_iso_date(double year, double month, double day)
 {
-    // 1. Assert: year, month, and day are integers.
+    // 1. Let epochDays be MakeDay(𝔽(year), 𝔽(month - 1), 𝔽(day)).
+    auto epoch_days = make_day(year, month - 1, day);
 
-    // 2. Let balancedYearMonth be ! BalanceISOYearMonth(year, month).
-    auto balanced_year_month = balance_iso_year_month(year_, month_);
+    // 2. Assert: epochDays is finite.
+    VERIFY(isfinite(epoch_days));
 
-    // 3. Set month to balancedYearMonth.[[Month]].
-    auto month = balanced_year_month.month;
+    // 3. Let ms be MakeDate(epochDays, +0𝔽).
+    auto ms = make_date(epoch_days, 0);
 
-    // 4. Set year to balancedYearMonth.[[Year]].
-    auto year = balanced_year_month.year;
-
-    // 5. NOTE: To deal with negative numbers of days whose absolute value is greater than the number of days in a year, the following section subtracts years and adds days until the number of days is greater than −366 or −365.
-
-    i32 test_year;
-
-    // 6. If month > 2, then
-    if (month > 2) {
-        // a. Let testYear be year.
-        test_year = year;
-    }
-    // 7. Else,
-    else {
-        // a. Let testYear be year − 1.
-        test_year = year - 1;
-    }
-
-    // 8. Repeat, while day < −1 × ! ISODaysInYear(testYear),
-    while (day < -1 * iso_days_in_year(test_year)) {
-        // a. Set day to day + !ISODaysInYear(testYear).
-        day += iso_days_in_year(test_year);
-
-        // b. Set year to year − 1.
-        year--;
-
-        // c. Set testYear to testYear − 1.
-        test_year--;
-    }
-
-    // 9. NOTE: To deal with numbers of days greater than the number of days in a year, the following section adds years and subtracts days until the number of days is less than 366 or 365.
-
-    // 10. Let testYear be year + 1.
-    test_year = year + 1;
-
-    // 11. Repeat, while day > ! ISODaysInYear(testYear),
-    while (day > iso_days_in_year(test_year)) {
-        // a. Set day to day − ! ISODaysInYear(testYear).
-        day -= iso_days_in_year(test_year);
-
-        // b. Set year to year + 1.
-        year++;
-
-        // c. Set testYear to testYear + 1.
-        test_year++;
-    }
-
-    // 12. NOTE: To deal with negative numbers of days whose absolute value is greater than the number of days in the current month, the following section subtracts months and adds days until the number of days is greater than 0.
-
-    // 13. Repeat, while day < 1,
-    while (day < 1) {
-        // a. Set balancedYearMonth to ! BalanceISOYearMonth(year, month − 1).
-        balanced_year_month = balance_iso_year_month(year, month - 1);
-
-        // b. Set year to balancedYearMonth.[[Year]].
-        year = balanced_year_month.year;
-
-        // c. Set month to balancedYearMonth.[[Month]].
-        month = balanced_year_month.month;
-
-        // d. Set day to day + ! ISODaysInMonth(year, month).
-        day += iso_days_in_month(year, month);
-    }
-
-    // 14. NOTE: To deal with numbers of days greater than the number of days in the current month, the following section adds months and subtracts days until the number of days is less than the number of days in the month.
-
-    // 15. Repeat, while day > ! ISODaysInMonth(year, month),
-    while (day > iso_days_in_month(year, month)) {
-        // a. Set day to day − ! ISODaysInMonth(year, month).
-        day -= iso_days_in_month(year, month);
-
-        // b. Set balancedYearMonth to ! BalanceISOYearMonth(year, month + 1).
-        balanced_year_month = balance_iso_year_month(year, month + 1);
-
-        // c. Set year to balancedYearMonth.[[Year]].
-        year = balanced_year_month.year;
-
-        // d. Set month to balancedYearMonth.[[Month]].
-        month = balanced_year_month.month;
-    }
-
-    // 16. Return the Record { [[Year]]: year, [[Month]]: month, [[Day]]: day }.
-    return ISODate { .year = year, .month = static_cast<u8>(month), .day = static_cast<u8>(day) };
+    // 4. Return CreateISODateRecord(ℝ(YearFromTime(ms)), ℝ(MonthFromTime(ms)) + 1, ℝ(DateFromTime(ms))).
+    return create_iso_date_record(year_from_time(ms), static_cast<u8>(month_from_time(ms) + 1), date_from_time(ms));
 }
 
 // 3.5.7 PadISOYear ( y ), https://tc39.es/proposal-temporal/#sec-temporal-padisoyear
@@ -498,15 +392,16 @@ String pad_iso_year(i32 y)
 {
     // 1. Assert: y is an integer.
 
-    // 2. If y > 999 and y ≤ 9999, then
-    if (y > 999 && y <= 9999) {
-        // a. Return y formatted as a four-digit decimal number.
-        return String::number(y);
+    // 2. If y ≥ 0 and y ≤ 9999, then
+    if (y >= 0 && y <= 9999) {
+        // a. Return ToZeroPaddedDecimalString(y, 4).
+        return String::formatted("{:04}", y);
     }
-    // 3. If y ≥ 0, let yearSign be "+"; otherwise, let yearSign be "-".
-    auto year_sign = y >= 0 ? '+' : '-';
 
-    // 4. Let year be abs(y), formatted as a six-digit decimal number, padded to the left with zeroes as necessary.
+    // 3. If y > 0, let yearSign be "+"; otherwise, let yearSign be "-".
+    auto year_sign = y > 0 ? '+' : '-';
+
+    // 4. Let year be ToZeroPaddedDecimalString(abs(y), 6).
     // 5. Return the string-concatenation of yearSign and year.
     return String::formatted("{}{:06}", year_sign, abs(y));
 }
@@ -520,10 +415,10 @@ ThrowCompletionOr<String> temporal_date_to_string(GlobalObject& global_object, P
     // 3. Let year be ! PadISOYear(temporalDate.[[ISOYear]]).
     auto year = pad_iso_year(temporal_date.iso_year());
 
-    // 4. Let month be temporalDate.[[ISOMonth]] formatted as a two-digit decimal number, padded to the left with a zero if necessary.
+    // 4. Let month be ToZeroPaddedDecimalString(monthDay.[[ISOMonth]], 2).
     auto month = String::formatted("{:02}", temporal_date.iso_month());
 
-    // 5. Let day be temporalDate.[[ISODay]] formatted as a two-digit decimal number, padded to the left with a zero if necessary.
+    // 5. Let day be ToZeroPaddedDecimalString(monthDay.[[ISODay]], 2).
     auto day = String::formatted("{:02}", temporal_date.iso_day());
 
     // 6. Let calendarID be ? ToString(temporalDate.[[Calendar]]).
@@ -537,7 +432,7 @@ ThrowCompletionOr<String> temporal_date_to_string(GlobalObject& global_object, P
 }
 
 // 3.5.9 AddISODate ( year, month, day, years, months, weeks, days, overflow ), https://tc39.es/proposal-temporal/#sec-temporal-addisodate
-ThrowCompletionOr<ISODate> add_iso_date(GlobalObject& global_object, i32 year, u8 month, u8 day, double years, double months, double weeks, double days, StringView overflow)
+ThrowCompletionOr<ISODateRecord> add_iso_date(GlobalObject& global_object, i32 year, u8 month, u8 day, double years, double months, double weeks, double days, StringView overflow)
 {
     // 1. Assert: year, month, day, years, months, weeks, and days are integers.
     VERIFY(years == trunc(years) && months == trunc(months) && weeks == trunc(weeks) && days == trunc(days));
@@ -557,7 +452,7 @@ ThrowCompletionOr<ISODate> add_iso_date(GlobalObject& global_object, i32 year, u
     // 6. Let d be intermediate.[[Day]] + days.
     auto d = intermediate_date.day + days;
 
-    // 7. Let intermediate be ! BalanceISODate(intermediate.[[Year]], intermediate.[[Month]], d).
+    // 7. Let intermediate be BalanceISODate(intermediate.[[Year]], intermediate.[[Month]], d).
     auto intermediate = balance_iso_date(intermediate_date.year, intermediate_date.month, d);
 
     // 8. Return ? RegulateISODate(intermediate.[[Year]], intermediate.[[Month]], intermediate.[[Day]], overflow).
@@ -595,6 +490,69 @@ i8 compare_iso_date(i32 year1, u8 month1, u8 day1, i32 year2, u8 month2, u8 day2
 
     // 8. Return 0.
     return 0;
+}
+
+// 3.5.11 DifferenceTemporalPlainDate ( operation, temporalDate, other, options ), https://tc39.es/proposal-temporal/#sec-temporal-differencetemporalplaindate
+ThrowCompletionOr<Duration*> difference_temporal_plain_date(GlobalObject& global_object, DifferenceOperation operation, PlainDate& temporal_date, Value other_value, Value options_value)
+{
+    auto& vm = global_object.vm();
+
+    // 1. If operation is since, let sign be -1. Otherwise, let sign be 1.
+    i8 sign = operation == DifferenceOperation::Since ? -1 : 1;
+
+    // 2. Set other to ? ToTemporalDate(other).
+    auto* other = TRY(to_temporal_date(global_object, other_value));
+
+    // 3. If ? CalendarEquals(temporalDate.[[Calendar]], other.[[Calendar]]) is false, throw a RangeError exception.
+    if (!TRY(calendar_equals(global_object, temporal_date.calendar(), other->calendar())))
+        return vm.throw_completion<RangeError>(global_object, ErrorType::TemporalDifferentCalendars);
+
+    // 4. Set options to ? GetOptionsObject(options).
+    auto const* options = TRY(get_options_object(global_object, options_value));
+
+    // 5. Let disallowedUnits be « "hour", "minute", "second", "millisecond", "microsecond", "nanosecond" ».
+    auto disallowed_units = Vector<StringView> { "hour"sv, "minute"sv, "second"sv, "millisecond"sv, "microsecond"sv, "nanosecond"sv };
+
+    // 6. Let smallestUnit be ? ToSmallestTemporalUnit(options, disallowedUnits, "day").
+    auto smallest_unit = TRY(to_smallest_temporal_unit(global_object, *options, disallowed_units, "day"sv));
+
+    // 7. Let defaultLargestUnit be ! LargerOfTwoTemporalUnits("day", smallestUnit).
+    auto default_largest_unit = larger_of_two_temporal_units("day"sv, *smallest_unit);
+
+    // 8. Let largestUnit be ? ToLargestTemporalUnit(options, disallowedUnits, "auto", defaultLargestUnit).
+    auto largest_unit = TRY(to_largest_temporal_unit(global_object, *options, disallowed_units, "auto"sv, default_largest_unit));
+
+    // 9. Perform ? ValidateTemporalUnitRange(largestUnit, smallestUnit).
+    TRY(validate_temporal_unit_range(global_object, *largest_unit, *smallest_unit));
+
+    // 10. Let roundingMode be ? ToTemporalRoundingMode(options, "trunc").
+    auto rounding_mode = TRY(to_temporal_rounding_mode(global_object, *options, "trunc"sv));
+
+    // 11. If operation is since, then
+    if (operation == DifferenceOperation::Since) {
+        // a. Set roundingMode to ! NegateTemporalRoundingMode(roundingMode).
+        rounding_mode = negate_temporal_rounding_mode(rounding_mode);
+    }
+
+    // 12. Let roundingIncrement be ? ToTemporalRoundingIncrement(options, undefined, false).
+    auto rounding_increment = TRY(to_temporal_rounding_increment(global_object, *options, {}, false));
+
+    // 13. Let untilOptions be ? MergeLargestUnitOption(options, largestUnit).
+    auto* until_options = TRY(merge_largest_unit_option(global_object, options, largest_unit.release_value()));
+
+    // 14. Let result be ? CalendarDateUntil(temporalDate.[[Calendar]], temporalDate, other, untilOptions).
+    auto* duration = TRY(calendar_date_until(global_object, temporal_date.calendar(), &temporal_date, other, *until_options));
+
+    auto result = DurationRecord { duration->years(), duration->months(), duration->weeks(), duration->days(), 0, 0, 0, 0, 0, 0 };
+
+    // 15. If smallestUnit is not "day" or roundingIncrement ≠ 1, then
+    if (*smallest_unit != "day"sv || rounding_increment != 1) {
+        // a. Set result to (? RoundDuration(result.[[Years]], result.[[Months]], result.[[Weeks]], result.[[Days]], 0, 0, 0, 0, 0, 0, roundingIncrement, smallestUnit, roundingMode, temporalDate)).[[DurationRecord]].
+        result = TRY(round_duration(global_object, result.years, result.months, result.weeks, result.days, 0, 0, 0, 0, 0, 0, rounding_increment, *smallest_unit, rounding_mode, &temporal_date)).duration_record;
+    }
+
+    // 16. Return ! CreateTemporalDuration(sign × result.[[Years]], sign × result.[[Months]], sign × result.[[Weeks]], sign × result.[[Days]], 0, 0, 0, 0, 0, 0).
+    return TRY(create_temporal_duration(global_object, sign * result.years, sign * result.months, sign * result.weeks, sign * result.days, 0, 0, 0, 0, 0, 0));
 }
 
 }

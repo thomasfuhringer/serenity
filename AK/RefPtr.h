@@ -27,7 +27,7 @@ template<typename T>
 class OwnPtr;
 
 template<typename T, typename PtrTraits>
-class RefPtr {
+class [[nodiscard]] RefPtr {
     template<typename U, typename P>
     friend class RefPtr;
     template<typename U>
@@ -264,8 +264,8 @@ public:
     bool operator==(std::nullptr_t) const { return is_null(); }
     bool operator!=(std::nullptr_t) const { return !is_null(); }
 
-    bool operator==(const RefPtr& other) const { return as_ptr() == other.as_ptr(); }
-    bool operator!=(const RefPtr& other) const { return as_ptr() != other.as_ptr(); }
+    bool operator==(RefPtr const& other) const { return as_ptr() == other.as_ptr(); }
+    bool operator!=(RefPtr const& other) const { return as_ptr() != other.as_ptr(); }
 
     bool operator==(RefPtr& other) { return as_ptr() == other.as_ptr(); }
     bool operator!=(RefPtr& other) { return as_ptr() != other.as_ptr(); }
@@ -305,18 +305,18 @@ template<typename T>
 struct Traits<RefPtr<T>> : public GenericTraits<RefPtr<T>> {
     using PeekType = T*;
     using ConstPeekType = const T*;
-    static unsigned hash(const RefPtr<T>& p) { return ptr_hash(p.ptr()); }
-    static bool equals(const RefPtr<T>& a, const RefPtr<T>& b) { return a.ptr() == b.ptr(); }
+    static unsigned hash(RefPtr<T> const& p) { return ptr_hash(p.ptr()); }
+    static bool equals(RefPtr<T> const& a, RefPtr<T> const& b) { return a.ptr() == b.ptr(); }
 };
 
 template<typename T, typename U>
-inline NonnullRefPtr<T> static_ptr_cast(const NonnullRefPtr<U>& ptr)
+inline NonnullRefPtr<T> static_ptr_cast(NonnullRefPtr<U> const& ptr)
 {
     return NonnullRefPtr<T>(static_cast<const T&>(*ptr));
 }
 
 template<typename T, typename U, typename PtrTraits = RefPtrTraits<T>>
-inline RefPtr<T> static_ptr_cast(const RefPtr<U>& ptr)
+inline RefPtr<T> static_ptr_cast(RefPtr<U> const& ptr)
 {
     return RefPtr<T, PtrTraits>(static_cast<const T*>(ptr.ptr()));
 }
@@ -336,16 +336,16 @@ inline RefPtr<T> adopt_ref_if_nonnull(T* object)
 }
 
 template<typename T, class... Args>
-requires(IsConstructible<T, Args...>) inline RefPtr<T> try_make_ref_counted(Args&&... args)
+requires(IsConstructible<T, Args...>) inline ErrorOr<NonnullRefPtr<T>> try_make_ref_counted(Args&&... args)
 {
-    return adopt_ref_if_nonnull(new (nothrow) T(forward<Args>(args)...));
+    return adopt_nonnull_ref_or_enomem(new (nothrow) T(forward<Args>(args)...));
 }
 
 // FIXME: Remove once P0960R3 is available in Clang.
 template<typename T, class... Args>
-inline RefPtr<T> try_make_ref_counted(Args&&... args)
+inline ErrorOr<NonnullRefPtr<T>> try_make_ref_counted(Args&&... args)
 {
-    return adopt_ref_if_nonnull(new (nothrow) T { forward<Args>(args)... });
+    return adopt_nonnull_ref_or_enomem(new (nothrow) T { forward<Args>(args)... });
 }
 
 template<typename T>

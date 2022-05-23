@@ -15,7 +15,6 @@
 #include <LibGUI/FocusSource.h>
 #include <LibGUI/Forward.h>
 #include <LibGUI/WindowType.h>
-#include <LibGfx/Color.h>
 #include <LibGfx/Forward.h>
 #include <LibGfx/Rect.h>
 #include <LibGfx/StandardCursor.h>
@@ -40,7 +39,7 @@ public:
     bool is_fullscreen() const { return m_fullscreen; }
     void set_fullscreen(bool);
 
-    bool is_maximized() const;
+    bool is_maximized() const { return m_maximized; }
     void set_maximized(bool);
 
     bool is_frameless() const { return m_frameless; }
@@ -76,9 +75,6 @@ public:
     String title() const;
     void set_title(String);
 
-    Color background_color() const { return m_background_color; }
-    void set_background_color(Color color) { m_background_color = color; }
-
     enum class CloseRequestDecision {
         StayOpen,
         Close,
@@ -97,23 +93,23 @@ public:
     Gfx::IntRect rect() const;
     Gfx::IntRect applet_rect_on_screen() const;
     Gfx::IntSize size() const { return rect().size(); }
-    void set_rect(const Gfx::IntRect&);
+    void set_rect(Gfx::IntRect const&);
     void set_rect(int x, int y, int width, int height) { set_rect({ x, y, width, height }); }
 
     Gfx::IntPoint position() const { return rect().location(); }
 
     Gfx::IntSize minimum_size() const;
-    void set_minimum_size(const Gfx::IntSize&);
+    void set_minimum_size(Gfx::IntSize const&);
     void set_minimum_size(int width, int height) { set_minimum_size({ width, height }); }
 
     void move_to(int x, int y) { move_to({ x, y }); }
-    void move_to(const Gfx::IntPoint& point) { set_rect({ point, size() }); }
+    void move_to(Gfx::IntPoint const& point) { set_rect({ point, size() }); }
 
     void resize(int width, int height) { resize({ width, height }); }
-    void resize(const Gfx::IntSize& size) { set_rect({ position(), size }); }
+    void resize(Gfx::IntSize const& size) { set_rect({ position(), size }); }
 
     void center_on_screen();
-    void center_within(const Window&);
+    void center_within(Window const&);
 
     virtual void event(Core::Event&) override;
 
@@ -132,7 +128,7 @@ public:
     void start_interactive_resize();
 
     Widget* main_widget() { return m_main_widget; }
-    const Widget* main_widget() const { return m_main_widget; }
+    Widget const* main_widget() const { return m_main_widget; }
     void set_main_widget(Widget*);
 
     template<class T, class... Args>
@@ -151,38 +147,42 @@ public:
         return *widget;
     }
 
+    Widget* default_return_key_widget() { return m_default_return_key_widget; }
+    Widget const* default_return_key_widget() const { return m_default_return_key_widget; }
+    void set_default_return_key_widget(Widget*);
+
     Widget* focused_widget() { return m_focused_widget; }
-    const Widget* focused_widget() const { return m_focused_widget; }
+    Widget const* focused_widget() const { return m_focused_widget; }
     void set_focused_widget(Widget*, FocusSource = FocusSource::Programmatic);
 
     void update();
-    void update(const Gfx::IntRect&);
+    void update(Gfx::IntRect const&);
 
     void set_automatic_cursor_tracking_widget(Widget*);
     Widget* automatic_cursor_tracking_widget() { return m_automatic_cursor_tracking_widget.ptr(); }
-    const Widget* automatic_cursor_tracking_widget() const { return m_automatic_cursor_tracking_widget.ptr(); }
+    Widget const* automatic_cursor_tracking_widget() const { return m_automatic_cursor_tracking_widget.ptr(); }
 
     Widget* hovered_widget() { return m_hovered_widget.ptr(); }
-    const Widget* hovered_widget() const { return m_hovered_widget.ptr(); }
+    Widget const* hovered_widget() const { return m_hovered_widget.ptr(); }
     void set_hovered_widget(Widget*);
 
     Gfx::Bitmap* back_bitmap();
 
     Gfx::IntSize size_increment() const { return m_size_increment; }
-    void set_size_increment(const Gfx::IntSize&);
+    void set_size_increment(Gfx::IntSize const&);
     Gfx::IntSize base_size() const { return m_base_size; }
-    void set_base_size(const Gfx::IntSize&);
-    const Optional<Gfx::IntSize>& resize_aspect_ratio() const { return m_resize_aspect_ratio; }
+    void set_base_size(Gfx::IntSize const&);
+    Optional<Gfx::IntSize> const& resize_aspect_ratio() const { return m_resize_aspect_ratio; }
     void set_resize_aspect_ratio(int width, int height) { set_resize_aspect_ratio(Gfx::IntSize(width, height)); }
     void set_no_resize_aspect_ratio() { set_resize_aspect_ratio({}); }
-    void set_resize_aspect_ratio(const Optional<Gfx::IntSize>& ratio);
+    void set_resize_aspect_ratio(Optional<Gfx::IntSize> const& ratio);
 
     void set_cursor(Gfx::StandardCursor);
     void set_cursor(NonnullRefPtr<Gfx::Bitmap>);
 
-    void set_icon(const Gfx::Bitmap*);
+    void set_icon(Gfx::Bitmap const*);
     void apply_icon();
-    const Gfx::Bitmap* icon() const { return m_icon.ptr(); }
+    Gfx::Bitmap const* icon() const { return m_icon.ptr(); }
 
     Vector<Widget&> focusable_widgets(FocusSource) const;
 
@@ -190,13 +190,13 @@ public:
 
     void refresh_system_theme();
 
-    static void for_each_window(Badge<WindowServerConnection>, Function<void(Window&)>);
-    static void update_all_windows(Badge<WindowServerConnection>);
-    void notify_state_changed(Badge<WindowServerConnection>, bool minimized, bool occluded);
+    static void for_each_window(Badge<ConnectionToWindowServer>, Function<void(Window&)>);
+    static void update_all_windows(Badge<ConnectionToWindowServer>);
+    void notify_state_changed(Badge<ConnectionToWindowServer>, bool minimized, bool maximized, bool occluded);
 
     virtual bool is_visible_for_timer_purposes() const override { return m_visible_for_timer_purposes; }
 
-    Action* action_for_key_event(const KeyEvent&);
+    Action* action_for_key_event(KeyEvent const&);
 
     void did_add_widget(Badge<Widget>, Widget&);
     void did_remove_widget(Badge<Widget>, Widget&);
@@ -211,8 +211,12 @@ public:
 
     Menu& add_menu(String name);
     ErrorOr<NonnullRefPtr<Menu>> try_add_menu(String name);
+    void flash_menubar_menu_for(MenuItem const&);
 
     void flush_pending_paints_immediately();
+
+    Menubar& menubar() { return *m_menubar; }
+    Menubar const& menubar() const { return *m_menubar; }
 
 protected:
     Window(Core::Object* parent = nullptr);
@@ -245,9 +249,9 @@ private:
 
     void server_did_destroy();
 
-    OwnPtr<WindowBackingStore> create_backing_store(const Gfx::IntSize&);
+    OwnPtr<WindowBackingStore> create_backing_store(Gfx::IntSize const&);
     void set_current_backing_store(WindowBackingStore&, bool flush_immediately = false);
-    void flip(const Vector<Gfx::IntRect, 32>& dirty_rects);
+    void flip(Vector<Gfx::IntRect, 32> const& dirty_rects);
     void force_update();
 
     bool are_cursors_the_same(AK::Variant<Gfx::StandardCursor, NonnullRefPtr<Gfx::Bitmap>> const&, AK::Variant<Gfx::StandardCursor, NonnullRefPtr<Gfx::Bitmap>> const&) const;
@@ -264,6 +268,7 @@ private:
     float m_opacity_when_windowless { 1.0f };
     float m_alpha_hit_threshold { 0.0f };
     RefPtr<Widget> m_main_widget;
+    WeakPtr<Widget> m_default_return_key_widget;
     WeakPtr<Widget> m_focused_widget;
     WeakPtr<Widget> m_automatic_cursor_tracking_widget;
     WeakPtr<Widget> m_hovered_widget;
@@ -274,7 +279,6 @@ private:
     Vector<Gfx::IntRect, 32> m_pending_paint_event_rects;
     Gfx::IntSize m_size_increment;
     Gfx::IntSize m_base_size;
-    Color m_background_color { Color::WarmGray };
     WindowType m_window_type { WindowType::Normal };
     AK::Variant<Gfx::StandardCursor, NonnullRefPtr<Gfx::Bitmap>> m_cursor { Gfx::StandardCursor::None };
     AK::Variant<Gfx::StandardCursor, NonnullRefPtr<Gfx::Bitmap>> m_effective_cursor { Gfx::StandardCursor::None };
@@ -286,7 +290,7 @@ private:
     Optional<Gfx::IntSize> m_resize_aspect_ratio {};
     bool m_minimizable { true };
     bool m_closeable { true };
-    bool m_maximized_when_windowless { false };
+    bool m_maximized { false };
     bool m_fullscreen { false };
     bool m_frameless { false };
     bool m_forced_shadow { false };

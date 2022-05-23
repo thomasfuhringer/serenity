@@ -13,7 +13,7 @@
 
 namespace JS {
 
-const char* Token::name(TokenType type)
+char const* Token::name(TokenType type)
 {
     switch (type) {
 #define __ENUMERATE_JS_TOKEN(type, category) \
@@ -27,7 +27,7 @@ const char* Token::name(TokenType type)
     }
 }
 
-const char* Token::name() const
+char const* Token::name() const
 {
     return name(m_type);
 }
@@ -195,6 +195,12 @@ String Token::string_value(StringValueStatus& status) const
             auto code_point = strtoul(octal_str.characters(), nullptr, 8);
             VERIFY(code_point <= 255);
             builder.append_code_point(code_point);
+            continue;
+        }
+
+        if (lexer.next_is('8') || lexer.next_is('9')) {
+            status = StringValueStatus::LegacyOctalEscapeSequence;
+            builder.append(lexer.consume());
             continue;
         }
 

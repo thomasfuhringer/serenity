@@ -4,32 +4,19 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-#include <LibWeb/Layout/SVGSVGBox.h>
+#include <LibWeb/Layout/ReplacedBox.h>
+#include <LibWeb/Painting/SVGSVGPaintable.h>
 
 namespace Web::Layout {
 
 SVGSVGBox::SVGSVGBox(DOM::Document& document, SVG::SVGSVGElement& element, NonnullRefPtr<CSS::StyleProperties> properties)
-    : SVGGraphicsBox(document, element, properties)
+    : ReplacedBox(document, element, move(properties))
 {
 }
 
-void SVGSVGBox::before_children_paint(PaintContext& context, PaintPhase phase)
+RefPtr<Painting::Paintable> SVGSVGBox::create_paintable() const
 {
-    if (phase != PaintPhase::Foreground)
-        return;
-
-    if (!context.has_svg_context())
-        context.set_svg_context(SVGContext());
-
-    SVGGraphicsBox::before_children_paint(context, phase);
-}
-
-void SVGSVGBox::after_children_paint(PaintContext& context, PaintPhase phase)
-{
-    SVGGraphicsBox::after_children_paint(context, phase);
-    if (phase != PaintPhase::Foreground)
-        return;
-    context.clear_svg_context();
+    return Painting::SVGSVGPaintable::create(*this);
 }
 
 }

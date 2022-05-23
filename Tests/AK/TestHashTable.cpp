@@ -7,6 +7,7 @@
 #include <LibTest/TestCase.h>
 
 #include <AK/HashTable.h>
+#include <AK/NonnullOwnPtr.h>
 #include <AK/String.h>
 
 TEST_CASE(construct)
@@ -84,6 +85,32 @@ TEST_CASE(table_remove)
     EXPECT(strings.find("Two") != strings.end());
 }
 
+TEST_CASE(remove_all_matching)
+{
+    HashTable<int> ints;
+
+    ints.set(1);
+    ints.set(2);
+    ints.set(3);
+    ints.set(4);
+
+    EXPECT_EQ(ints.size(), 4u);
+
+    EXPECT_EQ(ints.remove_all_matching([&](int value) { return value > 2; }), true);
+    EXPECT_EQ(ints.remove_all_matching([&](int) { return false; }), false);
+
+    EXPECT_EQ(ints.size(), 2u);
+
+    EXPECT(ints.contains(1));
+    EXPECT(ints.contains(2));
+
+    EXPECT_EQ(ints.remove_all_matching([&](int) { return true; }), true);
+
+    EXPECT(ints.is_empty());
+
+    EXPECT_EQ(ints.remove_all_matching([&](int) { return true; }), false);
+}
+
 TEST_CASE(case_insensitive)
 {
     HashTable<String, CaseInsensitiveStringTraits> casetable;
@@ -109,7 +136,7 @@ TEST_CASE(many_strings)
 TEST_CASE(many_collisions)
 {
     struct StringCollisionTraits : public GenericTraits<String> {
-        static unsigned hash(const String&) { return 0; }
+        static unsigned hash(String const&) { return 0; }
     };
 
     HashTable<String, StringCollisionTraits> strings;
@@ -131,7 +158,7 @@ TEST_CASE(many_collisions)
 TEST_CASE(space_reuse)
 {
     struct StringCollisionTraits : public GenericTraits<String> {
-        static unsigned hash(const String&) { return 0; }
+        static unsigned hash(String const&) { return 0; }
     };
 
     HashTable<String, StringCollisionTraits> strings;
@@ -197,4 +224,79 @@ TEST_CASE(basic_contains)
 
     EXPECT_EQ(table.remove(1), true);
     EXPECT_EQ(table.contains(1), false);
+}
+
+TEST_CASE(capacity_leak)
+{
+    HashTable<int> table;
+    for (size_t i = 0; i < 10000; ++i) {
+        table.set(i);
+        table.remove(i);
+    }
+    EXPECT(table.capacity() < 100u);
+}
+
+TEST_CASE(non_trivial_type_table)
+{
+    HashTable<NonnullOwnPtr<int>> table;
+
+    table.set(make<int>(3));
+    table.set(make<int>(11));
+
+    for (int i = 0; i < 1'000; ++i) {
+        table.set(make<int>(-i));
+    }
+    for (int i = 0; i < 10'000; ++i) {
+        table.set(make<int>(i));
+        table.remove(make<int>(i));
+    }
+
+    EXPECT_EQ(table.remove_all_matching([&](auto&) { return true; }), true);
+    EXPECT(table.is_empty());
+    EXPECT_EQ(table.remove_all_matching([&](auto&) { return true; }), false);
+}
+
+TEST_CASE(floats)
+{
+    HashTable<float> table;
+    table.set(0);
+    table.set(1.0f);
+    table.set(2.0f);
+    EXPECT_EQ(table.size(), 3u);
+    EXPECT(table.contains(0));
+    EXPECT(table.contains(1.0f));
+    EXPECT(table.contains(2.0f));
+}
+
+// FIXME: Enable this test once it doesn't trigger UBSAN.
+#if 0
+TEST_CASE(doubles)
+{
+    HashTable<double> table;
+    table.set(0);
+    table.set(1.0);
+    table.set(2.0);
+    EXPECT_EQ(table.size(), 3u);
+    EXPECT(table.contains(0));
+    EXPECT(table.contains(1.0));
+    EXPECT(table.contains(2.0));
+}
+#endif
+
+// Inserting and removing a bunch of elements will "thrash" the table, leading to a lot of "deleted" markers.
+BENCHMARK_CASE(benchmark_thrashing)
+{
+    HashTable<int> table;
+    // Ensure that there needs to be some copying when rehashing.
+    table.set(3);
+    table.set(7);
+    table.set(11);
+    table.set(13);
+    for (int i = 0; i < 10'000; ++i) {
+        table.set(-i);
+    }
+    for (int i = 0; i < 10'000'000; ++i) {
+        table.set(i);
+        table.remove(i);
+    }
 }

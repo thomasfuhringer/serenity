@@ -98,16 +98,23 @@ public:
     static URL create_with_url_or_path(String const&);
     static URL create_with_file_scheme(String const& path, String const& fragment = {}, String const& hostname = {});
     static URL create_with_file_protocol(String const& path, String const& fragment = {}) { return create_with_file_scheme(path, fragment); }
+    static URL create_with_help_scheme(String const& path, String const& fragment = {}, String const& hostname = {});
     static URL create_with_data(String mime_type, String payload, bool is_base64 = false) { return URL(move(mime_type), move(payload), is_base64); };
 
     static bool scheme_requires_port(StringView);
     static u16 default_port_for_scheme(StringView);
     static bool is_special_scheme(StringView);
 
-    static String percent_encode(StringView input, PercentEncodeSet set = PercentEncodeSet::Userinfo);
+    enum class SpaceAsPlus {
+        No,
+        Yes,
+    };
+    static String percent_encode(StringView input, PercentEncodeSet set = PercentEncodeSet::Userinfo, SpaceAsPlus = SpaceAsPlus::No);
     static String percent_decode(StringView input);
 
     bool operator==(URL const& other) const { return equals(other, ExcludeFragment::No); }
+
+    static bool code_point_is_in_percent_encode_set(u32 code_point, URL::PercentEncodeSet);
 
 private:
     URL(String&& data_mime_type, String&& data_payload, bool payload_is_base64)

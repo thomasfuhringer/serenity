@@ -1,6 +1,7 @@
 /*
  * Copyright (c) 2018-2020, Andreas Kling <kling@serenityos.org>
  * Copyright (c) 2021, Mustafa Quraish <mustafa@serenityos.org>
+ * Copyright (c) 2022, the SerenityOS developers.
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -13,14 +14,6 @@
 
 namespace PixelPaint {
 
-PickerTool::PickerTool()
-{
-}
-
-PickerTool::~PickerTool()
-{
-}
-
 void PickerTool::on_mousedown(Layer* layer, MouseEvent& event)
 {
     auto& position = event.layer_event().position();
@@ -31,7 +24,7 @@ void PickerTool::on_mousedown(Layer* layer, MouseEvent& event)
     } else {
         if (!layer || !layer->rect().contains(position))
             return;
-        color = layer->bitmap().get_pixel(position);
+        color = layer->currently_edited_bitmap().get_pixel(position);
     }
 
     // We picked a transparent pixel, do nothing.

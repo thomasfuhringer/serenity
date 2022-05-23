@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2020, the SerenityOS developers.
+ * Copyright (c) 2020-2022, the SerenityOS developers.
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -12,8 +12,8 @@
 #include <LibCore/File.h>
 #include <LibGUI/MessageBox.h>
 #include <LibGUI/Painter.h>
-#include <LibGfx/Font.h>
-#include <LibGfx/FontDatabase.h>
+#include <LibGfx/Font/Font.h>
+#include <LibGfx/Font/FontDatabase.h>
 #include <LibGfx/Path.h>
 #include <unistd.h>
 
@@ -22,15 +22,11 @@ ChessWidget::ChessWidget()
     set_piece_set("stelar7");
 }
 
-ChessWidget::~ChessWidget()
-{
-}
-
 void ChessWidget::paint_event(GUI::PaintEvent& event)
 {
-    const int min_size = min(width(), height());
-    const int widget_offset_x = (window()->width() - min_size) / 2;
-    const int widget_offset_y = (window()->height() - min_size) / 2;
+    int const min_size = min(width(), height());
+    int const widget_offset_x = (window()->width() - min_size) / 2;
+    int const widget_offset_y = (window()->height() - min_size) / 2;
 
     GUI::Frame::paint_event(event);
 
@@ -148,7 +144,7 @@ void ChessWidget::paint_event(GUI::PaintEvent& event)
             Gfx::IntPoint move_point;
             Gfx::IntPoint point_offset = { tile_width / 3, tile_height / 3 };
             Gfx::IntSize rect_size = { tile_width / 3, tile_height / 3 };
-            for (const auto& square : m_available_moves) {
+            for (auto const& square : m_available_moves) {
                 if (side() == Chess::Color::White) {
                     move_point = { square.file * tile_width, (7 - square.rank) * tile_height };
                 } else {
@@ -169,9 +165,9 @@ void ChessWidget::paint_event(GUI::PaintEvent& event)
 
 void ChessWidget::mousedown_event(GUI::MouseEvent& event)
 {
-    const int min_size = min(width(), height());
-    const int widget_offset_x = (window()->width() - min_size) / 2;
-    const int widget_offset_y = (window()->height() - min_size) / 2;
+    int const min_size = min(width(), height());
+    int const widget_offset_x = (window()->width() - min_size) / 2;
+    int const widget_offset_y = (window()->height() - min_size) / 2;
 
     if (!frame_inner_rect().contains(event.position()))
         return;
@@ -239,7 +235,7 @@ void ChessWidget::mouseup_event(GUI::MouseEvent& event)
     Chess::Move move = { m_moving_square, target_square };
     if (board().is_promotion_move(move)) {
         auto promotion_dialog = PromotionDialog::construct(*this);
-        if (promotion_dialog->exec() == PromotionDialog::ExecOK)
+        if (promotion_dialog->exec() == PromotionDialog::ExecResult::OK)
             move.promote_to = promotion_dialog->selected_piece();
     }
 
@@ -266,7 +262,7 @@ void ChessWidget::mouseup_event(GUI::MouseEvent& event)
                 update();
                 if (GUI::MessageBox::show(window(), "50 moves have elapsed without a capture. Claim Draw?", "Claim Draw?",
                         GUI::MessageBox::Type::Information, GUI::MessageBox::InputType::YesNo)
-                    == GUI::Dialog::ExecYes) {
+                    == GUI::Dialog::ExecResult::Yes) {
                     msg = "Draw by 50 move rule.";
                 } else {
                     over = false;
@@ -279,7 +275,7 @@ void ChessWidget::mouseup_event(GUI::MouseEvent& event)
                 update();
                 if (GUI::MessageBox::show(window(), "The same board state has repeated three times. Claim Draw?", "Claim Draw?",
                         GUI::MessageBox::Type::Information, GUI::MessageBox::InputType::YesNo)
-                    == GUI::Dialog::ExecYes) {
+                    == GUI::Dialog::ExecResult::Yes) {
                     msg = "Draw by threefold repetition.";
                 } else {
                     over = false;
@@ -310,9 +306,9 @@ void ChessWidget::mouseup_event(GUI::MouseEvent& event)
 
 void ChessWidget::mousemove_event(GUI::MouseEvent& event)
 {
-    const int min_size = min(width(), height());
-    const int widget_offset_x = (window()->width() - min_size) / 2;
-    const int widget_offset_y = (window()->height() - min_size) / 2;
+    int const min_size = min(width(), height());
+    int const widget_offset_x = (window()->width() - min_size) / 2;
+    int const widget_offset_y = (window()->height() - min_size) / 2;
 
     if (!frame_inner_rect().contains(event.position()))
         return;
@@ -395,9 +391,9 @@ void ChessWidget::set_piece_set(StringView set)
 
 Chess::Square ChessWidget::mouse_to_square(GUI::MouseEvent& event) const
 {
-    const int min_size = min(width(), height());
-    const int widget_offset_x = (window()->width() - min_size) / 2;
-    const int widget_offset_y = (window()->height() - min_size) / 2;
+    int const min_size = min(width(), height());
+    int const widget_offset_x = (window()->width() - min_size) / 2;
+    int const widget_offset_y = (window()->height() - min_size) / 2;
 
     int tile_width = min_size / 8;
     int tile_height = min_size / 8;
@@ -409,7 +405,7 @@ Chess::Square ChessWidget::mouse_to_square(GUI::MouseEvent& event) const
     }
 }
 
-RefPtr<Gfx::Bitmap> ChessWidget::get_piece_graphic(const Chess::Piece& piece) const
+RefPtr<Gfx::Bitmap> ChessWidget::get_piece_graphic(Chess::Piece const& piece) const
 {
     return m_pieces.get(piece).value();
 }
@@ -695,7 +691,7 @@ int ChessWidget::resign()
     }
 
     auto result = GUI::MessageBox::show(window(), "Are you sure you wish to resign?", "Resign", GUI::MessageBox::Type::Warning, GUI::MessageBox::InputType::YesNo);
-    if (result != GUI::MessageBox::ExecYes)
+    if (result != GUI::MessageBox::ExecResult::Yes)
         return -1;
 
     board().set_resigned(m_board.turn());

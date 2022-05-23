@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2018-2020, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2022, the SerenityOS developers.
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -9,7 +10,6 @@
 #include <AK/JsonArray.h>
 #include <AK/JsonObject.h>
 #include <AK/NonnullOwnPtrVector.h>
-#include <LibCore/LocalSocket.h>
 #include <LibGUI/Model.h>
 
 namespace Inspector {
@@ -23,7 +23,7 @@ public:
         return adopt_ref(*new RemoteObjectGraphModel(process));
     }
 
-    virtual ~RemoteObjectGraphModel() override;
+    virtual ~RemoteObjectGraphModel() override = default;
 
     virtual int row_count(const GUI::ModelIndex& = GUI::ModelIndex()) const override;
     virtual int column_count(const GUI::ModelIndex& = GUI::ModelIndex()) const override;

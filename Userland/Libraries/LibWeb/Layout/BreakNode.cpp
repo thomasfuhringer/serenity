@@ -16,18 +16,6 @@ BreakNode::BreakNode(DOM::Document& document, HTML::HTMLBRElement& element, Nonn
     set_inline(true);
 }
 
-BreakNode::~BreakNode()
-{
-}
-
-void BreakNode::split_into_lines(InlineFormattingContext& context, LayoutMode)
-{
-    auto& line_box = context.containing_block().add_line_box();
-    line_box.add_fragment(*this, 0, 0, 0, context.containing_block().line_height());
-}
-
-void BreakNode::paint(PaintContext&, PaintPhase)
-{
-}
+BreakNode::~BreakNode() = default;
 
 }

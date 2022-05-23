@@ -7,10 +7,10 @@
 #include <LibCore/EventLoop.h>
 #include <LibCore/LocalServer.h>
 #include <LibCore/System.h>
-#include <LibIPC/ClientConnection.h>
+#include <LibIPC/SingleServer.h>
 #include <LibMain/Main.h>
 #include <LibTLS/Certificate.h>
-#include <WebSocket/ClientConnection.h>
+#include <WebSocket/ConnectionFromClient.h>
 
 ErrorOr<int> serenity_main(Main::Arguments)
 {
@@ -21,11 +21,11 @@ ErrorOr<int> serenity_main(Main::Arguments)
 
     Core::EventLoop event_loop;
     // FIXME: Establish a connection to LookupServer and then drop "unix"?
-    TRY(Core::System::pledge("stdio inet unix sendfd recvfd"));
     TRY(Core::System::unveil("/tmp/portal/lookup", "rw"));
+    TRY(Core::System::unveil("/etc/timezone", "r"));
     TRY(Core::System::unveil(nullptr, nullptr));
 
-    auto socket = TRY(Core::LocalSocket::take_over_accepted_socket_from_system_server());
-    IPC::new_client_connection<WebSocket::ClientConnection>(move(socket), 1);
+    auto client = TRY(IPC::take_over_accepted_client_from_system_server<WebSocket::ConnectionFromClient>());
+
     return event_loop.exec();
 }

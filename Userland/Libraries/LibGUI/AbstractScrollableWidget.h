@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2018-2021, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2022, the SerenityOS developers.
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -15,7 +16,7 @@ class AbstractScrollableWidget : public Frame {
     C_OBJECT_ABSTRACT(AbstractScrollableWidget);
 
 public:
-    virtual ~AbstractScrollableWidget() override;
+    virtual ~AbstractScrollableWidget() override = default;
 
     Gfx::IntSize content_size() const { return m_content_size; }
     int content_width() const { return m_content_size.width(); }
@@ -32,8 +33,8 @@ public:
         return viewport_rect;
     }
 
-    void scroll_into_view(const Gfx::IntRect&, Orientation);
-    void scroll_into_view(const Gfx::IntRect&, bool scroll_horizontally, bool scroll_vertically);
+    void scroll_into_view(Gfx::IntRect const&, Orientation);
+    void scroll_into_view(Gfx::IntRect const&, bool scroll_horizontally, bool scroll_vertically);
 
     void set_scrollbars_enabled(bool);
     bool is_scrollbars_enabled() const { return m_scrollbars_enabled; }
@@ -42,17 +43,17 @@ public:
     Gfx::IntSize excess_size() const;
 
     Scrollbar& vertical_scrollbar() { return *m_vertical_scrollbar; }
-    const Scrollbar& vertical_scrollbar() const { return *m_vertical_scrollbar; }
+    Scrollbar const& vertical_scrollbar() const { return *m_vertical_scrollbar; }
     Scrollbar& horizontal_scrollbar() { return *m_horizontal_scrollbar; }
-    const Scrollbar& horizontal_scrollbar() const { return *m_horizontal_scrollbar; }
+    Scrollbar const& horizontal_scrollbar() const { return *m_horizontal_scrollbar; }
     Widget& corner_widget() { return *m_corner_widget; }
-    const Widget& corner_widget() const { return *m_corner_widget; }
+    Widget const& corner_widget() const { return *m_corner_widget; }
 
     void scroll_to_top();
     void scroll_to_bottom();
 
     void set_automatic_scrolling_timer(bool active);
-    virtual Gfx::IntPoint automatic_scroll_delta_from_position(const Gfx::IntPoint&) const;
+    virtual Gfx::IntPoint automatic_scroll_delta_from_position(Gfx::IntPoint const&) const;
 
     int width_occupied_by_vertical_scrollbar() const;
     int height_occupied_by_horizontal_scrollbar() const;
@@ -62,11 +63,11 @@ public:
     void set_should_hide_unnecessary_scrollbars(bool b) { m_should_hide_unnecessary_scrollbars = b; }
     bool should_hide_unnecessary_scrollbars() const { return m_should_hide_unnecessary_scrollbars; }
 
-    Gfx::IntPoint to_content_position(const Gfx::IntPoint& widget_position) const;
-    Gfx::IntPoint to_widget_position(const Gfx::IntPoint& content_position) const;
+    Gfx::IntPoint to_content_position(Gfx::IntPoint const& widget_position) const;
+    Gfx::IntPoint to_widget_position(Gfx::IntPoint const& content_position) const;
 
-    Gfx::IntRect to_content_rect(const Gfx::IntRect& widget_rect) const { return { to_content_position(widget_rect.location()), widget_rect.size() }; }
-    Gfx::IntRect to_widget_rect(const Gfx::IntRect& content_rect) const { return { to_widget_position(content_rect.location()), content_rect.size() }; }
+    Gfx::IntRect to_content_rect(Gfx::IntRect const& widget_rect) const { return { to_content_position(widget_rect.location()), widget_rect.size() }; }
+    Gfx::IntRect to_widget_rect(Gfx::IntRect const& content_rect) const { return { to_widget_position(content_rect.location()), content_rect.size() }; }
 
 protected:
     AbstractScrollableWidget();
@@ -74,8 +75,8 @@ protected:
     virtual void resize_event(ResizeEvent&) override;
     virtual void mousewheel_event(MouseEvent&) override;
     virtual void did_scroll() { }
-    void set_content_size(const Gfx::IntSize&);
-    void set_size_occupied_by_fixed_elements(const Gfx::IntSize&);
+    void set_content_size(Gfx::IntSize const&);
+    void set_size_occupied_by_fixed_elements(Gfx::IntSize const&);
     virtual void on_automatic_scrolling_timer_fired() {};
     int autoscroll_threshold() const { return m_autoscroll_threshold; }
 

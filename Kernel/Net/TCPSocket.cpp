@@ -22,11 +22,36 @@
 
 namespace Kernel {
 
-void TCPSocket::for_each(Function<void(const TCPSocket&)> callback)
+void TCPSocket::for_each(Function<void(TCPSocket const&)> callback)
 {
-    sockets_by_tuple().for_each_shared([&](const auto& it) {
+    sockets_by_tuple().for_each_shared([&](auto const& it) {
         callback(*it.value);
     });
+}
+
+ErrorOr<void> TCPSocket::try_for_each(Function<ErrorOr<void>(TCPSocket const&)> callback)
+{
+    return sockets_by_tuple().with_shared([&](auto const& sockets) -> ErrorOr<void> {
+        for (auto& it : sockets)
+            TRY(callback(*it.value));
+        return {};
+    });
+}
+
+bool TCPSocket::unref() const
+{
+    bool did_hit_zero = sockets_by_tuple().with_exclusive([&](auto& table) {
+        if (deref_base())
+            return false;
+        table.remove(tuple());
+        const_cast<TCPSocket&>(*this).revoke_weak_ptrs();
+        return true;
+    });
+    if (did_hit_zero) {
+        const_cast<TCPSocket&>(*this).will_be_destroyed();
+        delete this;
+    }
+    return did_hit_zero;
 }
 
 void TCPSocket::set_state(State new_state)
@@ -77,9 +102,9 @@ MutexProtected<HashMap<IPv4SocketTuple, TCPSocket*>>& TCPSocket::sockets_by_tupl
     return *s_socket_tuples;
 }
 
-RefPtr<TCPSocket> TCPSocket::from_tuple(const IPv4SocketTuple& tuple)
+RefPtr<TCPSocket> TCPSocket::from_tuple(IPv4SocketTuple const& tuple)
 {
-    return sockets_by_tuple().with_shared([&](const auto& table) -> RefPtr<TCPSocket> {
+    return sockets_by_tuple().with_shared([&](auto const& table) -> RefPtr<TCPSocket> {
         auto exact_match = table.get(tuple);
         if (exact_match.has_value())
             return { *exact_match.value() };
@@ -97,7 +122,7 @@ RefPtr<TCPSocket> TCPSocket::from_tuple(const IPv4SocketTuple& tuple)
         return {};
     });
 }
-ErrorOr<NonnullRefPtr<TCPSocket>> TCPSocket::try_create_client(const IPv4Address& new_local_address, u16 new_local_port, const IPv4Address& new_peer_address, u16 new_peer_port)
+ErrorOr<NonnullRefPtr<TCPSocket>> TCPSocket::try_create_client(IPv4Address const& new_local_address, u16 new_local_port, IPv4Address const& new_peer_address, u16 new_peer_port)
 {
     auto tuple = IPv4SocketTuple(new_local_address, new_local_port, new_peer_address, new_peer_port);
     return sockets_by_tuple().with_exclusive([&](auto& table) -> ErrorOr<NonnullRefPtr<TCPSocket>> {
@@ -125,16 +150,16 @@ ErrorOr<NonnullRefPtr<TCPSocket>> TCPSocket::try_create_client(const IPv4Address
 void TCPSocket::release_to_originator()
 {
     VERIFY(!!m_originator);
-    m_originator.strong_ref()->release_for_accept(this);
+    m_originator.strong_ref()->release_for_accept(*this);
     m_originator.clear();
 }
 
-void TCPSocket::release_for_accept(RefPtr<TCPSocket> socket)
+void TCPSocket::release_for_accept(NonnullRefPtr<TCPSocket> socket)
 {
     VERIFY(m_pending_release_for_accept.contains(socket->tuple()));
     m_pending_release_for_accept.remove(socket->tuple());
     // FIXME: Should we observe this error somehow?
-    [[maybe_unused]] auto rc = queue_connection_from(*socket);
+    [[maybe_unused]] auto rc = queue_connection_from(move(socket));
 }
 
 TCPSocket::TCPSocket(int protocol, NonnullOwnPtr<DoubleBuffer> receive_buffer, NonnullOwnPtr<KBuffer> scratch_buffer)
@@ -145,10 +170,6 @@ TCPSocket::TCPSocket(int protocol, NonnullOwnPtr<DoubleBuffer> receive_buffer, N
 
 TCPSocket::~TCPSocket()
 {
-    sockets_by_tuple().with_exclusive([&](auto& table) {
-        table.remove(tuple());
-    });
-
     dequeue_for_retransmit();
 
     dbgln_if(TCP_SOCKET_DEBUG, "~TCPSocket in state {}", to_string(state()));
@@ -161,10 +182,17 @@ ErrorOr<NonnullRefPtr<TCPSocket>> TCPSocket::try_create(int protocol, NonnullOwn
     return adopt_nonnull_ref_or_enomem(new (nothrow) TCPSocket(protocol, move(receive_buffer), move(scratch_buffer)));
 }
 
+ErrorOr<size_t> TCPSocket::protocol_size(ReadonlyBytes raw_ipv4_packet)
+{
+    auto& ipv4_packet = *reinterpret_cast<IPv4Packet const*>(raw_ipv4_packet.data());
+    auto& tcp_packet = *static_cast<TCPPacket const*>(ipv4_packet.payload());
+    return raw_ipv4_packet.size() - sizeof(IPv4Packet) - tcp_packet.header_size();
+}
+
 ErrorOr<size_t> TCPSocket::protocol_receive(ReadonlyBytes raw_ipv4_packet, UserOrKernelBuffer& buffer, size_t buffer_size, [[maybe_unused]] int flags)
 {
-    auto& ipv4_packet = *reinterpret_cast<const IPv4Packet*>(raw_ipv4_packet.data());
-    auto& tcp_packet = *static_cast<const TCPPacket*>(ipv4_packet.payload());
+    auto& ipv4_packet = *reinterpret_cast<IPv4Packet const*>(raw_ipv4_packet.data());
+    auto& tcp_packet = *static_cast<TCPPacket const*>(ipv4_packet.payload());
     size_t payload_size = raw_ipv4_packet.size() - sizeof(IPv4Packet) - tcp_packet.header_size();
     dbgln_if(TCP_SOCKET_DEBUG, "payload_size {}, will it fit in {}?", payload_size, buffer_size);
     VERIFY(buffer_size >= payload_size);
@@ -172,14 +200,14 @@ ErrorOr<size_t> TCPSocket::protocol_receive(ReadonlyBytes raw_ipv4_packet, UserO
     return payload_size;
 }
 
-ErrorOr<size_t> TCPSocket::protocol_send(const UserOrKernelBuffer& data, size_t data_length)
+ErrorOr<size_t> TCPSocket::protocol_send(UserOrKernelBuffer const& data, size_t data_length)
 {
     RoutingDecision routing_decision = route_to(peer_address(), local_address(), bound_interface());
     if (routing_decision.is_zero())
         return set_so_error(EHOSTUNREACH);
     size_t mss = routing_decision.adapter->mtu() - sizeof(IPv4Packet) - sizeof(TCPPacket);
     data_length = min(data_length, mss);
-    TRY(send_tcp_packet(TCPFlags::PUSH | TCPFlags::ACK, &data, data_length, &routing_decision));
+    TRY(send_tcp_packet(TCPFlags::PSH | TCPFlags::ACK, &data, data_length, &routing_decision));
     return data_length;
 }
 
@@ -190,7 +218,7 @@ ErrorOr<void> TCPSocket::send_ack(bool allow_duplicate)
     return send_tcp_packet(TCPFlags::ACK);
 }
 
-ErrorOr<void> TCPSocket::send_tcp_packet(u16 flags, const UserOrKernelBuffer* payload, size_t payload_size, RoutingDecision* user_routing_decision)
+ErrorOr<void> TCPSocket::send_tcp_packet(u16 flags, UserOrKernelBuffer const* payload, size_t payload_size, RoutingDecision* user_routing_decision)
 {
     RoutingDecision routing_decision = user_routing_decision ? *user_routing_decision : route_to(peer_address(), local_address(), bound_interface());
     if (routing_decision.is_zero())
@@ -198,7 +226,7 @@ ErrorOr<void> TCPSocket::send_tcp_packet(u16 flags, const UserOrKernelBuffer* pa
 
     auto ipv4_payload_offset = routing_decision.adapter->ipv4_payload_offset();
 
-    const bool has_mss_option = flags == TCPFlags::SYN;
+    bool const has_mss_option = flags == TCPFlags::SYN;
     const size_t options_size = has_mss_option ? sizeof(TCPOptionMSS) : 0;
     const size_t tcp_header_size = sizeof(TCPPacket) + options_size;
     const size_t buffer_size = ipv4_payload_offset + tcp_header_size + payload_size;
@@ -218,17 +246,17 @@ ErrorOr<void> TCPSocket::send_tcp_packet(u16 flags, const UserOrKernelBuffer* pa
     tcp_packet.set_data_offset(tcp_header_size / sizeof(u32));
     tcp_packet.set_flags(flags);
 
-    if (flags & TCPFlags::ACK) {
-        m_last_ack_number_sent = m_ack_number;
-        m_last_ack_sent_time = kgettimeofday();
-        tcp_packet.set_ack_number(m_ack_number);
-    }
-
     if (payload) {
         if (auto result = payload->read(tcp_packet.payload(), payload_size); result.is_error()) {
             routing_decision.adapter->release_packet_buffer(*packet);
             return set_so_error(result.release_error());
         }
+    }
+
+    if (flags & TCPFlags::ACK) {
+        m_last_ack_number_sent = m_ack_number;
+        m_last_ack_sent_time = kgettimeofday();
+        tcp_packet.set_ack_number(m_ack_number);
     }
 
     if (flags & TCPFlags::SYN) {
@@ -263,7 +291,7 @@ ErrorOr<void> TCPSocket::send_tcp_packet(u16 flags, const UserOrKernelBuffer* pa
     return {};
 }
 
-void TCPSocket::receive_tcp_packet(const TCPPacket& packet, u16 size)
+void TCPSocket::receive_tcp_packet(TCPPacket const& packet, u16 size)
 {
     if (packet.has_ack()) {
         u32 ack_number = packet.ack_number();
@@ -321,7 +349,7 @@ bool TCPSocket::should_delay_next_ack() const
     return true;
 }
 
-NetworkOrdered<u16> TCPSocket::compute_tcp_checksum(const IPv4Address& source, const IPv4Address& destination, const TCPPacket& packet, u16 payload_size)
+NetworkOrdered<u16> TCPSocket::compute_tcp_checksum(IPv4Address const& source, IPv4Address const& destination, TCPPacket const& packet, u16 payload_size)
 {
     struct [[gnu::packed]] PseudoHeader {
         IPv4Address source;
@@ -354,7 +382,7 @@ NetworkOrdered<u16> TCPSocket::compute_tcp_checksum(const IPv4Address& source, c
             checksum = (checksum >> 16) + (checksum & 0xffff);
     }
     if (payload_size & 1) {
-        u16 expanded_byte = ((const u8*)packet.payload())[payload_size - 1] << 8;
+        u16 expanded_byte = ((u8 const*)packet.payload())[payload_size - 1] << 8;
         checksum += expanded_byte;
         if (checksum > 0xffff)
             checksum = (checksum >> 16) + (checksum & 0xffff);
@@ -482,8 +510,8 @@ bool TCPSocket::protocol_is_disconnected() const
 void TCPSocket::shut_down_for_writing()
 {
     if (state() == State::Established) {
-        dbgln_if(TCP_SOCKET_DEBUG, " Sending FIN/ACK from Established and moving into FinWait1");
-        [[maybe_unused]] auto rc = send_tcp_packet(TCPFlags::FIN | TCPFlags::ACK);
+        dbgln_if(TCP_SOCKET_DEBUG, " Sending FIN from Established and moving into FinWait1");
+        (void)send_tcp_packet(TCPFlags::FIN);
         set_state(State::FinWait1);
     } else {
         dbgln(" Shutting down TCPSocket for writing but not moving to FinWait1 since state is {}", to_string(state()));
@@ -595,7 +623,7 @@ void TCPSocket::retransmit_packets()
     });
 }
 
-bool TCPSocket::can_write(const OpenFileDescription& file_description, size_t size) const
+bool TCPSocket::can_write(OpenFileDescription const& file_description, u64 size) const
 {
     if (!IPv4Socket::can_write(file_description, size))
         return false;

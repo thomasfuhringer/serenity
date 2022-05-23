@@ -6,7 +6,6 @@
 
 #pragma once
 
-#include <AK/String.h>
 #include <AK/Vector.h>
 #include <Kernel/Bus/PCI/Definitions.h>
 #include <Kernel/FileSystem/SysFS.h>
@@ -16,6 +15,7 @@ namespace Kernel::PCI {
 class PCIBusSysFSDirectory final : public SysFSDirectory {
 public:
     static void initialize();
+    virtual StringView name() const override { return "pci"sv; }
 
 private:
     PCIBusSysFSDirectory();
@@ -23,25 +23,31 @@ private:
 
 class PCIDeviceSysFSDirectory final : public SysFSDirectory {
 public:
-    static NonnullRefPtr<PCIDeviceSysFSDirectory> create(const SysFSDirectory&, Address);
-    const Address& address() const { return m_address; }
+    static NonnullRefPtr<PCIDeviceSysFSDirectory> create(SysFSDirectory const&, Address);
+    Address const& address() const { return m_address; }
+
+    virtual StringView name() const override { return m_device_directory_name->view(); }
 
 private:
-    PCIDeviceSysFSDirectory(const SysFSDirectory&, Address);
+    PCIDeviceSysFSDirectory(NonnullOwnPtr<KString> device_directory_name, SysFSDirectory const&, Address);
 
     Address m_address;
+
+    NonnullOwnPtr<KString> m_device_directory_name;
 };
 
 class PCIDeviceAttributeSysFSComponent : public SysFSComponent {
 public:
-    static NonnullRefPtr<PCIDeviceAttributeSysFSComponent> create(String name, const PCIDeviceSysFSDirectory& device, PCI::RegisterOffset offset, size_t field_bytes_width);
+    static NonnullRefPtr<PCIDeviceAttributeSysFSComponent> create(PCIDeviceSysFSDirectory const& device, PCI::RegisterOffset offset, size_t field_bytes_width);
 
     virtual ErrorOr<size_t> read_bytes(off_t, size_t, UserOrKernelBuffer&, OpenFileDescription*) const override;
     virtual ~PCIDeviceAttributeSysFSComponent() {};
 
+    virtual StringView name() const override;
+
 protected:
     ErrorOr<NonnullOwnPtr<KBuffer>> try_to_generate_buffer() const;
-    PCIDeviceAttributeSysFSComponent(String name, const PCIDeviceSysFSDirectory& device, PCI::RegisterOffset offset, size_t field_bytes_width);
+    PCIDeviceAttributeSysFSComponent(PCIDeviceSysFSDirectory const& device, PCI::RegisterOffset offset, size_t field_bytes_width);
     NonnullRefPtr<PCIDeviceSysFSDirectory> m_device;
     PCI::RegisterOffset m_offset;
     size_t m_field_bytes_width;

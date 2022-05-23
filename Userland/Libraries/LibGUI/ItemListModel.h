@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2019-2020, Jesse Buhgaiar <jooster669@gmail.com>
+ * Copyright (c) 2022, the SerenityOS developers.
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -34,11 +35,13 @@ public:
         return adopt_ref(*new ItemListModel<T, Container>(data, row_count));
     }
 
-    virtual ~ItemListModel() override { }
+    virtual ~ItemListModel() override = default;
 
-    virtual int row_count(ModelIndex const&) const override
+    virtual int row_count(ModelIndex const& index) const override
     {
-        return m_provided_row_count.has_value() ? *m_provided_row_count : m_data.size();
+        if (!index.is_valid())
+            return m_provided_row_count.has_value() ? *m_provided_row_count : m_data.size();
+        return 0;
     }
 
     virtual int column_count(ModelIndex const& index) const override
@@ -75,6 +78,13 @@ public:
         }
 
         return {};
+    }
+
+    virtual TriState data_matches(GUI::ModelIndex const& index, GUI::Variant const& term) const override
+    {
+        if (index.data().as_string().contains(term.as_string(), CaseSensitivity::CaseInsensitive))
+            return TriState::True;
+        return TriState::False;
     }
 
     virtual bool is_searchable() const override { return true; }

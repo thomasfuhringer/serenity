@@ -1,195 +1,210 @@
 /*
  * Copyright (c) 2020, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2022, Jelle Raaijmakers <jelle@gmta.nl>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #include <AK/String.h>
 #include <AK/StringBuilder.h>
+#include <AK/Utf8View.h>
 #include <LibTextCodec/Decoder.h>
 
 namespace TextCodec {
 
 namespace {
-Latin1Decoder& latin1_decoder()
-{
-    static Latin1Decoder* decoder = nullptr;
-    if (!decoder)
-        decoder = new Latin1Decoder;
-    return *decoder;
+Latin1Decoder s_latin1_decoder;
+UTF8Decoder s_utf8_decoder;
+UTF16BEDecoder s_utf16be_decoder;
+UTF16LEDecoder s_utf16le_decoder;
+Latin2Decoder s_latin2_decoder;
+HebrewDecoder s_hebrew_decoder;
+CyrillicDecoder s_cyrillic_decoder;
+Koi8RDecoder s_koi8r_decoder;
+Latin9Decoder s_latin9_decoder;
+TurkishDecoder s_turkish_decoder;
+XUserDefinedDecoder s_x_user_defined_decoder;
 }
 
-UTF8Decoder& utf8_decoder()
-{
-    static UTF8Decoder* decoder = nullptr;
-    if (!decoder)
-        decoder = new UTF8Decoder;
-    return *decoder;
-}
-
-UTF16BEDecoder& utf16be_decoder()
-{
-    static UTF16BEDecoder* decoder = nullptr;
-    if (!decoder)
-        decoder = new UTF16BEDecoder;
-    return *decoder;
-}
-
-Latin2Decoder& latin2_decoder()
-{
-    static Latin2Decoder* decoder = nullptr;
-    if (!decoder)
-        decoder = new Latin2Decoder;
-    return *decoder;
-}
-
-HebrewDecoder& hebrew_decoder()
-{
-    static HebrewDecoder* decoder = nullptr;
-    if (!decoder)
-        decoder = new HebrewDecoder;
-    return *decoder;
-}
-
-CyrillicDecoder& cyrillic_decoder()
-{
-    static CyrillicDecoder* decoder = nullptr;
-    if (!decoder)
-        decoder = new CyrillicDecoder;
-    return *decoder;
-}
-
-Latin9Decoder& latin9_decoder()
-{
-    static Latin9Decoder* decoder = nullptr;
-    if (!decoder)
-        decoder = new Latin9Decoder;
-    return *decoder;
-}
-
-TurkishDecoder& turkish_decoder()
-{
-    static TurkishDecoder* decoder = nullptr;
-    if (!decoder)
-        decoder = new TurkishDecoder;
-    return *decoder;
-}
-
-}
-
-Decoder* decoder_for(const String& a_encoding)
+Decoder* decoder_for(String const& a_encoding)
 {
     auto encoding = get_standardized_encoding(a_encoding);
     if (encoding.has_value()) {
         if (encoding.value().equals_ignoring_case("windows-1252"))
-            return &latin1_decoder();
+            return &s_latin1_decoder;
         if (encoding.value().equals_ignoring_case("utf-8"))
-            return &utf8_decoder();
+            return &s_utf8_decoder;
         if (encoding.value().equals_ignoring_case("utf-16be"))
-            return &utf16be_decoder();
+            return &s_utf16be_decoder;
+        if (encoding.value().equals_ignoring_case("utf-16le"))
+            return &s_utf16le_decoder;
         if (encoding.value().equals_ignoring_case("iso-8859-2"))
-            return &latin2_decoder();
+            return &s_latin2_decoder;
         if (encoding.value().equals_ignoring_case("windows-1255"))
-            return &hebrew_decoder();
+            return &s_hebrew_decoder;
         if (encoding.value().equals_ignoring_case("windows-1251"))
-            return &cyrillic_decoder();
+            return &s_cyrillic_decoder;
+        if (encoding.value().equals_ignoring_case("koi8-r"))
+            return &s_koi8r_decoder;
         if (encoding.value().equals_ignoring_case("iso-8859-15"))
-            return &latin9_decoder();
+            return &s_latin9_decoder;
         if (encoding.value().equals_ignoring_case("windows-1254"))
-            return &turkish_decoder();
+            return &s_turkish_decoder;
+        if (encoding.value().equals_ignoring_case("x-user-defined"))
+            return &s_x_user_defined_decoder;
     }
     dbgln("TextCodec: No decoder implemented for encoding '{}'", a_encoding);
     return nullptr;
 }
 
 // https://encoding.spec.whatwg.org/#concept-encoding-get
-Optional<String> get_standardized_encoding(const String& encoding)
+Optional<StringView> get_standardized_encoding(StringView encoding)
 {
-    String trimmed_lowercase_encoding = encoding.trim_whitespace().to_lowercase();
+    encoding = encoding.trim_whitespace();
 
-    if (trimmed_lowercase_encoding.is_one_of("unicode-1-1-utf-8", "unicode11utf8", "unicode20utf8", "utf-8", "utf8", "x-unicode20utf8"))
+    if (encoding.is_one_of_ignoring_case("unicode-1-1-utf-8", "unicode11utf8", "unicode20utf8", "utf-8", "utf8", "x-unicode20utf8"))
         return "UTF-8";
-    if (trimmed_lowercase_encoding.is_one_of("866", "cp866", "csibm866", "ibm866"))
+    if (encoding.is_one_of_ignoring_case("866", "cp866", "csibm866", "ibm866"))
         return "IBM866";
-    if (trimmed_lowercase_encoding.is_one_of("csisolatin2", "iso-8859-2", "iso-ir-101", "iso8859-2", "iso88592", "iso_8859-2", "iso_8859-2:1987", "l2", "latin2"))
+    if (encoding.is_one_of_ignoring_case("csisolatin2", "iso-8859-2", "iso-ir-101", "iso8859-2", "iso88592", "iso_8859-2", "iso_8859-2:1987", "l2", "latin2"))
         return "ISO-8859-2";
-    if (trimmed_lowercase_encoding.is_one_of("csisolatin3", "iso-8859-3", "iso-ir-109", "iso8859-3", "iso88593", "iso_8859-3", "iso_8859-3:1988", "l3", "latin3"))
+    if (encoding.is_one_of_ignoring_case("csisolatin3", "iso-8859-3", "iso-ir-109", "iso8859-3", "iso88593", "iso_8859-3", "iso_8859-3:1988", "l3", "latin3"))
         return "ISO-8859-3";
-    if (trimmed_lowercase_encoding.is_one_of("csisolatin4", "iso-8859-4", "iso-ir-110", "iso8859-4", "iso88594", "iso_8859-4", "iso_8859-4:1989", "l4", "latin4"))
+    if (encoding.is_one_of_ignoring_case("csisolatin4", "iso-8859-4", "iso-ir-110", "iso8859-4", "iso88594", "iso_8859-4", "iso_8859-4:1989", "l4", "latin4"))
         return "ISO-8859-4";
-    if (trimmed_lowercase_encoding.is_one_of("csisolatincyrillic", "cyrillic", "iso-8859-5", "iso-ir-144", "iso8859-5", "iso88595", "iso_8859-5", "iso_8859-5:1988"))
+    if (encoding.is_one_of_ignoring_case("csisolatincyrillic", "cyrillic", "iso-8859-5", "iso-ir-144", "iso8859-5", "iso88595", "iso_8859-5", "iso_8859-5:1988"))
         return "ISO-8859-5";
-    if (trimmed_lowercase_encoding.is_one_of("arabic", "asmo-708", "csiso88596e", "csiso88596i", "csisolatinarabic", "ecma-114", "iso-8859-6", "iso-8859-6-e", "iso-8859-6-i", "iso-ir-127", "iso8859-6", "iso88596", "iso_8859-6", "iso_8859-6:1987"))
+    if (encoding.is_one_of_ignoring_case("arabic", "asmo-708", "csiso88596e", "csiso88596i", "csisolatinarabic", "ecma-114", "iso-8859-6", "iso-8859-6-e", "iso-8859-6-i", "iso-ir-127", "iso8859-6", "iso88596", "iso_8859-6", "iso_8859-6:1987"))
         return "ISO-8859-6";
-    if (trimmed_lowercase_encoding.is_one_of("csisolatingreek", "ecma-118", "elot_928", "greek", "greek8", "iso-8859-7", "iso-ir-126", "iso8859-7", "iso88597", "iso_8859-7", "iso_8859-7:1987", "sun_eu_greek"))
+    if (encoding.is_one_of_ignoring_case("csisolatingreek", "ecma-118", "elot_928", "greek", "greek8", "iso-8859-7", "iso-ir-126", "iso8859-7", "iso88597", "iso_8859-7", "iso_8859-7:1987", "sun_eu_greek"))
         return "ISO-8859-7";
-    if (trimmed_lowercase_encoding.is_one_of("csiso88598e", "csisolatinhebrew", "hebrew", "iso-8859-8", "iso-8859-8-e", "iso-ir-138", "iso8859-8", "iso88598", "iso_8859-8", "iso_8859-8:1988", "visual"))
+    if (encoding.is_one_of_ignoring_case("csiso88598e", "csisolatinhebrew", "hebrew", "iso-8859-8", "iso-8859-8-e", "iso-ir-138", "iso8859-8", "iso88598", "iso_8859-8", "iso_8859-8:1988", "visual"))
         return "ISO-8859-8";
-    if (trimmed_lowercase_encoding.is_one_of("csiso88598i", "iso-8859-8-i", "logical"))
+    if (encoding.is_one_of_ignoring_case("csiso88598i", "iso-8859-8-i", "logical"))
         return "ISO-8859-8-I";
-    if (trimmed_lowercase_encoding.is_one_of("csisolatin6", "iso8859-10", "iso-ir-157", "iso8859-10", "iso885910", "l6", "latin6"))
+    if (encoding.is_one_of_ignoring_case("csisolatin6", "iso8859-10", "iso-ir-157", "iso8859-10", "iso885910", "l6", "latin6"))
         return "ISO-8859-10";
-    if (trimmed_lowercase_encoding.is_one_of("iso-8859-13", "iso8859-13", "iso885913"))
+    if (encoding.is_one_of_ignoring_case("iso-8859-13", "iso8859-13", "iso885913"))
         return "ISO-8859-13";
-    if (trimmed_lowercase_encoding.is_one_of("iso-8859-14", "iso8859-14", "iso885914"))
+    if (encoding.is_one_of_ignoring_case("iso-8859-14", "iso8859-14", "iso885914"))
         return "ISO-8859-14";
-    if (trimmed_lowercase_encoding.is_one_of("csisolatin9", "iso-8859-15", "iso8859-15", "iso885915", "iso_8859-15", "l9"))
+    if (encoding.is_one_of_ignoring_case("csisolatin9", "iso-8859-15", "iso8859-15", "iso885915", "iso_8859-15", "l9"))
         return "ISO-8859-15";
-    if (trimmed_lowercase_encoding == "iso-8859-16")
+    if (encoding.is_one_of_ignoring_case("iso-8859-16"))
         return "ISO-8859-16";
-    if (trimmed_lowercase_encoding.is_one_of("cskoi8r", "koi", "koi8", "koi8-r", "koi8_r"))
+    if (encoding.is_one_of_ignoring_case("cskoi8r", "koi", "koi8", "koi8-r", "koi8_r"))
         return "KOI8-R";
-    if (trimmed_lowercase_encoding.is_one_of("koi8-ru", "koi8-u"))
+    if (encoding.is_one_of_ignoring_case("koi8-ru", "koi8-u"))
         return "KOI8-U";
-    if (trimmed_lowercase_encoding.is_one_of("csmacintosh", "mac", "macintosh", "x-mac-roman"))
+    if (encoding.is_one_of_ignoring_case("csmacintosh", "mac", "macintosh", "x-mac-roman"))
         return "macintosh";
-    if (trimmed_lowercase_encoding.is_one_of("dos-874", "iso-8859-11", "iso8859-11", "iso885911", "tis-620", "windows-874"))
+    if (encoding.is_one_of_ignoring_case("dos-874", "iso-8859-11", "iso8859-11", "iso885911", "tis-620", "windows-874"))
         return "windows-874";
-    if (trimmed_lowercase_encoding.is_one_of("cp1250", "windows-1250", "x-cp1250"))
+    if (encoding.is_one_of_ignoring_case("cp1250", "windows-1250", "x-cp1250"))
         return "windows-1250";
-    if (trimmed_lowercase_encoding.is_one_of("cp1251", "windows-1251", "x-cp1251"))
+    if (encoding.is_one_of_ignoring_case("cp1251", "windows-1251", "x-cp1251"))
         return "windows-1251";
-    if (trimmed_lowercase_encoding.is_one_of("ansi_x3.4-1968", "ascii", "cp1252", "cp819", "csisolatin1", "ibm819", "iso-8859-1", "iso-ir-100", "iso8859-1", "iso88591", "iso_8859-1", "iso_8859-1:1987", "l1", "latin1", "us-ascii", "windows-1252", "x-cp1252"))
+    if (encoding.is_one_of_ignoring_case("ansi_x3.4-1968", "ascii", "cp1252", "cp819", "csisolatin1", "ibm819", "iso-8859-1", "iso-ir-100", "iso8859-1", "iso88591", "iso_8859-1", "iso_8859-1:1987", "l1", "latin1", "us-ascii", "windows-1252", "x-cp1252"))
         return "windows-1252";
-    if (trimmed_lowercase_encoding.is_one_of("cp1253", "windows-1253", "x-cp1253"))
+    if (encoding.is_one_of_ignoring_case("cp1253", "windows-1253", "x-cp1253"))
         return "windows-1253";
-    if (trimmed_lowercase_encoding.is_one_of("cp1254", "csisolatin5", "iso-8859-9", "iso-ir-148", "iso-8859-9", "iso-88599", "iso_8859-9", "iso_8859-9:1989", "l5", "latin5", "windows-1254", "x-cp1254"))
+    if (encoding.is_one_of_ignoring_case("cp1254", "csisolatin5", "iso-8859-9", "iso-ir-148", "iso-8859-9", "iso-88599", "iso_8859-9", "iso_8859-9:1989", "l5", "latin5", "windows-1254", "x-cp1254"))
         return "windows-1254";
-    if (trimmed_lowercase_encoding.is_one_of("cp1255", "windows-1255", "x-cp1255"))
+    if (encoding.is_one_of_ignoring_case("cp1255", "windows-1255", "x-cp1255"))
         return "windows-1255";
-    if (trimmed_lowercase_encoding.is_one_of("cp1256", "windows-1256", "x-cp1256"))
+    if (encoding.is_one_of_ignoring_case("cp1256", "windows-1256", "x-cp1256"))
         return "windows-1256";
-    if (trimmed_lowercase_encoding.is_one_of("cp1257", "windows-1257", "x-cp1257"))
+    if (encoding.is_one_of_ignoring_case("cp1257", "windows-1257", "x-cp1257"))
         return "windows-1257";
-    if (trimmed_lowercase_encoding.is_one_of("cp1258", "windows-1258", "x-cp1258"))
+    if (encoding.is_one_of_ignoring_case("cp1258", "windows-1258", "x-cp1258"))
         return "windows-1258";
-    if (trimmed_lowercase_encoding.is_one_of("x-mac-cyrillic", "x-mac-ukrainian"))
+    if (encoding.is_one_of_ignoring_case("x-mac-cyrillic", "x-mac-ukrainian"))
         return "x-mac-cyrillic";
-    if (trimmed_lowercase_encoding.is_one_of("chinese", "csgb2312", "csiso58gb231280", "gb2312", "gb_2312", "gb_2312-80", "gbk", "iso-ir-58", "x-gbk"))
+    if (encoding.is_one_of_ignoring_case("koi8-r", "koi8r"))
+        return "koi8-r";
+    if (encoding.is_one_of_ignoring_case("chinese", "csgb2312", "csiso58gb231280", "gb2312", "gb_2312", "gb_2312-80", "gbk", "iso-ir-58", "x-gbk"))
         return "GBK";
-    if (trimmed_lowercase_encoding == "gb18030")
+    if (encoding.is_one_of_ignoring_case("gb18030"))
         return "gb18030";
-    if (trimmed_lowercase_encoding.is_one_of("big5", "big5-hkscs", "cn-big5", "csbig5", "x-x-big5"))
+    if (encoding.is_one_of_ignoring_case("big5", "big5-hkscs", "cn-big5", "csbig5", "x-x-big5"))
         return "Big5";
-    if (trimmed_lowercase_encoding.is_one_of("cseucpkdfmtjapanese", "euc-jp", "x-euc-jp"))
+    if (encoding.is_one_of_ignoring_case("cseucpkdfmtjapanese", "euc-jp", "x-euc-jp"))
         return "EUC-JP";
-    if (trimmed_lowercase_encoding.is_one_of("csiso2022jp", "iso-2022-jp"))
+    if (encoding.is_one_of_ignoring_case("csiso2022jp", "iso-2022-jp"))
         return "ISO-2022-JP";
-    if (trimmed_lowercase_encoding.is_one_of("csshiftjis", "ms932", "ms_kanji", "shift-jis", "shift_jis", "sjis", "windows-31j", "x-sjis"))
+    if (encoding.is_one_of_ignoring_case("csshiftjis", "ms932", "ms_kanji", "shift-jis", "shift_jis", "sjis", "windows-31j", "x-sjis"))
         return "Shift_JIS";
-    if (trimmed_lowercase_encoding.is_one_of("cseuckr", "csksc56011987", "euc-kr", "iso-ir-149", "korean", "ks_c_5601-1987", "ks_c_5601-1989", "ksc5601", "ksc_5601", "windows-949"))
+    if (encoding.is_one_of_ignoring_case("cseuckr", "csksc56011987", "euc-kr", "iso-ir-149", "korean", "ks_c_5601-1987", "ks_c_5601-1989", "ksc5601", "ksc_5601", "windows-949"))
         return "EUC-KR";
-    if (trimmed_lowercase_encoding.is_one_of("csiso2022kr", "hz-gb-2312", "iso-2022-cn", "iso-2022-cn-ext", "iso-2022-kr", "replacement"))
+    if (encoding.is_one_of_ignoring_case("csiso2022kr", "hz-gb-2312", "iso-2022-cn", "iso-2022-cn-ext", "iso-2022-kr", "replacement"))
         return "replacement";
-    if (trimmed_lowercase_encoding.is_one_of("unicodefffe", "utf-16be"))
+    if (encoding.is_one_of_ignoring_case("unicodefffe", "utf-16be"))
         return "UTF-16BE";
-    if (trimmed_lowercase_encoding.is_one_of("csunicode", "iso-10646-ucs-2", "ucs-2", "unicode", "unicodefeff", "utf-16", "utf-16le"))
+    if (encoding.is_one_of_ignoring_case("csunicode", "iso-10646-ucs-2", "ucs-2", "unicode", "unicodefeff", "utf-16", "utf-16le"))
         return "UTF-16LE";
-    if (trimmed_lowercase_encoding == "x-user-defined")
+    if (encoding.is_one_of_ignoring_case("x-user-defined"))
         return "x-user-defined";
 
     dbgln("TextCodec: Unrecognized encoding: {}", encoding);
     return {};
+}
+
+// https://encoding.spec.whatwg.org/#bom-sniff
+Decoder* bom_sniff_to_decoder(StringView input)
+{
+    // 1. Let BOM be the result of peeking 3 bytes from ioQueue, converted to a byte sequence.
+    // 2. For each of the rows in the table below, starting with the first one and going down,
+    //    if BOM starts with the bytes given in the first column, then return the encoding given
+    //    in the cell in the second column of that row. Otherwise, return null.
+
+    // Byte Order Mark | Encoding
+    // --------------------------
+    // 0xEF 0xBB 0xBF  | UTF-8
+    // 0xFE 0xFF       | UTF-16BE
+    // 0xFF 0xFE       | UTF-16LE
+
+    auto bytes = input.bytes();
+    if (bytes.size() < 2)
+        return nullptr;
+
+    auto first_byte = bytes[0];
+
+    switch (first_byte) {
+    case 0xEF: // UTF-8
+        if (bytes.size() < 3)
+            return nullptr;
+        return bytes[1] == 0xBB && bytes[2] == 0xBF ? &s_utf8_decoder : nullptr;
+    case 0xFE: // UTF-16BE
+        return bytes[1] == 0xFF ? &s_utf16be_decoder : nullptr;
+    case 0xFF: // UTF-16LE
+        return bytes[1] == 0xFE ? &s_utf16le_decoder : nullptr;
+    }
+
+    return nullptr;
+}
+
+// https://encoding.spec.whatwg.org/#decode
+String convert_input_to_utf8_using_given_decoder_unless_there_is_a_byte_order_mark(Decoder& fallback_decoder, StringView input)
+{
+    Decoder* actual_decoder = &fallback_decoder;
+
+    // 1. Let BOMEncoding be the result of BOM sniffing ioQueue.
+    // 2. If BOMEncoding is non-null:
+    if (auto* unicode_decoder = bom_sniff_to_decoder(input); unicode_decoder) {
+        // 1. Set encoding to BOMEncoding.
+        actual_decoder = unicode_decoder;
+
+        // 2. Read three bytes from ioQueue, if BOMEncoding is UTF-8; otherwise read two bytes. (Do nothing with those bytes.)
+        // FIXME: I imagine this will be pretty slow for large inputs, as it's regenerating the input without the first 2/3 bytes.
+        input = input.substring_view(unicode_decoder == &s_utf8_decoder ? 3 : 2);
+    }
+
+    VERIFY(actual_decoder);
+
+    // FIXME: 3. Process a queue with an instance of encoding’s decoder, ioQueue, output, and "replacement".
+    //        This isn't the exact same as the spec, especially the error mode of "replacement", which we don't have the concept of yet.
+    // 4. Return output.
+    return actual_decoder->to_utf8(input);
 }
 
 String Decoder::to_utf8(StringView input)
@@ -201,7 +216,7 @@ String Decoder::to_utf8(StringView input)
 
 void UTF8Decoder::process(StringView input, Function<void(u32)> on_code_point)
 {
-    for (auto c : input) {
+    for (auto c : Utf8View(input)) {
         on_code_point(c);
     }
 }
@@ -230,9 +245,29 @@ String UTF16BEDecoder::to_utf8(StringView input)
 {
     // Discard the BOM
     auto bomless_input = input;
-    if (auto bytes = input.bytes(); bytes.size() >= 2 && bytes[0] == 0xFE && bytes[1] == 0xFF) {
+    if (auto bytes = input.bytes(); bytes.size() >= 2 && bytes[0] == 0xFE && bytes[1] == 0xFF)
         bomless_input = input.substring_view(2);
+
+    StringBuilder builder(bomless_input.length() / 2);
+    process(bomless_input, [&builder](u32 c) { builder.append_code_point(c); });
+    return builder.to_string();
+}
+
+void UTF16LEDecoder::process(StringView input, Function<void(u32)> on_code_point)
+{
+    size_t utf16_length = input.length() - (input.length() % 2);
+    for (size_t i = 0; i < utf16_length; i += 2) {
+        u16 code_point = input[i] | (input[i + 1] << 8);
+        on_code_point(code_point);
     }
+}
+
+String UTF16LEDecoder::to_utf8(StringView input)
+{
+    // Discard the BOM
+    auto bomless_input = input;
+    if (auto bytes = input.bytes(); bytes.size() >= 2 && bytes[0] == 0xFF && bytes[1] == 0xFE)
+        bomless_input = input.substring_view(2);
 
     StringBuilder builder(bomless_input.length() / 2);
     process(bomless_input, [&builder](u32 c) { builder.append_code_point(c); });
@@ -376,6 +411,30 @@ void CyrillicDecoder::process(StringView input, Function<void(u32)> on_code_poin
     }
 }
 
+void Koi8RDecoder::process(StringView input, Function<void(u32)> on_code_point)
+{
+    // clang-format off
+    static constexpr Array<u32, 128> translation_table = {
+        0x2500,0x2502,0x250c,0x2510,0x2514,0x2518,0x251c,0x2524,0x252c,0x2534,0x253c,0x2580,0x2584,0x2588,0x258c,0x2590,
+        0x2591,0x2592,0x2593,0x2320,0x25a0,0x2219,0x221a,0x2248,0x2264,0x2265,0xA0,0x2321,0xb0,0xb2,0xb7,0xf7,
+        0x2550,0x2551,0x2552,0xd191,0x2553,0x2554,0x2555,0x2556,0x2557,0x2558,0x2559,0x255a,0x255b,0x255c,0x255d,0x255e,
+        0x255f,0x2560,0x2561,0xd081,0x2562,0x2563,0x2564,0x2565,0x2566,0x2567,0x2568,0x2569,0x256a,0x256b,0x256c,0xa9,
+        0x44e,0x430,0x431,0x446,0x434,0x435,0x444,0x433,0x445,0x438,0x439,0x43a,0x43b,0x43c,0x43d,0x43e,
+        0x43f,0x44f,0x440,0x441,0x442,0x443,0x436,0x432,0x44c,0x44b,0x437,0x448,0x44d,0x449,0x447,0x44a,
+        0x42e,0x410,0x441,0x426,0x414,0x415,0x424,0x413,0x425,0x418,0x419,0x41a,0x41b,0x41c,0x41d,0x41e,
+        0x41f,0x42f,0x420,0x421,0x422,0x423,0x416,0x412,0x42c,0x42b,0x417,0x428,0x42d,0x429,0x427,0x42a,
+    };
+    // clang-format on
+
+    for (unsigned char ch : input) {
+        if (ch < 0x80) { // Superset of ASCII
+            on_code_point(ch);
+        } else {
+            on_code_point(translation_table[ch - 0x80]);
+        }
+    }
+}
+
 void Latin9Decoder::process(StringView input, Function<void(u32)> on_code_point)
 {
     auto convert_latin9_to_utf8 = [](u8 ch) -> u32 {
@@ -432,6 +491,28 @@ void TurkishDecoder::process(StringView input, Function<void(u32)> on_code_point
     for (auto ch : input) {
         on_code_point(convert_turkish_to_utf8(ch));
     }
+}
+
+// https://encoding.spec.whatwg.org/#x-user-defined-decoder
+void XUserDefinedDecoder::process(StringView input, Function<void(u32)> on_code_point)
+{
+    auto convert_x_user_defined_to_utf8 = [](u8 ch) -> u32 {
+        // 2. If byte is an ASCII byte, return a code point whose value is byte.
+        // https://infra.spec.whatwg.org/#ascii-byte
+        // An ASCII byte is a byte in the range 0x00 (NUL) to 0x7F (DEL), inclusive.
+        // NOTE: This doesn't check for ch >= 0x00, as that would always be true due to being unsigned.
+        if (ch <= 0x7f)
+            return ch;
+
+        // 3. Return a code point whose value is 0xF780 + byte − 0x80.
+        return 0xF780 + ch - 0x80;
+    };
+
+    for (auto ch : input) {
+        on_code_point(convert_x_user_defined_to_utf8(ch));
+    }
+
+    // 1. If byte is end-of-queue, return finished.
 }
 
 }

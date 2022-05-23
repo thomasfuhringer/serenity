@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2021, Sam Atkins <atkinssj@serenityos.org>
+ * Copyright (c) 2021-2022, Sam Atkins <atkinssj@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -18,12 +18,14 @@ class CSSMediaRule final : public CSSConditionRule {
     AK_MAKE_NONMOVABLE(CSSMediaRule);
 
 public:
+    using WrapperType = Bindings::CSSMediaRuleWrapper;
+
     static NonnullRefPtr<CSSMediaRule> create(NonnullRefPtr<MediaList>&& media_queries, NonnullRefPtrVector<CSSRule>&& rules)
     {
         return adopt_ref(*new CSSMediaRule(move(media_queries), move(rules)));
     }
 
-    ~CSSMediaRule();
+    virtual ~CSSMediaRule() = default;
 
     virtual StringView class_name() const override { return "CSSMediaRule"; };
     virtual Type type() const override { return Type::Media; };
@@ -34,7 +36,7 @@ public:
 
     NonnullRefPtr<MediaList> const& media() const { return m_media; }
 
-    bool evaluate(DOM::Window const& window) { return m_media->evaluate(window); }
+    bool evaluate(HTML::Window const& window) { return m_media->evaluate(window); }
 
 private:
     explicit CSSMediaRule(NonnullRefPtr<MediaList>&&, NonnullRefPtrVector<CSSRule>&&);

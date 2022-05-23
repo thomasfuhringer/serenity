@@ -2,7 +2,9 @@
 port=ntbtls
 version=0.2.0
 useconfigure=true
-depends=("libgpg-error" "libksba" "libgcrypt")
+use_fresh_config_sub=true
+config_sub_path=build-aux/config.sub
+depends=("libgpg-error" "libksba" "libgcrypt" "zlib")
 files="https://gnupg.org/ftp/gcrypt/ntbtls/ntbtls-${version}.tar.bz2 ntbtls-${version}.tar.bz2 649fe74a311d13e43b16b26ebaa91665ddb632925b73902592eac3ed30519e17"
 auth_type=sha256
 

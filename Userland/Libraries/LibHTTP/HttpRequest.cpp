@@ -1,23 +1,16 @@
 /*
  * Copyright (c) 2018-2020, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2022, the SerenityOS developers.
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #include <AK/Base64.h>
 #include <AK/StringBuilder.h>
-#include <LibHTTP/HttpJob.h>
 #include <LibHTTP/HttpRequest.h>
+#include <LibHTTP/Job.h>
 
 namespace HTTP {
-
-HttpRequest::HttpRequest()
-{
-}
-
-HttpRequest::~HttpRequest()
-{
-}
 
 String HttpRequest::method_name() const
 {
@@ -44,10 +37,12 @@ ByteBuffer HttpRequest::to_raw_request() const
     builder.append(URL::percent_encode(m_url.path(), URL::PercentEncodeSet::EncodeURI));
     if (!m_url.query().is_empty()) {
         builder.append('?');
-        builder.append(URL::percent_encode(m_url.query(), URL::PercentEncodeSet::EncodeURI));
+        builder.append(m_url.query());
     }
     builder.append(" HTTP/1.1\r\nHost: ");
     builder.append(m_url.host());
+    if (m_url.port().has_value())
+        builder.appendff(":{}", *m_url.port());
     builder.append("\r\n");
     for (auto& header : m_headers) {
         builder.append(header.name);
@@ -198,7 +193,7 @@ Optional<HttpRequest::BasicAuthenticationCredentials> HttpRequest::parse_http_ba
     if (token.is_empty())
         return {};
     auto decoded_token_bb = decode_base64(token);
-    if (!decoded_token_bb.has_value())
+    if (decoded_token_bb.is_error())
         return {};
     auto decoded_token = String::copy(decoded_token_bb.value());
     auto colon_index = decoded_token.find(':');

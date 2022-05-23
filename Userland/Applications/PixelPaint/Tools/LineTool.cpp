@@ -1,6 +1,7 @@
 /*
  * Copyright (c) 2018-2020, Andreas Kling <kling@serenityos.org>
  * Copyright (c) 2021, Mustafa Quraish <mustafa@serenityos.org>
+ * Copyright (c) 2022, the SerenityOS developers.
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -31,14 +32,6 @@ static Gfx::IntPoint constrain_line_angle(Gfx::IntPoint const& start_pos, Gfx::I
         start_pos.y() + (int)(AK::sin(constrained_angle) * line_length) };
 }
 
-LineTool::LineTool()
-{
-}
-
-LineTool::~LineTool()
-{
-}
-
 void LineTool::on_mousedown(Layer* layer, MouseEvent& event)
 {
     if (!layer)
@@ -67,7 +60,7 @@ void LineTool::on_mouseup(Layer* layer, MouseEvent& event)
 
     auto& layer_event = event.layer_event();
     if (layer_event.button() == m_drawing_button) {
-        GUI::Painter painter(layer->bitmap());
+        GUI::Painter painter(layer->currently_edited_bitmap());
         painter.draw_line(m_line_start_position, m_line_end_position, m_editor->color_for(m_drawing_button), m_thickness);
         m_drawing_button = GUI::MouseButton::None;
         layer->did_modify_bitmap();

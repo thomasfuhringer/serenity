@@ -8,8 +8,11 @@
 
 #include <AK/Forward.h>
 #include <AK/Optional.h>
-#include <AK/String.h>
 #include <AK/StringBuilder.h>
+
+#ifndef KERNEL
+#    include <AK/String.h>
+#endif
 
 namespace AK {
 
@@ -35,10 +38,10 @@ public:
     explicit JsonValue(Type = Type::Null);
     ~JsonValue() { clear(); }
 
-    JsonValue(const JsonValue&);
+    JsonValue(JsonValue const&);
     JsonValue(JsonValue&&);
 
-    JsonValue& operator=(const JsonValue&);
+    JsonValue& operator=(JsonValue const&);
     JsonValue& operator=(JsonValue&&);
 
     JsonValue(int);
@@ -52,10 +55,13 @@ public:
     JsonValue(double);
 #endif
     JsonValue(bool);
-    JsonValue(const char*);
-    JsonValue(const String&);
-    JsonValue(const JsonArray&);
-    JsonValue(const JsonObject&);
+    JsonValue(char const*);
+#ifndef KERNEL
+    JsonValue(String const&);
+#endif
+    JsonValue(StringView);
+    JsonValue(JsonArray const&);
+    JsonValue(JsonObject const&);
 
     JsonValue(JsonArray&&);
     JsonValue(JsonObject&&);
@@ -69,6 +75,7 @@ public:
     template<typename Builder>
     void serialize(Builder&) const;
 
+#ifndef KERNEL
     String as_string_or(String const& alternative) const
     {
         if (is_string())
@@ -82,14 +89,25 @@ public:
             return as_string();
         return serialized<StringBuilder>();
     }
+#endif
 
-    int to_int(int default_value = 0) const { return to_i32(default_value); }
+    int to_int(int default_value = 0) const
+    {
+        return to_i32(default_value);
+    }
     i32 to_i32(i32 default_value = 0) const { return to_number<i32>(default_value); }
     i64 to_i64(i64 default_value = 0) const { return to_number<i64>(default_value); }
 
     unsigned to_uint(unsigned default_value = 0) const { return to_u32(default_value); }
     u32 to_u32(u32 default_value = 0) const { return to_number<u32>(default_value); }
     u64 to_u64(u64 default_value = 0) const { return to_number<u64>(default_value); }
+#if !defined(KERNEL)
+    float to_float(float default_value = 0) const
+    {
+        return to_number<float>(default_value);
+    }
+    double to_double(double default_value = 0) const { return to_number<double>(default_value); }
+#endif
 
     FlatPtr to_addr(FlatPtr default_value = 0) const
     {
@@ -131,25 +149,27 @@ public:
         return m_value.as_u64;
     }
 
-    int as_bool() const
+    bool as_bool() const
     {
         VERIFY(is_bool());
         return m_value.as_bool;
     }
 
+#ifndef KERNEL
     String as_string() const
     {
         VERIFY(is_string());
         return *m_value.as_string;
     }
+#endif
 
-    const JsonObject& as_object() const
+    JsonObject const& as_object() const
     {
         VERIFY(is_object());
         return *m_value.as_object;
     }
 
-    const JsonArray& as_array() const
+    JsonArray const& as_array() const
     {
         VERIFY(is_array());
         return *m_value.as_array;
@@ -220,16 +240,18 @@ public:
         return default_value;
     }
 
-    bool equals(const JsonValue& other) const;
+    bool equals(JsonValue const& other) const;
 
 private:
     void clear();
-    void copy_from(const JsonValue&);
+    void copy_from(JsonValue const&);
 
     Type m_type { Type::Null };
 
     union {
+#ifndef KERNEL
         StringImpl* as_string { nullptr };
+#endif
         JsonArray* as_array;
         JsonObject* as_object;
 #if !defined(KERNEL)
@@ -243,6 +265,7 @@ private:
     } m_value;
 };
 
+#ifndef KERNEL
 template<>
 struct Formatter<JsonValue> : Formatter<StringView> {
     ErrorOr<void> format(FormatBuilder& builder, JsonValue const& value)
@@ -250,6 +273,7 @@ struct Formatter<JsonValue> : Formatter<StringView> {
         return Formatter<StringView>::format(builder, value.to_string());
     }
 };
+#endif
 
 }
 

@@ -1,5 +1,7 @@
 /*
- * Copyright (c) 2021, Tim Flynn <trflynn89@pm.me>
+ * Copyright (c) 2021, Tim Flynn <trflynn89@serenityos.org>
+ * Copyright (c) 2021, Mahmoud Mandour <ma.mandourr@gmail.com>
+ * Copyright (c) 2022, the SerenityOS developers.
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -13,7 +15,8 @@
 #include <AK/String.h>
 #include <LibSQL/AST/Token.h>
 #include <LibSQL/Forward.h>
-#include <LibSQL/SQLResult.h>
+#include <LibSQL/Result.h>
+#include <LibSQL/ResultSet.h>
 #include <LibSQL/Type.h>
 
 namespace SQL::AST {
@@ -27,7 +30,7 @@ create_ast_node(Args&&... args)
 
 class ASTNode : public RefCounted<ASTNode> {
 public:
-    virtual ~ASTNode() { }
+    virtual ~ASTNode() = default;
 
 protected:
     ASTNode() = default;
@@ -59,8 +62,8 @@ public:
         VERIFY(m_signed_numbers.size() <= 2);
     }
 
-    const String& name() const { return m_name; }
-    const NonnullRefPtrVector<SignedNumber>& signed_numbers() const { return m_signed_numbers; }
+    String const& name() const { return m_name; }
+    NonnullRefPtrVector<SignedNumber> const& signed_numbers() const { return m_signed_numbers; }
 
 private:
     String m_name;
@@ -75,8 +78,8 @@ public:
     {
     }
 
-    const String& name() const { return m_name; }
-    const NonnullRefPtr<TypeName>& type_name() const { return m_type_name; }
+    String const& name() const { return m_name; }
+    NonnullRefPtr<TypeName> const& type_name() const { return m_type_name; }
 
 private:
     String m_name;
@@ -92,9 +95,9 @@ public:
     {
     }
 
-    const String& table_name() const { return m_table_name; }
-    const Vector<String>& column_names() const { return m_column_names; }
-    const NonnullRefPtr<Select>& select_statement() const { return m_select_statement; }
+    String const& table_name() const { return m_table_name; }
+    Vector<String> const& column_names() const { return m_column_names; }
+    NonnullRefPtr<Select> const& select_statement() const { return m_select_statement; }
 
 private:
     String m_table_name;
@@ -112,7 +115,7 @@ public:
     }
 
     bool recursive() const { return m_recursive; }
-    const NonnullRefPtrVector<CommonTableExpression>& common_table_expressions() const { return m_common_table_expressions; }
+    NonnullRefPtrVector<CommonTableExpression> const& common_table_expressions() const { return m_common_table_expressions; }
 
 private:
     bool m_recursive;
@@ -128,9 +131,9 @@ public:
     {
     }
 
-    const String& schema_name() const { return m_schema_name; }
-    const String& table_name() const { return m_table_name; }
-    const String& alias() const { return m_alias; }
+    String const& schema_name() const { return m_schema_name; }
+    String const& table_name() const { return m_table_name; }
+    String const& alias() const { return m_alias; }
 
 private:
     String m_schema_name;
@@ -153,7 +156,7 @@ public:
     }
 
     bool return_all_columns() const { return m_columns.is_empty(); };
-    const Vector<ColumnClause>& columns() const { return m_columns; }
+    Vector<ColumnClause> const& columns() const { return m_columns; }
 
 private:
     Vector<ColumnClause> m_columns;
@@ -185,11 +188,11 @@ public:
     ResultType type() const { return m_type; }
 
     bool select_from_table() const { return !m_table_name.is_null(); }
-    const String& table_name() const { return m_table_name; }
+    String const& table_name() const { return m_table_name; }
 
     bool select_from_expression() const { return !m_expression.is_null(); }
-    const RefPtr<Expression>& expression() const { return m_expression; }
-    const String& column_alias() const { return m_column_alias; }
+    RefPtr<Expression> const& expression() const { return m_expression; }
+    String const& column_alias() const { return m_column_alias; }
 
 private:
     ResultType m_type { ResultType::All };
@@ -209,8 +212,8 @@ public:
         VERIFY(!m_group_by_list.is_empty());
     }
 
-    const NonnullRefPtrVector<Expression>& group_by_list() const { return m_group_by_list; }
-    const RefPtr<Expression>& having_clause() const { return m_having_clause; }
+    NonnullRefPtrVector<Expression> const& group_by_list() const { return m_group_by_list; }
+    RefPtr<Expression> const& having_clause() const { return m_having_clause; }
 
 private:
     NonnullRefPtrVector<Expression> m_group_by_list;
@@ -236,12 +239,12 @@ public:
     }
 
     bool is_table() const { return m_is_table; }
-    const String& schema_name() const { return m_schema_name; }
-    const String& table_name() const { return m_table_name; }
-    const String& table_alias() const { return m_table_alias; }
+    String const& schema_name() const { return m_schema_name; }
+    String const& table_name() const { return m_table_name; }
+    String const& table_alias() const { return m_table_alias; }
 
     bool is_subquery() const { return m_is_subquery; }
-    const NonnullRefPtrVector<TableOrSubquery>& subqueries() const { return m_subqueries; }
+    NonnullRefPtrVector<TableOrSubquery> const& subqueries() const { return m_subqueries; }
 
 private:
     bool m_is_table { false };
@@ -263,8 +266,8 @@ public:
     {
     }
 
-    const NonnullRefPtr<Expression>& expression() const { return m_expression; }
-    const String& collation_name() const { return m_collation_name; }
+    NonnullRefPtr<Expression> const& expression() const { return m_expression; }
+    String const& collation_name() const { return m_collation_name; }
     Order order() const { return m_order; }
     Nulls nulls() const { return m_nulls; }
 
@@ -283,8 +286,8 @@ public:
     {
     }
 
-    const NonnullRefPtr<Expression>& limit_expression() const { return m_limit_expression; }
-    const RefPtr<Expression>& offset_expression() const { return m_offset_expression; }
+    NonnullRefPtr<Expression> const& limit_expression() const { return m_limit_expression; }
+    RefPtr<Expression> const& offset_expression() const { return m_offset_expression; }
 
 private:
     NonnullRefPtr<Expression> m_limit_expression;
@@ -297,14 +300,16 @@ private:
 
 struct ExecutionContext {
     NonnullRefPtr<Database> database;
-    RefPtr<SQLResult> result { nullptr };
     class Statement const* statement;
     Tuple* current_row { nullptr };
 };
 
 class Expression : public ASTNode {
 public:
-    virtual Value evaluate(ExecutionContext&) const;
+    virtual ResultOr<Value> evaluate(ExecutionContext&) const
+    {
+        return Result { SQLCommand::Unknown, SQLErrorCode::NotYetImplemented };
+    }
 };
 
 class ErrorExpression final : public Expression {
@@ -318,7 +323,7 @@ public:
     }
 
     double value() const { return m_value; }
-    virtual Value evaluate(ExecutionContext&) const override;
+    virtual ResultOr<Value> evaluate(ExecutionContext&) const override;
 
 private:
     double m_value;
@@ -331,8 +336,8 @@ public:
     {
     }
 
-    const String& value() const { return m_value; }
-    virtual Value evaluate(ExecutionContext&) const override;
+    String const& value() const { return m_value; }
+    virtual ResultOr<Value> evaluate(ExecutionContext&) const override;
 
 private:
     String m_value;
@@ -345,7 +350,7 @@ public:
     {
     }
 
-    const String& value() const { return m_value; }
+    String const& value() const { return m_value; }
 
 private:
     String m_value;
@@ -353,13 +358,13 @@ private:
 
 class NullLiteral : public Expression {
 public:
-    virtual Value evaluate(ExecutionContext&) const override;
+    virtual ResultOr<Value> evaluate(ExecutionContext&) const override;
 };
 
 class NestedExpression : public Expression {
 public:
-    const NonnullRefPtr<Expression>& expression() const { return m_expression; }
-    virtual Value evaluate(ExecutionContext&) const override;
+    NonnullRefPtr<Expression> const& expression() const { return m_expression; }
+    virtual ResultOr<Value> evaluate(ExecutionContext&) const override;
 
 protected:
     explicit NestedExpression(NonnullRefPtr<Expression> expression)
@@ -373,8 +378,8 @@ private:
 
 class NestedDoubleExpression : public Expression {
 public:
-    const NonnullRefPtr<Expression>& lhs() const { return m_lhs; }
-    const NonnullRefPtr<Expression>& rhs() const { return m_rhs; }
+    NonnullRefPtr<Expression> const& lhs() const { return m_lhs; }
+    NonnullRefPtr<Expression> const& rhs() const { return m_rhs; }
 
 protected:
     NestedDoubleExpression(NonnullRefPtr<Expression> lhs, NonnullRefPtr<Expression> rhs)
@@ -427,10 +432,10 @@ public:
     {
     }
 
-    const String& schema_name() const { return m_schema_name; }
-    const String& table_name() const { return m_table_name; }
-    const String& column_name() const { return m_column_name; }
-    virtual Value evaluate(ExecutionContext&) const override;
+    String const& schema_name() const { return m_schema_name; }
+    String const& table_name() const { return m_table_name; }
+    String const& column_name() const { return m_column_name; }
+    virtual ResultOr<Value> evaluate(ExecutionContext&) const override;
 
 private:
     String m_schema_name;
@@ -473,7 +478,7 @@ public:
     }
 
     UnaryOperator type() const { return m_type; }
-    virtual Value evaluate(ExecutionContext&) const override;
+    virtual ResultOr<Value> evaluate(ExecutionContext&) const override;
 
 private:
     UnaryOperator m_type;
@@ -529,7 +534,7 @@ public:
     }
 
     BinaryOperator type() const { return m_type; }
-    virtual Value evaluate(ExecutionContext&) const override;
+    virtual ResultOr<Value> evaluate(ExecutionContext&) const override;
 
 private:
     BinaryOperator m_type;
@@ -542,8 +547,8 @@ public:
     {
     }
 
-    const NonnullRefPtrVector<Expression>& expressions() const { return m_expressions; }
-    virtual Value evaluate(ExecutionContext&) const override;
+    NonnullRefPtrVector<Expression> const& expressions() const { return m_expressions; }
+    virtual ResultOr<Value> evaluate(ExecutionContext&) const override;
 
 private:
     NonnullRefPtrVector<Expression> m_expressions;
@@ -557,7 +562,7 @@ public:
     {
     }
 
-    const NonnullRefPtr<TypeName>& type_name() const { return m_type_name; }
+    NonnullRefPtr<TypeName> const& type_name() const { return m_type_name; }
 
 private:
     NonnullRefPtr<TypeName> m_type_name;
@@ -578,9 +583,9 @@ public:
         VERIFY(!m_when_then_clauses.is_empty());
     }
 
-    const RefPtr<Expression>& case_expression() const { return m_case_expression; }
-    const Vector<WhenThenClause>& when_then_clauses() const { return m_when_then_clauses; }
-    const RefPtr<Expression>& else_expression() const { return m_else_expression; }
+    RefPtr<Expression> const& case_expression() const { return m_case_expression; }
+    Vector<WhenThenClause> const& when_then_clauses() const { return m_when_then_clauses; }
+    RefPtr<Expression> const& else_expression() const { return m_else_expression; }
 
 private:
     RefPtr<Expression> m_case_expression;
@@ -596,7 +601,7 @@ public:
     {
     }
 
-    const NonnullRefPtr<Select>& select_statement() const { return m_select_statement; }
+    NonnullRefPtr<Select> const& select_statement() const { return m_select_statement; }
     bool invert_expression() const { return m_invert_expression; }
 
 private:
@@ -612,7 +617,7 @@ public:
     {
     }
 
-    const String& collation_name() const { return m_collation_name; }
+    String const& collation_name() const { return m_collation_name; }
 
 private:
     String m_collation_name;
@@ -635,7 +640,8 @@ public:
     }
 
     MatchOperator type() const { return m_type; }
-    const RefPtr<Expression>& escape() const { return m_escape; }
+    RefPtr<Expression> const& escape() const { return m_escape; }
+    virtual ResultOr<Value> evaluate(ExecutionContext&) const override;
 
 private:
     MatchOperator m_type;
@@ -666,7 +672,7 @@ public:
     {
     }
 
-    const NonnullRefPtr<Expression>& expression() const { return m_expression; }
+    NonnullRefPtr<Expression> const& expression() const { return m_expression; }
 
 private:
     NonnullRefPtr<Expression> m_expression;
@@ -680,7 +686,7 @@ public:
     {
     }
 
-    const NonnullRefPtr<Select>& select_statement() const { return m_select_statement; }
+    NonnullRefPtr<Select> const& select_statement() const { return m_select_statement; }
 
 private:
     NonnullRefPtr<Select> m_select_statement;
@@ -694,7 +700,7 @@ public:
     {
     }
 
-    const NonnullRefPtr<ChainedExpression>& expression_chain() const { return m_expression_chain; }
+    NonnullRefPtr<ChainedExpression> const& expression_chain() const { return m_expression_chain; }
 
 private:
     NonnullRefPtr<ChainedExpression> m_expression_chain;
@@ -709,8 +715,8 @@ public:
     {
     }
 
-    const String& schema_name() const { return m_schema_name; }
-    const String& table_name() const { return m_table_name; }
+    String const& schema_name() const { return m_schema_name; }
+    String const& table_name() const { return m_table_name; }
 
 private:
     String m_schema_name;
@@ -723,8 +729,12 @@ private:
 
 class Statement : public ASTNode {
 public:
-    RefPtr<SQLResult> execute(AK::NonnullRefPtr<Database> database) const;
-    virtual RefPtr<SQLResult> execute(ExecutionContext&) const { return nullptr; }
+    ResultOr<ResultSet> execute(AK::NonnullRefPtr<Database> database) const;
+
+    virtual ResultOr<ResultSet> execute(ExecutionContext&) const
+    {
+        return Result { SQLCommand::Unknown, SQLErrorCode::NotYetImplemented };
+    }
 };
 
 class ErrorStatement final : public Statement {
@@ -738,10 +748,10 @@ public:
     {
     }
 
-    const String& schema_name() const { return m_schema_name; }
+    String const& schema_name() const { return m_schema_name; }
     bool is_error_if_schema_exists() const { return m_is_error_if_schema_exists; }
 
-    RefPtr<SQLResult> execute(ExecutionContext&) const override;
+    ResultOr<ResultSet> execute(ExecutionContext&) const override;
 
 private:
     String m_schema_name;
@@ -768,19 +778,19 @@ public:
     {
     }
 
-    const String& schema_name() const { return m_schema_name; }
-    const String& table_name() const { return m_table_name; }
+    String const& schema_name() const { return m_schema_name; }
+    String const& table_name() const { return m_table_name; }
 
     bool has_selection() const { return !m_select_statement.is_null(); }
-    const RefPtr<Select>& select_statement() const { return m_select_statement; }
+    RefPtr<Select> const& select_statement() const { return m_select_statement; }
 
     bool has_columns() const { return !m_columns.is_empty(); }
-    const NonnullRefPtrVector<ColumnDefinition>& columns() const { return m_columns; }
+    NonnullRefPtrVector<ColumnDefinition> const& columns() const { return m_columns; }
 
     bool is_temporary() const { return m_is_temporary; }
     bool is_error_if_table_exists() const { return m_is_error_if_table_exists; }
 
-    RefPtr<SQLResult> execute(ExecutionContext&) const override;
+    ResultOr<ResultSet> execute(ExecutionContext&) const override;
 
 private:
     String m_schema_name;
@@ -793,8 +803,8 @@ private:
 
 class AlterTable : public Statement {
 public:
-    const String& schema_name() const { return m_schema_name; }
-    const String& table_name() const { return m_table_name; }
+    String const& schema_name() const { return m_schema_name; }
+    String const& table_name() const { return m_table_name; }
 
 protected:
     AlterTable(String schema_name, String table_name)
@@ -816,7 +826,7 @@ public:
     {
     }
 
-    const String& new_table_name() const { return m_new_table_name; }
+    String const& new_table_name() const { return m_new_table_name; }
 
 private:
     String m_new_table_name;
@@ -831,8 +841,8 @@ public:
     {
     }
 
-    const String& column_name() const { return m_column_name; }
-    const String& new_column_name() const { return m_new_column_name; }
+    String const& column_name() const { return m_column_name; }
+    String const& new_column_name() const { return m_new_column_name; }
 
 private:
     String m_column_name;
@@ -847,7 +857,7 @@ public:
     {
     }
 
-    const NonnullRefPtr<ColumnDefinition>& column() const { return m_column; }
+    NonnullRefPtr<ColumnDefinition> const& column() const { return m_column; }
 
 private:
     NonnullRefPtr<ColumnDefinition> m_column;
@@ -861,7 +871,7 @@ public:
     {
     }
 
-    const String& column_name() const { return m_column_name; }
+    String const& column_name() const { return m_column_name; }
 
 private:
     String m_column_name;
@@ -876,8 +886,8 @@ public:
     {
     }
 
-    const String& schema_name() const { return m_schema_name; }
-    const String& table_name() const { return m_table_name; }
+    String const& schema_name() const { return m_schema_name; }
+    String const& table_name() const { return m_table_name; }
     bool is_error_if_table_does_not_exist() const { return m_is_error_if_table_does_not_exist; }
 
 private:
@@ -928,22 +938,22 @@ public:
     {
     }
 
-    const RefPtr<CommonTableExpressionList>& common_table_expression_list() const { return m_common_table_expression_list; }
+    RefPtr<CommonTableExpressionList> const& common_table_expression_list() const { return m_common_table_expression_list; }
     ConflictResolution conflict_resolution() const { return m_conflict_resolution; }
-    const String& schema_name() const { return m_schema_name; }
-    const String& table_name() const { return m_table_name; }
-    const String& alias() const { return m_alias; }
-    const Vector<String>& column_names() const { return m_column_names; }
+    String const& schema_name() const { return m_schema_name; }
+    String const& table_name() const { return m_table_name; }
+    String const& alias() const { return m_alias; }
+    Vector<String> const& column_names() const { return m_column_names; }
 
     bool default_values() const { return !has_expressions() && !has_selection(); };
 
     bool has_expressions() const { return !m_chained_expressions.is_empty(); }
-    const NonnullRefPtrVector<ChainedExpression>& chained_expressions() const { return m_chained_expressions; }
+    NonnullRefPtrVector<ChainedExpression> const& chained_expressions() const { return m_chained_expressions; }
 
     bool has_selection() const { return !m_select_statement.is_null(); }
-    const RefPtr<Select>& select_statement() const { return m_select_statement; }
+    RefPtr<Select> const& select_statement() const { return m_select_statement; }
 
-    RefPtr<SQLResult> execute(ExecutionContext&) const;
+    virtual ResultOr<ResultSet> execute(ExecutionContext&) const override;
 
 private:
     RefPtr<CommonTableExpressionList> m_common_table_expression_list;
@@ -974,13 +984,13 @@ public:
     {
     }
 
-    const RefPtr<CommonTableExpressionList>& common_table_expression_list() const { return m_common_table_expression_list; }
+    RefPtr<CommonTableExpressionList> const& common_table_expression_list() const { return m_common_table_expression_list; }
     ConflictResolution conflict_resolution() const { return m_conflict_resolution; }
-    const NonnullRefPtr<QualifiedTableName>& qualified_table_name() const { return m_qualified_table_name; }
-    const Vector<UpdateColumns>& update_columns() const { return m_update_columns; }
-    const NonnullRefPtrVector<TableOrSubquery>& table_or_subquery_list() const { return m_table_or_subquery_list; }
-    const RefPtr<Expression>& where_clause() const { return m_where_clause; }
-    const RefPtr<ReturningClause>& returning_clause() const { return m_returning_clause; }
+    NonnullRefPtr<QualifiedTableName> const& qualified_table_name() const { return m_qualified_table_name; }
+    Vector<UpdateColumns> const& update_columns() const { return m_update_columns; }
+    NonnullRefPtrVector<TableOrSubquery> const& table_or_subquery_list() const { return m_table_or_subquery_list; }
+    RefPtr<Expression> const& where_clause() const { return m_where_clause; }
+    RefPtr<ReturningClause> const& returning_clause() const { return m_returning_clause; }
 
 private:
     RefPtr<CommonTableExpressionList> m_common_table_expression_list;
@@ -1002,10 +1012,10 @@ public:
     {
     }
 
-    const RefPtr<CommonTableExpressionList>& common_table_expression_list() const { return m_common_table_expression_list; }
-    const NonnullRefPtr<QualifiedTableName>& qualified_table_name() const { return m_qualified_table_name; }
-    const RefPtr<Expression>& where_clause() const { return m_where_clause; }
-    const RefPtr<ReturningClause>& returning_clause() const { return m_returning_clause; }
+    RefPtr<CommonTableExpressionList> const& common_table_expression_list() const { return m_common_table_expression_list; }
+    NonnullRefPtr<QualifiedTableName> const& qualified_table_name() const { return m_qualified_table_name; }
+    RefPtr<Expression> const& where_clause() const { return m_where_clause; }
+    RefPtr<ReturningClause> const& returning_clause() const { return m_returning_clause; }
 
 private:
     RefPtr<CommonTableExpressionList> m_common_table_expression_list;
@@ -1028,15 +1038,15 @@ public:
     {
     }
 
-    const RefPtr<CommonTableExpressionList>& common_table_expression_list() const { return m_common_table_expression_list; }
+    RefPtr<CommonTableExpressionList> const& common_table_expression_list() const { return m_common_table_expression_list; }
     bool select_all() const { return m_select_all; }
-    const NonnullRefPtrVector<ResultColumn>& result_column_list() const { return m_result_column_list; }
-    const NonnullRefPtrVector<TableOrSubquery>& table_or_subquery_list() const { return m_table_or_subquery_list; }
-    const RefPtr<Expression>& where_clause() const { return m_where_clause; }
-    const RefPtr<GroupByClause>& group_by_clause() const { return m_group_by_clause; }
-    const NonnullRefPtrVector<OrderingTerm>& ordering_term_list() const { return m_ordering_term_list; }
-    const RefPtr<LimitClause>& limit_clause() const { return m_limit_clause; }
-    RefPtr<SQLResult> execute(ExecutionContext&) const override;
+    NonnullRefPtrVector<ResultColumn> const& result_column_list() const { return m_result_column_list; }
+    NonnullRefPtrVector<TableOrSubquery> const& table_or_subquery_list() const { return m_table_or_subquery_list; }
+    RefPtr<Expression> const& where_clause() const { return m_where_clause; }
+    RefPtr<GroupByClause> const& group_by_clause() const { return m_group_by_clause; }
+    NonnullRefPtrVector<OrderingTerm> const& ordering_term_list() const { return m_ordering_term_list; }
+    RefPtr<LimitClause> const& limit_clause() const { return m_limit_clause; }
+    ResultOr<ResultSet> execute(ExecutionContext&) const override;
 
 private:
     RefPtr<CommonTableExpressionList> m_common_table_expression_list;
@@ -1047,6 +1057,20 @@ private:
     RefPtr<GroupByClause> m_group_by_clause;
     NonnullRefPtrVector<OrderingTerm> m_ordering_term_list;
     RefPtr<LimitClause> m_limit_clause;
+};
+
+class DescribeTable : public Statement {
+public:
+    DescribeTable(NonnullRefPtr<QualifiedTableName> qualified_table_name)
+        : m_qualified_table_name(move(qualified_table_name))
+    {
+    }
+
+    NonnullRefPtr<QualifiedTableName> qualified_table_name() const { return m_qualified_table_name; }
+    ResultOr<ResultSet> execute(ExecutionContext&) const override;
+
+private:
+    NonnullRefPtr<QualifiedTableName> m_qualified_table_name;
 };
 
 }

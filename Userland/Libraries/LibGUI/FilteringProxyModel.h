@@ -17,18 +17,19 @@ namespace GUI {
 class FilteringProxyModel final : public Model
     , public ModelClient {
 public:
-    static ErrorOr<NonnullRefPtr<FilteringProxyModel>> create(Model& model)
+    static ErrorOr<NonnullRefPtr<FilteringProxyModel>> create(NonnullRefPtr<Model> model)
     {
-        return adopt_nonnull_ref_or_enomem(new (nothrow) FilteringProxyModel(model));
+        return adopt_nonnull_ref_or_enomem(new (nothrow) FilteringProxyModel(move(model)));
     }
 
     virtual ~FilteringProxyModel() override
     {
-        m_model.unregister_client(*this);
+        m_model->unregister_client(*this);
     };
 
     virtual int row_count(ModelIndex const& = ModelIndex()) const override;
     virtual int column_count(ModelIndex const& = ModelIndex()) const override;
+    virtual String column_name(int) const override;
     virtual Variant data(ModelIndex const&, ModelRole = ModelRole::Display) const override;
     virtual void invalidate() override;
     virtual ModelIndex index(int row, int column = 0, ModelIndex const& parent = ModelIndex()) const override;
@@ -44,13 +45,13 @@ protected:
 
 private:
     void filter();
-    explicit FilteringProxyModel(Model& model)
-        : m_model(model)
+    explicit FilteringProxyModel(NonnullRefPtr<Model> model)
+        : m_model(move(model))
     {
-        m_model.register_client(*this);
+        m_model->register_client(*this);
     }
 
-    Model& m_model;
+    NonnullRefPtr<Model> m_model;
 
     // Maps row to actual model index.
     Vector<ModelIndex> m_matching_indices;

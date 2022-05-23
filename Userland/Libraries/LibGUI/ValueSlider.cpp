@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2021, Marcus Nilsson <brainbomb@gmail.com>
+ * Copyright (c) 2022, the SerenityOS developers.
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -8,7 +9,7 @@
 #include <LibGUI/Painter.h>
 #include <LibGUI/TextBox.h>
 #include <LibGUI/ValueSlider.h>
-#include <LibGfx/FontDatabase.h>
+#include <LibGfx/Font/FontDatabase.h>
 #include <LibGfx/Palette.h>
 #include <LibGfx/StylePainter.h>
 
@@ -20,7 +21,7 @@ ValueSlider::ValueSlider(Gfx::Orientation orientation, String suffix)
     : AbstractSlider(orientation)
     , m_suffix(move(suffix))
 {
-    //FIXME: Implement vertical mode
+    // FIXME: Implement vertical mode
     VERIFY(orientation == Orientation::Horizontal);
 
     set_fixed_height(20);
@@ -46,13 +47,13 @@ ValueSlider::ValueSlider(Gfx::Orientation orientation, String suffix)
 
     m_textbox->on_up_pressed = [&]() {
         if (value() < max())
-            AbstractSlider::set_value(value() + 1);
+            AbstractSlider::increase_slider_by(1);
         m_textbox->set_text(formatted_value());
     };
 
     m_textbox->on_down_pressed = [&]() {
         if (value() > min())
-            AbstractSlider::set_value(value() - 1);
+            AbstractSlider::decrease_slider_by(1);
         m_textbox->set_text(formatted_value());
     };
 
@@ -67,10 +68,6 @@ ValueSlider::ValueSlider(Gfx::Orientation orientation, String suffix)
     };
 }
 
-ValueSlider::~ValueSlider()
-{
-}
-
 String ValueSlider::formatted_value() const
 {
     return String::formatted("{:2}{}", value(), m_suffix);
@@ -81,7 +78,11 @@ void ValueSlider::paint_event(PaintEvent& event)
     GUI::Painter painter(*this);
     painter.add_clip_rect(event.rect());
 
-    painter.fill_rect_with_gradient(m_orientation, bar_rect(), palette().active_window_border1(), palette().active_window_border2());
+    if (is_enabled())
+        painter.fill_rect_with_gradient(m_orientation, bar_rect(), palette().active_window_border1(), palette().active_window_border2());
+    else
+        painter.fill_rect_with_gradient(m_orientation, bar_rect(), palette().inactive_window_border1(), palette().inactive_window_border2());
+
     auto unfilled_rect = bar_rect();
     unfilled_rect.set_left(knob_rect().right());
     painter.fill_rect(unfilled_rect, palette().base());
@@ -131,19 +132,21 @@ Gfx::IntRect ValueSlider::knob_rect() const
     return knob_rect;
 }
 
-int ValueSlider::value_at(const Gfx::IntPoint& position) const
+int ValueSlider::value_at(Gfx::IntPoint const& position) const
 {
     if (position.x() < bar_rect().left())
         return min();
     if (position.x() > bar_rect().right())
         return max();
     float relative_offset = (float)(position.x() - bar_rect().left()) / (float)bar_rect().width();
-    return (int)(relative_offset * (float)max());
+
+    int range = max() - min();
+    return min() + (int)(relative_offset * (float)range);
 }
 
-void ValueSlider::set_value(int value, AllowCallback allow_callback)
+void ValueSlider::set_value(int value, AllowCallback allow_callback, DoClamp do_clamp)
 {
-    AbstractSlider::set_value(value, allow_callback);
+    AbstractSlider::set_value(value, allow_callback, do_clamp);
     m_textbox->set_text(formatted_value());
 }
 
@@ -158,10 +161,10 @@ void ValueSlider::leave_event(Core::Event&)
 
 void ValueSlider::mousewheel_event(MouseEvent& event)
 {
-    if (event.wheel_delta() < 0)
-        set_value(value() + 1);
+    if (event.wheel_delta_y() < 0)
+        increase_slider_by(1);
     else
-        set_value(value() - 1);
+        decrease_slider_by(1);
 }
 
 void ValueSlider::mousemove_event(MouseEvent& event)

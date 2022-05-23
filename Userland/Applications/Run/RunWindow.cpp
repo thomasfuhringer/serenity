@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2021, Nick Vella <nick@nxk.io>
+ * Copyright (c) 2022, the SerenityOS developers.
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -69,10 +70,6 @@ RunWindow::RunWindow()
     };
 }
 
-RunWindow::~RunWindow()
-{
-}
-
 void RunWindow::event(Core::Event& event)
 {
     if (event.type() == GUI::Event::KeyUp || event.type() == GUI::Event::KeyDown) {
@@ -110,11 +107,11 @@ void RunWindow::do_run()
     show();
 }
 
-bool RunWindow::run_as_command(const String& run_input)
+bool RunWindow::run_as_command(String const& run_input)
 {
     pid_t child_pid;
-    const char* shell_executable = "/bin/Shell"; // TODO query and use the user's preferred shell.
-    const char* argv[] = { shell_executable, "-c", run_input.characters(), nullptr };
+    char const* shell_executable = "/bin/Shell"; // TODO query and use the user's preferred shell.
+    char const* argv[] = { shell_executable, "-c", run_input.characters(), nullptr };
 
     if ((errno = posix_spawn(&child_pid, shell_executable, nullptr, nullptr, const_cast<char**>(argv), environ))) {
         perror("posix_spawn");
@@ -139,7 +136,7 @@ bool RunWindow::run_as_command(const String& run_input)
     return true;
 }
 
-bool RunWindow::run_via_launch(const String& run_input)
+bool RunWindow::run_via_launch(String const& run_input)
 {
     auto url = URL::create_with_url_or_path(run_input);
 

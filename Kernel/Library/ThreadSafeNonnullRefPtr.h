@@ -40,7 +40,7 @@ ALWAYS_INLINE void unref_if_not_null(T* ptr)
 }
 
 template<typename T>
-class NonnullRefPtr {
+class [[nodiscard]] NonnullRefPtr {
     template<typename U, typename P>
     friend class RefPtr;
     template<typename U>
@@ -82,13 +82,13 @@ public:
     {
         VERIFY(!(m_bits & 1));
     }
-    ALWAYS_INLINE NonnullRefPtr(const NonnullRefPtr& other)
+    ALWAYS_INLINE NonnullRefPtr(NonnullRefPtr const& other)
         : m_bits((FlatPtr)other.add_ref())
     {
         VERIFY(!(m_bits & 1));
     }
     template<typename U>
-    ALWAYS_INLINE NonnullRefPtr(const NonnullRefPtr<U>& other) requires(IsConvertible<U*, T*>)
+    ALWAYS_INLINE NonnullRefPtr(NonnullRefPtr<U> const& other) requires(IsConvertible<U*, T*>)
         : m_bits((FlatPtr)other.add_ref())
     {
         VERIFY(!(m_bits & 1));
@@ -102,18 +102,18 @@ public:
     }
 
     template<typename U>
-    NonnullRefPtr(const OwnPtr<U>&) = delete;
+    NonnullRefPtr(OwnPtr<U> const&) = delete;
     template<typename U>
-    NonnullRefPtr& operator=(const OwnPtr<U>&) = delete;
+    NonnullRefPtr& operator=(OwnPtr<U> const&) = delete;
 
     template<typename U>
-    NonnullRefPtr(const RefPtr<U>&) = delete;
+    NonnullRefPtr(RefPtr<U> const&) = delete;
     template<typename U>
-    NonnullRefPtr& operator=(const RefPtr<U>&) = delete;
-    NonnullRefPtr(const RefPtr<T>&) = delete;
-    NonnullRefPtr& operator=(const RefPtr<T>&) = delete;
+    NonnullRefPtr& operator=(RefPtr<U> const&) = delete;
+    NonnullRefPtr(RefPtr<T> const&) = delete;
+    NonnullRefPtr& operator=(RefPtr<T> const&) = delete;
 
-    NonnullRefPtr& operator=(const NonnullRefPtr& other)
+    NonnullRefPtr& operator=(NonnullRefPtr const& other)
     {
         if (this != &other)
             assign(other.add_ref());
@@ -121,7 +121,7 @@ public:
     }
 
     template<typename U>
-    NonnullRefPtr& operator=(const NonnullRefPtr<U>& other) requires(IsConvertible<U*, T*>)
+    NonnullRefPtr& operator=(NonnullRefPtr<U> const& other) requires(IsConvertible<U*, T*>)
     {
         assign(other.add_ref());
         return *this;
@@ -223,8 +223,10 @@ public:
         other.exchange(ptr);
     }
 
+    // clang-format off
 private:
     NonnullRefPtr() = delete;
+    // clang-format on
 
     ALWAYS_INLINE T* as_ptr() const
     {
@@ -322,7 +324,7 @@ inline NonnullRefPtr<T> adopt_ref(T& object)
 
 template<typename T>
 struct Formatter<NonnullRefPtr<T>> : Formatter<const T*> {
-    ErrorOr<void> format(FormatBuilder& builder, const NonnullRefPtr<T>& value)
+    ErrorOr<void> format(FormatBuilder& builder, NonnullRefPtr<T> const& value)
     {
         return Formatter<const T*>::format(builder, value.ptr());
     }
@@ -334,28 +336,15 @@ inline void swap(NonnullRefPtr<T>& a, NonnullRefPtr<U>& b) requires(IsConvertibl
     a.swap(b);
 }
 
-template<typename T, class... Args>
-requires(IsConstructible<T, Args...>) inline NonnullRefPtr<T> make_ref_counted(Args&&... args)
-{
-    return NonnullRefPtr<T>(NonnullRefPtr<T>::Adopt, *new T(forward<Args>(args)...));
-}
-
-// FIXME: Remove once P0960R3 is available in Clang.
-template<typename T, class... Args>
-inline NonnullRefPtr<T> make_ref_counted(Args&&... args)
-{
-    return NonnullRefPtr<T>(NonnullRefPtr<T>::Adopt, *new T { forward<Args>(args)... });
-}
 }
 
 template<typename T>
 struct Traits<NonnullRefPtr<T>> : public GenericTraits<NonnullRefPtr<T>> {
     using PeekType = T*;
     using ConstPeekType = const T*;
-    static unsigned hash(const NonnullRefPtr<T>& p) { return ptr_hash(p.ptr()); }
-    static bool equals(const NonnullRefPtr<T>& a, const NonnullRefPtr<T>& b) { return a.ptr() == b.ptr(); }
+    static unsigned hash(NonnullRefPtr<T> const& p) { return ptr_hash(p.ptr()); }
+    static bool equals(NonnullRefPtr<T> const& a, NonnullRefPtr<T> const& b) { return a.ptr() == b.ptr(); }
 };
 
 using AK::adopt_ref;
-using AK::make_ref_counted;
 using AK::NonnullRefPtr;

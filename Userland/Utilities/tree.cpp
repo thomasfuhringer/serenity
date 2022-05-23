@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2020, Stijn De Ridder <stijn.deridder@hotmail.com>
+ * Copyright (c) 2022, the SerenityOS developers.
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -11,6 +12,8 @@
 #include <AK/Vector.h>
 #include <LibCore/ArgsParser.h>
 #include <LibCore/DirIterator.h>
+#include <LibCore/System.h>
+#include <LibMain/Main.h>
 #include <errno.h>
 #include <limits.h>
 #include <stdio.h>
@@ -24,7 +27,7 @@ static int max_depth = INT_MAX;
 static int g_directories_seen = 0;
 static int g_files_seen = 0;
 
-static void print_directory_tree(const String& root_path, int depth, const String& indent_string)
+static void print_directory_tree(String const& root_path, int depth, String const& indent_string)
 {
     if (depth > 0) {
         String root_indent_string;
@@ -99,24 +102,21 @@ static void print_directory_tree(const String& root_path, int depth, const Strin
     }
 }
 
-int main(int argc, char** argv)
+ErrorOr<int> serenity_main(Main::Arguments arguments)
 {
-    if (pledge("stdio rpath tty", nullptr) < 0) {
-        perror("pledge");
-        return 1;
-    }
+    TRY(Core::System::pledge("stdio rpath tty"));
 
-    Vector<const char*> directories;
+    Vector<String> directories;
 
     Core::ArgsParser args_parser;
     args_parser.add_option(flag_show_hidden_files, "Show hidden files", "all", 'a');
     args_parser.add_option(flag_show_only_directories, "Show only directories", "only-directories", 'd');
     args_parser.add_option(max_depth, "Maximum depth of the tree", "maximum-depth", 'L', "level");
     args_parser.add_positional_argument(directories, "Directories to print", "directories", Core::ArgsParser::Required::No);
-    args_parser.parse(argc, argv);
+    args_parser.parse(arguments);
 
     if (max_depth < 1) {
-        warnln("{}: Invalid level, must be greater than 0.", argv[0]);
+        warnln("{}: Invalid level, must be greater than 0.", arguments.argv[0]);
         return 1;
     }
 
@@ -124,7 +124,7 @@ int main(int argc, char** argv)
         print_directory_tree(".", 0, "");
         puts("");
     } else {
-        for (const char* directory : directories) {
+        for (auto const& directory : directories) {
             print_directory_tree(directory, 0, "");
             puts("");
         }

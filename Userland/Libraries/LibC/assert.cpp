@@ -16,8 +16,8 @@
 extern "C" {
 
 extern bool __stdio_is_initialized;
-#ifndef NDEBUG
-void __assertion_failed(const char* msg)
+
+void __assertion_failed(char const* msg)
 {
     if (__heap_is_stable) {
         dbgln("ASSERTION FAILED: {}", msg);
@@ -32,11 +32,4 @@ void __assertion_failed(const char* msg)
     syscall(SC_set_coredump_metadata, &params);
     abort();
 }
-#endif
-}
-
-void _abort()
-{
-    asm volatile("ud2");
-    __builtin_unreachable();
 }

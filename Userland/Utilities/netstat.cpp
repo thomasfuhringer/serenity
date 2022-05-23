@@ -5,6 +5,7 @@
  */
 
 #include <AK/HashMap.h>
+#include <AK/IPv4Address.h>
 #include <AK/JsonArray.h>
 #include <AK/JsonObject.h>
 #include <AK/QuickSort.h>
@@ -12,40 +13,31 @@
 #include <LibCore/ArgsParser.h>
 #include <LibCore/File.h>
 #include <LibCore/ProcessStatisticsReader.h>
+#include <LibCore/System.h>
+#include <LibMain/Main.h>
+#include <arpa/inet.h>
+#include <netdb.h>
 #include <unistd.h>
 
-int main(int argc, char** argv)
+constexpr int max_formatted_address_length = 21;
+
+ErrorOr<int> serenity_main(Main::Arguments arguments)
 {
-    if (pledge("stdio rpath", nullptr) < 0) {
-        perror("pledge");
-        return 1;
-    }
-
-    if (unveil("/proc/net", "r") < 0) {
-        perror("unveil");
-        return 1;
-    }
-
-    if (unveil("/proc/all", "r") < 0) {
-        perror("unveil");
-        return 1;
-    }
-
-    if (unveil("/etc/passwd", "r") < 0) {
-        perror("unveil");
-        return 1;
-    }
-
-    if (unveil(nullptr, nullptr) < 0) {
-        perror("unveil");
-        return 1;
-    }
+    TRY(Core::System::pledge("stdio rpath unix"));
+    TRY(Core::System::unveil("/proc/net", "r"));
+    TRY(Core::System::unveil("/proc/all", "r"));
+    TRY(Core::System::unveil("/etc/passwd", "r"));
+    TRY(Core::System::unveil("/etc/services", "r"));
+    TRY(Core::System::unveil("/tmp/portal/lookup", "rw"));
+    TRY(Core::System::unveil(nullptr, nullptr));
 
     bool flag_all = false;
     bool flag_list = false;
     bool flag_tcp = false;
     bool flag_udp = false;
+    bool flag_numeric = false;
     bool flag_program = false;
+    bool flag_wide = false;
 
     Core::ArgsParser args_parser;
     args_parser.set_general_help("Display network connections");
@@ -53,8 +45,10 @@ int main(int argc, char** argv)
     args_parser.add_option(flag_list, "Display only listening sockets", "list", 'l');
     args_parser.add_option(flag_tcp, "Display only TCP network connections", "tcp", 't');
     args_parser.add_option(flag_udp, "Display only UDP network connections", "udp", 'u');
+    args_parser.add_option(flag_numeric, "Display numerical addresses", "numeric", 'n');
     args_parser.add_option(flag_program, "Show the PID and name of the program to which each socket belongs", "program", 'p');
-    args_parser.parse(argc, argv);
+    args_parser.add_option(flag_wide, "Do not truncate IP addresses by printing out the whole symbolic host", "wide", 'W');
+    args_parser.parse(arguments);
 
     bool has_protocol_flag = (flag_tcp || flag_udp);
 
@@ -102,8 +96,8 @@ int main(int argc, char** argv)
     protocol_column = add_column("Proto", Alignment::Left, 5);
     bytes_in_column = add_column("Bytes-In", Alignment::Right, 9);
     bytes_out_column = add_column("Bytes-Out", Alignment::Right, 9);
-    local_address_column = add_column("Local Address", Alignment::Left, 20);
-    peer_address_column = add_column("Peer Address", Alignment::Left, 20);
+    local_address_column = add_column("Local Address", Alignment::Left, 22);
+    peer_address_column = add_column("Peer Address", Alignment::Left, 22);
     state_column = add_column("State", Alignment::Left, 11);
     program_column = flag_program ? add_column("PID/Program", Alignment::Left, 11) : -1;
 
@@ -117,6 +111,16 @@ int main(int argc, char** argv)
         } else {
             out("{:<{1}}  "sv, string, column.width);
         }
+    };
+
+    auto get_formatted_address = [&](String const& address, String const& port) {
+        if (flag_wide)
+            return String::formatted("{}:{}", address, port);
+
+        if ((address.length() + port.length()) <= max_formatted_address_length)
+            return String::formatted("{}:{}", address, port);
+
+        return String::formatted("{}:{}", address.substring_view(0, max_formatted_address_length - port.length()), port);
     };
 
     auto get_formatted_program = [&](pid_t pid) {
@@ -156,7 +160,12 @@ int main(int argc, char** argv)
         }
 
         auto file_contents = file->read_all();
-        auto json = JsonValue::from_string(file_contents).release_value_but_fixme_should_propagate_errors();
+        auto json_or_error = JsonValue::from_string(file_contents);
+        if (json_or_error.is_error()) {
+            warnln("Error: {}", json_or_error.error());
+            return 1;
+        }
+        auto json = json_or_error.release_value();
 
         Vector<JsonValue> sorted_regions = json.as_array().values();
         quick_sort(sorted_regions, [](auto& a, auto& b) {
@@ -168,12 +177,51 @@ int main(int argc, char** argv)
 
             auto bytes_in = if_object.get("bytes_in").to_string();
             auto bytes_out = if_object.get("bytes_out").to_string();
+
             auto peer_address = if_object.get("peer_address").to_string();
+            if (!flag_numeric) {
+                auto from_string = IPv4Address::from_string(peer_address);
+                auto addr = from_string.value().to_in_addr_t();
+                auto* hostent = gethostbyaddr(&addr, sizeof(in_addr), AF_INET);
+                if (hostent != nullptr) {
+                    auto host_name = StringView(hostent->h_name);
+                    if (!host_name.is_empty())
+                        peer_address = host_name;
+                }
+            }
+
             auto peer_port = if_object.get("peer_port").to_string();
-            auto formatted_peer_address = String::formatted("{}:{}", peer_address, peer_port);
+            if (!flag_numeric) {
+                auto service = getservbyport(htons(if_object.get("peer_port").to_u32()), "tcp");
+                if (service != nullptr) {
+                    auto s_name = StringView(service->s_name);
+                    if (!s_name.is_empty())
+                        peer_port = s_name;
+                }
+            }
+
             auto local_address = if_object.get("local_address").to_string();
+            if (!flag_numeric) {
+                auto from_string = IPv4Address::from_string(local_address);
+                auto addr = from_string.value().to_in_addr_t();
+                auto* hostent = gethostbyaddr(&addr, sizeof(in_addr), AF_INET);
+                if (hostent != nullptr) {
+                    auto host_name = StringView(hostent->h_name);
+                    if (!host_name.is_empty())
+                        local_address = host_name;
+                }
+            }
+
             auto local_port = if_object.get("local_port").to_string();
-            auto formatted_local_address = String::formatted("{}:{}", local_address, local_port);
+            if (!flag_numeric) {
+                auto service = getservbyport(htons(if_object.get("local_port").to_u32()), "tcp");
+                if (service != nullptr) {
+                    auto s_name = StringView(service->s_name);
+                    if (!s_name.is_empty())
+                        local_port = s_name;
+                }
+            }
+
             auto state = if_object.get("state").to_string();
             auto origin_pid = (if_object.has("origin_pid")) ? if_object.get("origin_pid").to_u32() : -1;
 
@@ -187,9 +235,9 @@ int main(int argc, char** argv)
             if (bytes_out_column != -1)
                 columns[bytes_out_column].buffer = bytes_out;
             if (local_address_column != -1)
-                columns[local_address_column].buffer = formatted_local_address;
+                columns[local_address_column].buffer = get_formatted_address(local_address, local_port);
             if (peer_address_column != -1)
-                columns[peer_address_column].buffer = formatted_peer_address;
+                columns[peer_address_column].buffer = get_formatted_address(peer_address, peer_port);
             if (state_column != -1)
                 columns[state_column].buffer = state;
             if (flag_program && program_column != -1)
@@ -202,14 +250,9 @@ int main(int argc, char** argv)
     }
 
     if (!has_protocol_flag || flag_udp) {
-        auto file = Core::File::construct("/proc/net/udp");
-        if (!file->open(Core::OpenMode::ReadOnly)) {
-            warnln("Error: {}", file->error_string());
-            return 1;
-        }
-
+        auto file = TRY(Core::File::open("/proc/net/udp", Core::OpenMode::ReadOnly));
         auto file_contents = file->read_all();
-        auto json = JsonValue::from_string(file_contents).release_value_but_fixme_should_propagate_errors();
+        auto json = TRY(JsonValue::from_string(file_contents));
 
         Vector<JsonValue> sorted_regions = json.as_array().values();
         quick_sort(sorted_regions, [](auto& a, auto& b) {
@@ -220,9 +263,49 @@ int main(int argc, char** argv)
             auto& if_object = value.as_object();
 
             auto local_address = if_object.get("local_address").to_string();
+            if (!flag_numeric) {
+                auto from_string = IPv4Address::from_string(local_address);
+                auto addr = from_string.value().to_in_addr_t();
+                auto* hostent = gethostbyaddr(&addr, sizeof(in_addr), AF_INET);
+                if (hostent != nullptr) {
+                    auto host_name = StringView(hostent->h_name);
+                    if (!host_name.is_empty())
+                        local_address = host_name;
+                }
+            }
+
             auto local_port = if_object.get("local_port").to_string();
+            if (!flag_numeric) {
+                auto service = getservbyport(htons(if_object.get("local_port").to_u32()), "udp");
+                if (service != nullptr) {
+                    auto s_name = StringView(service->s_name);
+                    if (!s_name.is_empty())
+                        local_port = s_name;
+                }
+            }
+
             auto peer_address = if_object.get("peer_address").to_string();
+            if (!flag_numeric) {
+                auto from_string = IPv4Address::from_string(peer_address);
+                auto addr = from_string.value().to_in_addr_t();
+                auto* hostent = gethostbyaddr(&addr, sizeof(in_addr), AF_INET);
+                if (hostent != nullptr) {
+                    auto host_name = StringView(hostent->h_name);
+                    if (!host_name.is_empty())
+                        peer_address = host_name;
+                }
+            }
+
             auto peer_port = if_object.get("peer_port").to_string();
+            if (!flag_numeric) {
+                auto service = getservbyport(htons(if_object.get("peer_port").to_u32()), "udp");
+                if (service != nullptr) {
+                    auto s_name = StringView(service->s_name);
+                    if (!s_name.is_empty())
+                        peer_port = s_name;
+                }
+            }
+
             auto origin_pid = (if_object.has("origin_pid")) ? if_object.get("origin_pid").to_u32() : -1;
 
             if (protocol_column != -1)
@@ -232,9 +315,9 @@ int main(int argc, char** argv)
             if (bytes_out_column != -1)
                 columns[bytes_out_column].buffer = "-";
             if (local_address_column != -1)
-                columns[local_address_column].buffer = String::formatted("{}:{}", local_address, local_port);
+                columns[local_address_column].buffer = get_formatted_address(local_address, local_port);
             if (peer_address_column != -1)
-                columns[peer_address_column].buffer = String::formatted("{}:{}", peer_address, peer_port);
+                columns[peer_address_column].buffer = get_formatted_address(peer_address, peer_port);
             if (state_column != -1)
                 columns[state_column].buffer = "-";
             if (flag_program && program_column != -1)

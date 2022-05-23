@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2018-2020, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2022, the SerenityOS developers.
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -14,7 +15,7 @@ class SnakeGame : public GUI::Frame {
     C_OBJECT(SnakeGame);
 
 public:
-    virtual ~SnakeGame() override;
+    virtual ~SnakeGame() override = default;
 
     void reset();
 
@@ -28,7 +29,7 @@ private:
         int row { 0 };
         int column { 0 };
 
-        bool operator==(const Coordinate& other) const
+        bool operator==(Coordinate const& other) const
         {
             return row == other.row && column == other.column;
         }
@@ -41,10 +42,10 @@ private:
 
     void game_over();
     void spawn_fruit();
-    bool is_available(const Coordinate&);
+    bool is_available(Coordinate const&);
     void queue_velocity(int v, int h);
-    const Velocity& last_velocity() const;
-    Gfx::IntRect cell_rect(const Coordinate&) const;
+    Velocity const& last_velocity() const;
+    Gfx::IntRect cell_rect(Coordinate const&) const;
     Gfx::IntRect score_rect() const;
     Gfx::IntRect high_score_rect() const;
 

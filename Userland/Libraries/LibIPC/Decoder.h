@@ -11,6 +11,10 @@
 #include <AK/NumericLimits.h>
 #include <AK/StdLibExtras.h>
 #include <AK/String.h>
+#include <AK/Try.h>
+#include <LibCore/SharedCircularQueue.h>
+#include <LibCore/Stream.h>
+#include <LibIPC/File.h>
 #include <LibIPC/Forward.h>
 #include <LibIPC/Message.h>
 
@@ -25,9 +29,9 @@ inline ErrorOr<void> decode(Decoder&, T&)
 
 class Decoder {
 public:
-    Decoder(InputMemoryStream& stream, int sockfd)
+    Decoder(InputMemoryStream& stream, Core::Stream::LocalSocket& socket)
         : m_stream(stream)
-        , m_sockfd(sockfd)
+        , m_socket(socket)
     {
     }
 
@@ -50,6 +54,24 @@ public:
     ErrorOr<void> decode(File&);
     template<typename K, typename V>
     ErrorOr<void> decode(HashMap<K, V>& hashmap)
+    {
+        u32 size;
+        TRY(decode(size));
+        if (size > NumericLimits<i32>::max())
+            return Error::from_string_literal("IPC: Invalid HashMap size"sv);
+
+        for (size_t i = 0; i < size; ++i) {
+            K key;
+            TRY(decode(key));
+            V value;
+            TRY(decode(value));
+            TRY(hashmap.try_set(move(key), move(value)));
+        }
+        return {};
+    }
+
+    template<typename K, typename V>
+    ErrorOr<void> decode(OrderedHashMap<K, V>& hashmap)
     {
         u32 size;
         TRY(decode(size));
@@ -98,6 +120,18 @@ public:
         return {};
     }
 
+    template<typename T, size_t Size>
+    ErrorOr<void> decode(Core::SharedSingleProducerCircularQueue<T, Size>& queue)
+    {
+        // FIXME: We don't support decoding into valid queues.
+        VERIFY(!queue.is_valid());
+
+        IPC::File anon_file;
+        TRY(decode(anon_file));
+        queue = TRY((Core::SharedSingleProducerCircularQueue<T, Size>::try_create(anon_file.take_fd())));
+        return {};
+    }
+
     template<typename T>
     ErrorOr<void> decode(Optional<T>& optional)
     {
@@ -115,7 +149,7 @@ public:
 
 private:
     InputMemoryStream& m_stream;
-    int m_sockfd { -1 };
+    Core::Stream::LocalSocket& m_socket;
 };
 
 }

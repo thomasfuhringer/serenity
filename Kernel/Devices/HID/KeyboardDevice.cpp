@@ -228,6 +228,21 @@ void KeyboardDevice::key_state_changed(u8 scan_code, bool pressed)
         }
     }
 
+    Event event;
+    event.key = key;
+    event.scancode = m_has_e0_prefix ? 0xe000 + scan_code : scan_code;
+    event.flags = m_modifiers;
+    event.e0_prefix = m_has_e0_prefix;
+    event.caps_lock_on = m_caps_lock_on;
+    event.code_point = HIDManagement::the().get_char_from_character_map(event);
+
+    // If using a non-QWERTY layout, event.key needs to be updated to be the same as event.code_point
+    KeyCode mapped_key = code_point_to_key_code(event.code_point);
+    if (mapped_key != KeyCode::Key_Invalid) {
+        event.key = mapped_key;
+        key = mapped_key;
+    }
+
     if (!g_caps_lock_remapped_to_ctrl && key == Key_CapsLock && pressed)
         m_caps_lock_on = !m_caps_lock_on;
 
@@ -237,23 +252,14 @@ void KeyboardDevice::key_state_changed(u8 scan_code, bool pressed)
     if (g_caps_lock_remapped_to_ctrl)
         update_modifier(Mod_Ctrl, m_caps_lock_to_ctrl_pressed);
 
-    Event event;
-    event.key = key;
-    event.scancode = m_has_e0_prefix ? 0xe000 + scan_code : scan_code;
-    event.flags = m_modifiers;
-    event.e0_prefix = m_has_e0_prefix;
-    event.caps_lock_on = m_caps_lock_on;
-    event.code_point = HIDManagement::the().character_map().get_char(event);
-
-    // If using a non-QWERTY layout, event.key needs to be updated to be the same as event.code_point
-    KeyCode mapped_key = visible_code_point_to_key_code(event.code_point);
-    if (mapped_key != KeyCode::Key_Invalid)
-        event.key = mapped_key;
-
     if (pressed)
         event.flags |= Is_Press;
-    if (HIDManagement::the().m_client)
-        HIDManagement::the().m_client->on_key_pressed(event);
+
+    {
+        SpinlockLocker locker(HIDManagement::the().m_client_lock);
+        if (HIDManagement::the().m_client)
+            HIDManagement::the().m_client->on_key_pressed(event);
+    }
 
     {
         SpinlockLocker lock(m_queue_lock);
@@ -274,11 +280,9 @@ UNMAP_AFTER_INIT KeyboardDevice::KeyboardDevice()
 
 // FIXME: UNMAP_AFTER_INIT is fine for now, but for hot-pluggable devices
 // like USB keyboards, we need to remove this
-UNMAP_AFTER_INIT KeyboardDevice::~KeyboardDevice()
-{
-}
+UNMAP_AFTER_INIT KeyboardDevice::~KeyboardDevice() = default;
 
-bool KeyboardDevice::can_read(const OpenFileDescription&, size_t) const
+bool KeyboardDevice::can_read(OpenFileDescription const&, u64) const
 {
     return !m_queue.is_empty();
 }

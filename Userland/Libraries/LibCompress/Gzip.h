@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2020, the SerenityOS developers.
+ * Copyright (c) 2020-2022, the SerenityOS developers.
  * Copyright (c) 2021, Idan Horowitz <idan.horowitz@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
@@ -68,7 +68,7 @@ private:
         size_t m_nread { 0 };
     };
 
-    const Member& current_member() const { return m_current_member.value(); }
+    Member const& current_member() const { return m_current_member.value(); }
     Member& current_member() { return m_current_member.value(); }
 
     InputStream& m_input_stream;
@@ -82,7 +82,7 @@ private:
 class GzipCompressor final : public OutputStream {
 public:
     GzipCompressor(OutputStream&);
-    ~GzipCompressor();
+    ~GzipCompressor() = default;
 
     size_t write(ReadonlyBytes) override;
     bool write_or_error(ReadonlyBytes) override;

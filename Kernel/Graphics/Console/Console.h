@@ -7,7 +7,6 @@
 #pragma once
 
 #include <AK/RefCounted.h>
-#include <AK/String.h>
 #include <AK/Types.h>
 #include <Kernel/Graphics/GenericGraphicsAdapter.h>
 
@@ -60,7 +59,7 @@ public:
     virtual void write(char ch, bool critical = false) = 0;
     virtual void flush(size_t x, size_t y, size_t width, size_t height) = 0;
 
-    virtual ~Console() { }
+    virtual ~Console() = default;
 
 protected:
     Console(size_t width, size_t height)

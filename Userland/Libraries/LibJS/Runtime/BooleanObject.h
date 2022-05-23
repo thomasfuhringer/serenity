@@ -9,6 +9,7 @@
 #include <LibJS/Runtime/Object.h>
 
 namespace JS {
+
 class BooleanObject : public Object {
     JS_OBJECT(BooleanObject, Object);
 
@@ -16,14 +17,12 @@ public:
     static BooleanObject* create(GlobalObject&, bool);
 
     BooleanObject(bool, Object& prototype);
-    virtual ~BooleanObject() override;
+    virtual ~BooleanObject() override = default;
 
-    virtual Value value_of() const override
-    {
-        return Value(m_value);
-    }
+    bool boolean() const { return m_value; }
 
 private:
     bool m_value { false };
 };
+
 }

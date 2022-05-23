@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2020, Linus Groh <linusg@serenityos.org>
+ * Copyright (c) 2022, the SerenityOS developers.
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -14,19 +15,19 @@
 #include <LibGUI/Widget.h>
 #include <LibGUI/Window.h>
 #include <LibGfx/Bitmap.h>
-#include <LibGfx/FontDatabase.h>
+#include <LibGfx/Font/FontDatabase.h>
 #include <LibGfx/Painter.h>
 #include <LibGfx/Path.h>
 #include <LibMain/Main.h>
 #include <unistd.h>
 
-const int WIDTH = 780;
-const int HEIGHT = 600;
+int const WIDTH = 780;
+int const HEIGHT = 600;
 
 class Canvas final : public GUI::Widget {
     C_OBJECT(Canvas)
 public:
-    virtual ~Canvas() override;
+    virtual ~Canvas() override = default;
 
 private:
     Canvas();
@@ -40,10 +41,6 @@ Canvas::Canvas()
 {
     m_bitmap = Gfx::Bitmap::try_create(Gfx::BitmapFormat::BGRx8888, { WIDTH, HEIGHT }).release_value_but_fixme_should_propagate_errors();
     draw();
-}
-
-Canvas::~Canvas()
-{
 }
 
 void Canvas::paint_event(GUI::PaintEvent& event)
@@ -201,9 +198,9 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
     auto file_menu = TRY(window->try_add_menu("&File"));
     TRY(file_menu->try_add_action(GUI::CommonActions::make_quit_action([&](auto&) { app->quit(); })));
 
-    auto app_icon = GUI::Icon::default_icon("app-libgfx-demo");
+    auto app_icon = TRY(GUI::Icon::try_create_default_icon("app-libgfx-demo"));
     window->set_icon(app_icon.bitmap_for_size(16));
-    TRY(window->try_set_main_widget<Canvas>());
+    (void)TRY(window->try_set_main_widget<Canvas>());
     window->show();
 
     return app->exec();

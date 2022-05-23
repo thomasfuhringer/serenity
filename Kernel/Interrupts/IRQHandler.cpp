@@ -15,12 +15,11 @@ IRQHandler::IRQHandler(u8 irq)
     : GenericInterruptHandler(irq)
     , m_responsible_irq_controller(InterruptManagement::the().get_responsible_irq_controller(irq))
 {
-    disable_irq();
+    if (is_registered())
+        disable_irq();
 }
 
-IRQHandler::~IRQHandler()
-{
-}
+IRQHandler::~IRQHandler() = default;
 
 bool IRQHandler::eoi()
 {

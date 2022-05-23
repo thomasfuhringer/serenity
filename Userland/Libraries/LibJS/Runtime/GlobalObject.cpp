@@ -1,13 +1,16 @@
 /*
  * Copyright (c) 2020, Andreas Kling <kling@serenityos.org>
- * Copyright (c) 2020-2021, Linus Groh <linusg@serenityos.org>
+ * Copyright (c) 2020-2022, Linus Groh <linusg@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <AK/BuiltinWrappers.h>
 #include <AK/CharacterTypes.h>
 #include <AK/Hex.h>
 #include <AK/Platform.h>
+#include <AK/UnicodeUtils.h>
+#include <AK/Utf16View.h>
 #include <AK/Utf8View.h>
 #include <LibJS/Console.h>
 #include <LibJS/Heap/DeferGC.h>
@@ -25,6 +28,7 @@
 #include <LibJS/Runtime/AsyncFunctionPrototype.h>
 #include <LibJS/Runtime/AsyncGeneratorFunctionConstructor.h>
 #include <LibJS/Runtime/AsyncGeneratorFunctionPrototype.h>
+#include <LibJS/Runtime/AsyncGeneratorPrototype.h>
 #include <LibJS/Runtime/AsyncIteratorPrototype.h>
 #include <LibJS/Runtime/AtomicsObject.h>
 #include <LibJS/Runtime/BigIntConstructor.h>
@@ -44,9 +48,11 @@
 #include <LibJS/Runtime/FunctionPrototype.h>
 #include <LibJS/Runtime/GeneratorFunctionConstructor.h>
 #include <LibJS/Runtime/GeneratorFunctionPrototype.h>
-#include <LibJS/Runtime/GeneratorObjectPrototype.h>
+#include <LibJS/Runtime/GeneratorPrototype.h>
 #include <LibJS/Runtime/GlobalEnvironment.h>
 #include <LibJS/Runtime/GlobalObject.h>
+#include <LibJS/Runtime/Intl/CollatorConstructor.h>
+#include <LibJS/Runtime/Intl/CollatorPrototype.h>
 #include <LibJS/Runtime/Intl/DateTimeFormatConstructor.h>
 #include <LibJS/Runtime/Intl/DateTimeFormatPrototype.h>
 #include <LibJS/Runtime/Intl/DisplayNamesConstructor.h>
@@ -58,6 +64,14 @@
 #include <LibJS/Runtime/Intl/LocalePrototype.h>
 #include <LibJS/Runtime/Intl/NumberFormatConstructor.h>
 #include <LibJS/Runtime/Intl/NumberFormatPrototype.h>
+#include <LibJS/Runtime/Intl/PluralRulesConstructor.h>
+#include <LibJS/Runtime/Intl/PluralRulesPrototype.h>
+#include <LibJS/Runtime/Intl/RelativeTimeFormatConstructor.h>
+#include <LibJS/Runtime/Intl/RelativeTimeFormatPrototype.h>
+#include <LibJS/Runtime/Intl/SegmentIteratorPrototype.h>
+#include <LibJS/Runtime/Intl/SegmenterConstructor.h>
+#include <LibJS/Runtime/Intl/SegmenterPrototype.h>
+#include <LibJS/Runtime/Intl/SegmentsPrototype.h>
 #include <LibJS/Runtime/IteratorPrototype.h>
 #include <LibJS/Runtime/JSONObject.h>
 #include <LibJS/Runtime/MapConstructor.h>
@@ -164,12 +178,11 @@ void GlobalObject::initialize_global_object()
     JS_ENUMERATE_ITERATOR_PROTOTYPES
 #undef __JS_ENUMERATE
 
-    // %GeneratorFunction.prototype.prototype% must be initialized separately as it has no
-    // companion constructor
-    m_generator_object_prototype = heap().allocate<GeneratorObjectPrototype>(*this, *this);
-    m_generator_object_prototype->define_direct_property(vm.names.constructor, m_generator_function_constructor, Attribute::Configurable);
-
+    // These must be initialized separately as they have no companion constructor
     m_async_from_sync_iterator_prototype = heap().allocate<AsyncFromSyncIteratorPrototype>(*this, *this);
+    m_async_generator_prototype = heap().allocate<AsyncGeneratorPrototype>(*this, *this);
+    m_generator_prototype = heap().allocate<GeneratorPrototype>(*this, *this);
+    m_intl_segments_prototype = heap().allocate<Intl::SegmentsPrototype>(*this, *this);
 
 #define __JS_ENUMERATE(ClassName, snake_name, PrototypeName, ConstructorName, ArrayType) \
     if (!m_##snake_name##_prototype)                                                     \
@@ -276,23 +289,25 @@ void GlobalObject::initialize_global_object()
     JS_ENUMERATE_TYPED_ARRAYS
 #undef __JS_ENUMERATE
 
-    // The generator constructor cannot be initialized with add_constructor as it has no global binding
-    m_generator_function_constructor = heap().allocate<GeneratorFunctionConstructor>(*this, *this);
-    // 27.3.3.1 GeneratorFunction.prototype.constructor, https://tc39.es/ecma262/#sec-generatorfunction.prototype.constructor
-    m_generator_function_prototype->define_direct_property(vm.names.constructor, m_generator_function_constructor, Attribute::Configurable);
+    // NOTE: These constructors cannot be initialized with add_constructor as they have no global binding.
+    initialize_constructor(vm.names.GeneratorFunction, m_generator_function_constructor, m_generator_function_prototype, Attribute::Configurable);
+    initialize_constructor(vm.names.AsyncGeneratorFunction, m_async_generator_function_constructor, m_async_generator_function_prototype, Attribute::Configurable);
+    initialize_constructor(vm.names.AsyncFunction, m_async_function_constructor, m_async_function_prototype, Attribute::Configurable);
 
-    // The async generator constructor cannot be initialized with add_constructor as it has no global binding
-    m_async_generator_function_constructor = heap().allocate<AsyncGeneratorFunctionConstructor>(*this, *this);
-    // 27.4.3.1 AsyncGeneratorFunction.prototype.constructor, https://tc39.es/ecma262/#sec-asyncgeneratorfunction-prototype-constructor
-    m_async_generator_function_prototype->define_direct_property(vm.names.constructor, m_async_generator_function_constructor, Attribute::Configurable);
+    // 27.5.1.1 Generator.prototype.constructor, https://tc39.es/ecma262/#sec-generator.prototype.constructor
+    m_generator_prototype->define_direct_property(vm.names.constructor, m_generator_function_prototype, Attribute::Configurable);
+
+    // 27.6.1.1 AsyncGenerator.prototype.constructor, https://tc39.es/ecma262/#sec-asyncgenerator-prototype-constructor
+    m_async_generator_prototype->define_direct_property(vm.names.constructor, m_async_generator_function_prototype, Attribute::Configurable);
 
     m_array_prototype_values_function = &m_array_prototype->get_without_side_effects(vm.names.values).as_function();
+    m_date_constructor_now_function = &m_date_constructor->get_without_side_effects(vm.names.now).as_function();
     m_eval_function = &get_without_side_effects(vm.names.eval).as_function();
+    m_json_parse_function = &get_without_side_effects(vm.names.JSON).as_object().get_without_side_effects(vm.names.parse).as_function();
+    m_object_prototype_to_string_function = &m_object_prototype->get_without_side_effects(vm.names.toString).as_function();
 }
 
-GlobalObject::~GlobalObject()
-{
-}
+GlobalObject::~GlobalObject() = default;
 
 void GlobalObject::visit_edges(Visitor& visitor)
 {
@@ -302,9 +317,15 @@ void GlobalObject::visit_edges(Visitor& visitor)
     visitor.visit(m_new_object_shape);
     visitor.visit(m_new_ordinary_function_prototype_object_shape);
     visitor.visit(m_proxy_constructor);
-    visitor.visit(m_generator_object_prototype);
+    visitor.visit(m_async_from_sync_iterator_prototype);
+    visitor.visit(m_async_generator_prototype);
+    visitor.visit(m_generator_prototype);
+    visitor.visit(m_intl_segments_prototype);
     visitor.visit(m_array_prototype_values_function);
+    visitor.visit(m_date_constructor_now_function);
     visitor.visit(m_eval_function);
+    visitor.visit(m_json_parse_function);
+    visitor.visit(m_object_prototype_to_string_function);
     visitor.visit(m_throw_type_error_function);
 
 #define __JS_ENUMERATE(ClassName, snake_name, PrototypeName, ConstructorName, ArrayType) \
@@ -368,7 +389,7 @@ JS_DEFINE_NATIVE_FUNCTION(GlobalObject::parse_float)
     if (vm.argument(0).is_number())
         return vm.argument(0);
     auto input_string = TRY(vm.argument(0).to_string(global_object));
-    auto trimmed_string = input_string.trim_whitespace(TrimMode::Left);
+    auto trimmed_string = MUST(trim_string(global_object, js_string(vm, input_string), TrimMode::Left));
     for (size_t length = trimmed_string.length(); length > 0; --length) {
         auto number = MUST(Value(js_string(vm, trimmed_string.substring(0, length))).to_number(global_object));
         if (!number.is_nan())
@@ -380,37 +401,63 @@ JS_DEFINE_NATIVE_FUNCTION(GlobalObject::parse_float)
 // 19.2.5 parseInt ( string, radix ), https://tc39.es/ecma262/#sec-parseint-string-radix
 JS_DEFINE_NATIVE_FUNCTION(GlobalObject::parse_int)
 {
+    // 1. Let inputString be ? ToString(string).
     auto input_string = TRY(vm.argument(0).to_string(global_object));
 
-    // FIXME: There's a bunch of unnecessary string copying here.
-    double sign = 1;
-    auto s = input_string.trim_whitespace(TrimMode::Left);
-    if (!s.is_empty() && s[0] == '-')
-        sign = -1;
-    if (!s.is_empty() && (s[0] == '+' || s[0] == '-'))
-        s = s.substring(1, s.length() - 1);
+    // 2. Let S be ! TrimString(inputString, start).
+    auto string = MUST(trim_string(global_object, js_string(vm, input_string), TrimMode::Left));
 
+    // 3. Let sign be 1.
+    auto sign = 1;
+
+    // 4. If S is not empty and the first code unit of S is the code unit 0x002D (HYPHEN-MINUS), set sign to -1.
+    if (!string.is_empty() && string[0] == 0x2D)
+        sign = -1;
+    // 5. If S is not empty and the first code unit of S is the code unit 0x002B (PLUS SIGN) or the code unit 0x002D (HYPHEN-MINUS), remove the first code unit from S.
+    auto trimmed_view = string.view();
+    if (!string.is_empty() && (string[0] == 0x2B || string[0] == 0x2D))
+        trimmed_view = trimmed_view.substring_view(1);
+
+    // 6. Let R be ℝ(? ToInt32(radix)).
     auto radix = TRY(vm.argument(1).to_i32(global_object));
 
-    bool strip_prefix = true;
+    // 7. Let stripPrefix be true.
+    auto strip_prefix = true;
+
+    // 8. If R ≠ 0, then
     if (radix != 0) {
+        // a. If R < 2 or R > 36, return NaN.
         if (radix < 2 || radix > 36)
             return js_nan();
+
+        // b. If R ≠ 16, set stripPrefix to false.
         if (radix != 16)
             strip_prefix = false;
-    } else {
+    }
+    // 9. Else,
+    else {
+        // a. Set R to 10.
         radix = 10;
     }
 
+    // 10. If stripPrefix is true, then
     if (strip_prefix) {
-        if (s.length() >= 2 && s[0] == '0' && (s[1] == 'x' || s[1] == 'X')) {
-            s = s.substring(2, s.length() - 2);
+        // a. If the length of S is at least 2 and the first two code units of S are either "0x" or "0X", then
+        if (trimmed_view.length() >= 2 && trimmed_view.substring_view(0, 2).equals_ignoring_case("0x"sv)) {
+            // i. Remove the first two code units from S.
+            trimmed_view = trimmed_view.substring_view(2);
+
+            // ii. Set R to 16.
             radix = 16;
         }
     }
 
-    auto parse_digit = [&](u32 code_point, i32 radix) -> Optional<i32> {
-        if (!is_ascii_alphanumeric(code_point) || radix <= 0)
+    // 11. If S contains a code unit that is not a radix-R digit, let end be the index within S of the first such code unit; otherwise, let end be the length of S.
+    // 12. Let Z be the substring of S from 0 to end.
+    // 13. If Z is empty, return NaN.
+    // 14. Let mathInt be the integer value that is represented by Z in radix-R notation, using the letters A-Z and a-z for digits with values 10 through 35. (However, if R is 10 and Z contains more than 20 significant digits, every significant digit after the 20th may be replaced by a 0 digit, at the option of the implementation; and if R is not 2, 4, 8, 10, 16, or 32, then mathInt may be an implementation-approximated integer representing the integer value denoted by Z in radix-R notation.)
+    auto parse_digit = [&](u32 code_point) -> Optional<u32> {
+        if (!is_ascii_alphanumeric(code_point))
             return {};
         auto digit = parse_ascii_base36_digit(code_point);
         if (digit >= (u32)radix)
@@ -420,8 +467,8 @@ JS_DEFINE_NATIVE_FUNCTION(GlobalObject::parse_int)
 
     bool had_digits = false;
     double number = 0;
-    for (auto code_point : Utf8View(s)) {
-        auto digit = parse_digit(code_point, radix);
+    for (auto code_point : Utf8View(trimmed_view)) {
+        auto digit = parse_digit(code_point);
         if (!digit.has_value())
             break;
         had_digits = true;
@@ -432,34 +479,80 @@ JS_DEFINE_NATIVE_FUNCTION(GlobalObject::parse_int)
     if (!had_digits)
         return js_nan();
 
+    // 15. If mathInt = 0, then
+    // a. If sign = -1, return -0𝔽.
+    // b. Return +0𝔽.
+    // 16. Return 𝔽(sign × mathInt).
     return Value(sign * number);
 }
 
 // 19.2.1 eval ( x ), https://tc39.es/ecma262/#sec-eval-x
 JS_DEFINE_NATIVE_FUNCTION(GlobalObject::eval)
 {
-    return perform_eval(vm.argument(0), global_object, CallerMode::NonStrict, EvalMode::Indirect);
+    return perform_eval(global_object, vm.argument(0), CallerMode::NonStrict, EvalMode::Indirect);
 }
 
 // 19.2.6.1.1 Encode ( string, unescapedSet ), https://tc39.es/ecma262/#sec-encode
-static ThrowCompletionOr<String> encode([[maybe_unused]] JS::GlobalObject& global_object, const String& string, StringView unescaped_set)
+static ThrowCompletionOr<String> encode(GlobalObject& global_object, String const& string, StringView unescaped_set)
 {
+    auto& vm = global_object.vm();
+    auto utf16_string = Utf16String(string);
+
+    // 1. Let strLen be the length of string.
+    auto string_length = utf16_string.length_in_code_units();
+
+    // 2. Let R be the empty String.
     StringBuilder encoded_builder;
-    for (unsigned char code_unit : string) {
-        if (unescaped_set.contains(code_unit)) {
+
+    // 3. Let k be 0.
+    auto k = 0u;
+    // 4. Repeat,
+    while (k < string_length) {
+        // a. If k = strLen, return R.
+        // Handled below
+
+        // b. Let C be the code unit at index k within string.
+        auto code_unit = utf16_string.code_unit_at(k);
+        // c. If C is in unescapedSet, then
+        // NOTE: We assume the unescaped set only contains ascii characters as unescaped_set is a StringView.
+        if (code_unit < 0x80 && unescaped_set.contains(code_unit)) {
+            // i. Set k to k + 1.
+            k++;
+
+            // ii. Set R to the string-concatenation of R and C.
             encoded_builder.append(code_unit);
-            continue;
         }
-        // FIXME: check for unpaired surrogates and throw URIError
-        encoded_builder.appendff("%{:02X}", code_unit);
+        // d. Else,
+        else {
+            // i. Let cp be CodePointAt(string, k).
+            auto code_point = code_point_at(utf16_string.view(), k);
+            // ii. If cp.[[IsUnpairedSurrogate]] is true, throw a URIError exception.
+            if (code_point.is_unpaired_surrogate)
+                return vm.throw_completion<URIError>(global_object, ErrorType::URIMalformed);
+
+            // iii. Set k to k + cp.[[CodeUnitCount]].
+            k += code_point.code_unit_count;
+
+            // iv. Let Octets be the List of octets resulting by applying the UTF-8 transformation to cp.[[CodePoint]].
+            // v. For each element octet of Octets, do
+            auto nwritten = AK::UnicodeUtils::code_point_to_utf8(code_point.code_point, [&encoded_builder](u8 octet) {
+                // 1. Set R to the string-concatenation of:
+                //  * R
+                //  * "%"
+                //  * the String representation of octet, formatted as a two-digit uppercase hexadecimal number, padded to the left with a zero if necessary
+                encoded_builder.appendff("%{:02X}", octet);
+            });
+            VERIFY(nwritten > 0);
+        }
     }
     return encoded_builder.build();
 }
 
 // 19.2.6.1.2 Decode ( string, reservedSet ), https://tc39.es/ecma262/#sec-decode
-static ThrowCompletionOr<String> decode(JS::GlobalObject& global_object, const String& string, StringView reserved_set)
+static ThrowCompletionOr<String> decode(GlobalObject& global_object, String const& string, StringView reserved_set)
 {
     StringBuilder decoded_builder;
+    auto code_point_start_offset = 0u;
     auto expected_continuation_bytes = 0;
     for (size_t k = 0; k < string.length(); k++) {
         auto code_unit = string[k];
@@ -482,11 +575,13 @@ static ThrowCompletionOr<String> decode(JS::GlobalObject& global_object, const S
         if (second_digit >= 16)
             return global_object.vm().throw_completion<URIError>(global_object, ErrorType::URIMalformed);
 
-        char decoded_code_unit = (first_digit << 4) | second_digit;
+        u8 decoded_code_unit = (first_digit << 4) | second_digit;
         k += 2;
         if (expected_continuation_bytes > 0) {
             decoded_builder.append(decoded_code_unit);
             expected_continuation_bytes--;
+            if (expected_continuation_bytes == 0 && !Utf8View(decoded_builder.string_view().substring_view(code_point_start_offset)).validate())
+                return global_object.vm().throw_completion<URIError>(global_object, ErrorType::URIMalformed);
             continue;
         }
 
@@ -498,13 +593,16 @@ static ThrowCompletionOr<String> decode(JS::GlobalObject& global_object, const S
             continue;
         }
 
-        auto leading_ones = count_trailing_zeroes_32_safe(~decoded_code_unit) - 24;
+        auto leading_ones = count_leading_zeroes_safe(static_cast<u8>(~decoded_code_unit));
         if (leading_ones == 1 || leading_ones > 4)
             return global_object.vm().throw_completion<URIError>(global_object, ErrorType::URIMalformed);
 
+        code_point_start_offset = decoded_builder.length();
         decoded_builder.append(decoded_code_unit);
         expected_continuation_bytes = leading_ones - 1;
     }
+    if (expected_continuation_bytes > 0)
+        return global_object.vm().throw_completion<URIError>(global_object, ErrorType::URIMalformed);
     return decoded_builder.build();
 }
 
@@ -545,7 +643,7 @@ JS_DEFINE_NATIVE_FUNCTION(GlobalObject::escape)
 {
     auto string = TRY(vm.argument(0).to_string(global_object));
     StringBuilder escaped;
-    for (auto code_point : Utf8View(string)) {
+    for (auto code_point : utf8_to_utf16(string)) {
         if (code_point < 256) {
             if ("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789@*_+-./"sv.contains(code_point))
                 escaped.append(code_point);
@@ -553,7 +651,7 @@ JS_DEFINE_NATIVE_FUNCTION(GlobalObject::escape)
                 escaped.appendff("%{:02X}", code_point);
             continue;
         }
-        escaped.appendff("%u{:04X}", code_point); // FIXME: Handle utf-16 surrogate pairs
+        escaped.appendff("%u{:04X}", code_point);
     }
     return js_string(vm, escaped.build());
 }

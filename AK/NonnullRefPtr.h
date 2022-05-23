@@ -39,7 +39,7 @@ ALWAYS_INLINE void unref_if_not_null(T* ptr)
 }
 
 template<typename T>
-class NonnullRefPtr {
+class [[nodiscard]] NonnullRefPtr {
     template<typename U, typename P>
     friend class RefPtr;
     template<typename U>
@@ -104,16 +104,16 @@ public:
     }
 
     template<typename U>
-    NonnullRefPtr(const OwnPtr<U>&) = delete;
+    NonnullRefPtr(OwnPtr<U> const&) = delete;
     template<typename U>
-    NonnullRefPtr& operator=(const OwnPtr<U>&) = delete;
+    NonnullRefPtr& operator=(OwnPtr<U> const&) = delete;
 
     template<typename U>
-    NonnullRefPtr(const RefPtr<U>&) = delete;
+    NonnullRefPtr(RefPtr<U> const&) = delete;
     template<typename U>
-    NonnullRefPtr& operator=(const RefPtr<U>&) = delete;
-    NonnullRefPtr(const RefPtr<T>&) = delete;
-    NonnullRefPtr& operator=(const RefPtr<T>&) = delete;
+    NonnullRefPtr& operator=(RefPtr<U> const&) = delete;
+    NonnullRefPtr(RefPtr<T> const&) = delete;
+    NonnullRefPtr& operator=(RefPtr<T> const&) = delete;
 
     NonnullRefPtr& operator=(NonnullRefPtr const& other)
     {
@@ -218,8 +218,11 @@ public:
         AK::swap(m_ptr, other.m_ptr);
     }
 
+    // clang-format off
 private:
     NonnullRefPtr() = delete;
+    // clang-format on
+
     ALWAYS_INLINE RETURNS_NONNULL T* as_nonnull_ptr() const
     {
         VERIFY(m_ptr);
@@ -267,8 +270,8 @@ template<typename T>
 struct Traits<NonnullRefPtr<T>> : public GenericTraits<NonnullRefPtr<T>> {
     using PeekType = T*;
     using ConstPeekType = const T*;
-    static unsigned hash(const NonnullRefPtr<T>& p) { return ptr_hash(p.ptr()); }
-    static bool equals(const NonnullRefPtr<T>& a, const NonnullRefPtr<T>& b) { return a.ptr() == b.ptr(); }
+    static unsigned hash(NonnullRefPtr<T> const& p) { return ptr_hash(p.ptr()); }
+    static bool equals(NonnullRefPtr<T> const& a, NonnullRefPtr<T> const& b) { return a.ptr() == b.ptr(); }
 };
 
 using AK::adopt_ref;

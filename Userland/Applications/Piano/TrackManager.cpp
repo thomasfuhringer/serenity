@@ -2,6 +2,7 @@
  * Copyright (c) 2018-2020, Andreas Kling <kling@serenityos.org>
  * Copyright (c) 2019-2020, William McPherson <willmcpherson2@gmail.com>
  * Copyright (c) 2021, JJ Roberts-White <computerfido@gmail.com>
+ * Copyright (c) 2022, the SerenityOS developers.
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -12,10 +13,6 @@
 TrackManager::TrackManager()
 {
     add_track();
-}
-
-TrackManager::~TrackManager()
-{
 }
 
 void TrackManager::time_forward(int amount)
@@ -90,8 +87,11 @@ void TrackManager::add_track()
     m_tracks.append(make<Track>(m_time));
 }
 
-void TrackManager::next_track()
+int TrackManager::next_track_index()
 {
-    if (++m_current_track >= m_tracks.size())
-        m_current_track = 0;
+    auto next_track_index = m_current_track + 1;
+    if (next_track_index >= m_tracks.size())
+        return 0;
+    else
+        return next_track_index;
 }

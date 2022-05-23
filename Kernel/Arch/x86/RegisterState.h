@@ -12,6 +12,9 @@
 #include <Kernel/Arch/x86/ASM_wrapper.h>
 #include <Kernel/Arch/x86/CPU.h>
 
+#include <AK/Platform.h>
+VALIDATE_IS_X86()
+
 namespace Kernel {
 
 struct [[gnu::packed]] RegisterState {
@@ -107,9 +110,10 @@ struct [[gnu::packed]] RegisterState {
         arg3 = ebx;
         arg4 = esi;
 #else
+        // The syscall instruction clobbers rcx, so we must use a different calling convention to 32-bit.
         function = rax;
         arg1 = rdx;
-        arg2 = rcx;
+        arg2 = rdi;
         arg3 = rbx;
         arg4 = rsi;
 #endif
@@ -124,29 +128,29 @@ static_assert(AssertSize<RegisterState, REGISTER_STATE_SIZE>());
 static_assert(AssertSize<RegisterState, REGISTER_STATE_SIZE>());
 #endif
 
-inline void copy_kernel_registers_into_ptrace_registers(PtraceRegisters& ptrace_regs, const RegisterState& kernel_regs)
+inline void copy_kernel_registers_into_ptrace_registers(PtraceRegisters& ptrace_regs, RegisterState const& kernel_regs)
 {
 #if ARCH(I386)
-    ptrace_regs.eax = kernel_regs.eax,
-    ptrace_regs.ecx = kernel_regs.ecx,
-    ptrace_regs.edx = kernel_regs.edx,
-    ptrace_regs.ebx = kernel_regs.ebx,
-    ptrace_regs.esp = kernel_regs.userspace_esp,
-    ptrace_regs.ebp = kernel_regs.ebp,
-    ptrace_regs.esi = kernel_regs.esi,
-    ptrace_regs.edi = kernel_regs.edi,
-    ptrace_regs.eip = kernel_regs.eip,
-    ptrace_regs.eflags = kernel_regs.eflags,
+    ptrace_regs.eax = kernel_regs.eax;
+    ptrace_regs.ecx = kernel_regs.ecx;
+    ptrace_regs.edx = kernel_regs.edx;
+    ptrace_regs.ebx = kernel_regs.ebx;
+    ptrace_regs.esp = kernel_regs.userspace_esp;
+    ptrace_regs.ebp = kernel_regs.ebp;
+    ptrace_regs.esi = kernel_regs.esi;
+    ptrace_regs.edi = kernel_regs.edi;
+    ptrace_regs.eip = kernel_regs.eip;
+    ptrace_regs.eflags = kernel_regs.eflags;
 #else
-    ptrace_regs.rax = kernel_regs.rax,
-    ptrace_regs.rcx = kernel_regs.rcx,
-    ptrace_regs.rdx = kernel_regs.rdx,
-    ptrace_regs.rbx = kernel_regs.rbx,
-    ptrace_regs.rsp = kernel_regs.userspace_rsp,
-    ptrace_regs.rbp = kernel_regs.rbp,
-    ptrace_regs.rsi = kernel_regs.rsi,
-    ptrace_regs.rdi = kernel_regs.rdi,
-    ptrace_regs.rip = kernel_regs.rip,
+    ptrace_regs.rax = kernel_regs.rax;
+    ptrace_regs.rcx = kernel_regs.rcx;
+    ptrace_regs.rdx = kernel_regs.rdx;
+    ptrace_regs.rbx = kernel_regs.rbx;
+    ptrace_regs.rsp = kernel_regs.userspace_rsp;
+    ptrace_regs.rbp = kernel_regs.rbp;
+    ptrace_regs.rsi = kernel_regs.rsi;
+    ptrace_regs.rdi = kernel_regs.rdi;
+    ptrace_regs.rip = kernel_regs.rip;
     ptrace_regs.r8 = kernel_regs.r8;
     ptrace_regs.r9 = kernel_regs.r9;
     ptrace_regs.r10 = kernel_regs.r10;
@@ -165,7 +169,7 @@ inline void copy_kernel_registers_into_ptrace_registers(PtraceRegisters& ptrace_
     ptrace_regs.gs = 0;
 }
 
-inline void copy_ptrace_registers_into_kernel_registers(RegisterState& kernel_regs, const PtraceRegisters& ptrace_regs)
+inline void copy_ptrace_registers_into_kernel_registers(RegisterState& kernel_regs, PtraceRegisters const& ptrace_regs)
 {
 #if ARCH(I386)
     kernel_regs.eax = ptrace_regs.eax;
@@ -220,7 +224,7 @@ inline void read_debug_registers_into(DebugRegisterState& state)
     state.dr7 = read_dr7();
 }
 
-inline void write_debug_registers_from(const DebugRegisterState& state)
+inline void write_debug_registers_from(DebugRegisterState const& state)
 {
     write_dr0(state.dr0);
     write_dr1(state.dr1);

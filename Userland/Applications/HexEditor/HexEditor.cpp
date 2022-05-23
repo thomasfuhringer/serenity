@@ -1,11 +1,14 @@
 /*
  * Copyright (c) 2018-2020, Andreas Kling <kling@serenityos.org>
  * Copyright (c) 2021, Mustafa Quraish <mustafa@serenityos.org>
+ * Copyright (c) 2022, the SerenityOS developers.
+ * Copyright (c) 2022, Timothy Slater <tslater2006@gmail.com>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #include "HexEditor.h"
+#include "AK/Format.h"
 #include "SearchResultsModel.h"
 #include <AK/Debug.h>
 #include <AK/ScopeGuard.h>
@@ -18,7 +21,7 @@
 #include <LibGUI/Scrollbar.h>
 #include <LibGUI/TextEditor.h>
 #include <LibGUI/Window.h>
-#include <LibGfx/FontDatabase.h>
+#include <LibGfx/Font/FontDatabase.h>
 #include <LibGfx/Palette.h>
 #include <ctype.h>
 #include <fcntl.h>
@@ -28,6 +31,7 @@
 
 HexEditor::HexEditor()
     : m_blink_timer(Core::Timer::construct())
+    , m_document(make<HexDocumentMemory>(ByteBuffer::create_zeroed(0).release_value_but_fixme_should_propagate_errors()))
 {
     set_should_hide_unnecessary_scrollbars(true);
     set_focus_policy(GUI::FocusPolicy::StrongFocus);
@@ -45,10 +49,6 @@ HexEditor::HexEditor()
     m_blink_timer->start();
 }
 
-HexEditor::~HexEditor()
-{
-}
-
 void HexEditor::set_readonly(bool readonly)
 {
     if (m_readonly == readonly)
@@ -56,13 +56,35 @@ void HexEditor::set_readonly(bool readonly)
     m_readonly = readonly;
 }
 
-void HexEditor::set_buffer(const ByteBuffer& buffer)
+bool HexEditor::open_new_file(size_t size)
 {
-    m_buffer = buffer;
-    set_content_length(buffer.size());
-    m_tracked_changes.clear();
+    auto maybe_buffer = ByteBuffer::create_zeroed(size);
+    if (maybe_buffer.is_error()) {
+        return false;
+    }
+
+    m_document = make<HexDocumentMemory>(maybe_buffer.release_value());
+    set_content_length(m_document->size());
     m_position = 0;
     m_cursor_at_low_nibble = false;
+    m_selection_start = 0;
+    m_selection_end = 0;
+    scroll_position_into_view(m_position);
+    update();
+    update_status();
+
+    return true;
+}
+
+void HexEditor::open_file(NonnullRefPtr<Core::File> file)
+{
+    m_document = make<HexDocumentFile>(file);
+    set_content_length(m_document->size());
+    m_position = 0;
+    m_cursor_at_low_nibble = false;
+    m_selection_start = 0;
+    m_selection_end = 0;
+    scroll_position_into_view(m_position);
     update();
     update_status();
 }
@@ -72,10 +94,8 @@ void HexEditor::fill_selection(u8 fill_byte)
     if (!has_selection())
         return;
 
-    for (size_t i = m_selection_start; i < m_selection_end; i++) {
-        m_tracked_changes.set(i, m_buffer.data()[i]);
-        m_buffer.data()[i] = fill_byte;
-    }
+    for (size_t i = m_selection_start; i < m_selection_end; i++)
+        m_document->set(i, fill_byte);
 
     update();
     did_change();
@@ -83,7 +103,7 @@ void HexEditor::fill_selection(u8 fill_byte)
 
 void HexEditor::set_position(size_t position)
 {
-    if (position > m_buffer.size())
+    if (position > m_document->size())
         return;
 
     m_position = position;
@@ -92,43 +112,45 @@ void HexEditor::set_position(size_t position)
     scroll_position_into_view(position);
     update_status();
 }
-
-bool HexEditor::write_to_file(const String& path)
+void HexEditor::set_selection(size_t position, size_t length)
 {
-    if (m_buffer.is_empty())
-        return true;
+    if (position > m_document->size() || position + length > m_document->size())
+        return;
 
-    int fd = open(path.characters(), O_WRONLY | O_CREAT | O_TRUNC, 0666);
-    if (fd < 0) {
-        perror("open");
-        return false;
+    m_position = position;
+    m_cursor_at_low_nibble = false;
+    m_selection_start = position;
+    m_selection_end = position + length;
+    reset_cursor_blink_state();
+    scroll_position_into_view(position);
+    update_status();
+}
+bool HexEditor::save_as(NonnullRefPtr<Core::File> new_file)
+{
+    if (m_document->type() == HexDocument::Type::File) {
+        HexDocumentFile* fileDocument = static_cast<HexDocumentFile*>(m_document.ptr());
+        if (!fileDocument->write_to_file(new_file))
+            return false;
+        fileDocument->set_file(new_file);
+    } else {
+        HexDocumentMemory* memoryDocument = static_cast<HexDocumentMemory*>(m_document.ptr());
+        if (!memoryDocument->write_to_file(new_file))
+            return false;
+        m_document = make<HexDocumentFile>(new_file);
     }
 
-    return write_to_file(fd);
+    update();
+
+    return true;
 }
 
-bool HexEditor::write_to_file(int fd)
+bool HexEditor::save()
 {
-    ScopeGuard fd_guard = [fd] { close(fd); };
-
-    int rc = ftruncate(fd, m_buffer.size());
-    if (rc < 0) {
-        perror("ftruncate");
+    if (m_document->type() != HexDocument::Type::File) {
         return false;
     }
 
-    ssize_t nwritten = write(fd, m_buffer.data(), m_buffer.size());
-    if (nwritten < 0) {
-        perror("write");
-        close(fd);
-        return false;
-    }
-
-    if (static_cast<size_t>(nwritten) == m_buffer.size()) {
-        m_tracked_changes.clear();
-        update();
-    }
-
+    static_cast<HexDocumentFile*>(m_document.ptr())->write_to_file();
     return true;
 }
 
@@ -146,7 +168,7 @@ bool HexEditor::copy_selected_hex_to_clipboard()
 
     StringBuilder output_string_builder;
     for (size_t i = m_selection_start; i < m_selection_end; i++)
-        output_string_builder.appendff("{:02X} ", m_buffer.data()[i]);
+        output_string_builder.appendff("{:02X} ", m_document->get(i).value);
 
     GUI::Clipboard::the().set_plain_text(output_string_builder.to_string());
     return true;
@@ -159,7 +181,7 @@ bool HexEditor::copy_selected_text_to_clipboard()
 
     StringBuilder output_string_builder;
     for (size_t i = m_selection_start; i < m_selection_end; i++)
-        output_string_builder.append(isprint(m_buffer.data()[i]) ? m_buffer[i] : '.');
+        output_string_builder.append(isprint(m_document->get(i).value) ? m_document->get(i).value : '.');
 
     GUI::Clipboard::the().set_plain_text(output_string_builder.to_string());
     return true;
@@ -171,16 +193,16 @@ bool HexEditor::copy_selected_hex_to_clipboard_as_c_code()
         return false;
 
     StringBuilder output_string_builder;
-    output_string_builder.appendff("unsigned char raw_data[{}] = {{\n", (m_selection_end - m_selection_start) + 1);
+    output_string_builder.appendff("unsigned char raw_data[{}] = {{\n", m_selection_end - m_selection_start);
     output_string_builder.append("    ");
     for (size_t i = m_selection_start, j = 1; i < m_selection_end; i++, j++) {
-        output_string_builder.appendff("{:#02X}", m_buffer.data()[i]);
-        if (i != m_selection_end)
+        output_string_builder.appendff("{:#02X}", m_document->get(i).value);
+        if (i >= m_selection_end - 1)
+            continue;
+        if ((j % 12) == 0)
+            output_string_builder.append(",\n    ");
+        else
             output_string_builder.append(", ");
-        if ((j % 12) == 0) {
-            output_string_builder.append("\n");
-            output_string_builder.append("    ");
-        }
     }
     output_string_builder.append("\n};\n");
 
@@ -205,6 +227,14 @@ void HexEditor::set_content_length(size_t length)
     auto newWidth = offset_margin_width() + (m_bytes_per_row * cell_width()) + 2 * m_padding + (m_bytes_per_row * character_width()) + 4 * m_padding;
     auto newHeight = total_rows() * line_height() + 2 * m_padding;
     set_content_size({ static_cast<int>(newWidth), static_cast<int>(newHeight) });
+}
+
+Optional<u8> HexEditor::get_byte(size_t position)
+{
+    if (position < m_document->size())
+        return m_document->get(position).value;
+
+    return {};
 }
 
 void HexEditor::mousedown_event(GUI::MouseEvent& event)
@@ -234,7 +264,7 @@ void HexEditor::mousedown_event(GUI::MouseEvent& event)
         auto byte_y = (absolute_y - hex_start_y) / line_height();
         auto offset = (byte_y * m_bytes_per_row) + byte_x;
 
-        if (offset >= m_buffer.size())
+        if (offset >= m_document->size())
             return;
 
         dbgln_if(HEX_DEBUG, "HexEditor::mousedown_event(hex): offset={}", offset);
@@ -257,7 +287,7 @@ void HexEditor::mousedown_event(GUI::MouseEvent& event)
         auto byte_y = (absolute_y - text_start_y) / line_height();
         auto offset = (byte_y * m_bytes_per_row) + byte_x;
 
-        if (offset >= m_buffer.size())
+        if (offset >= m_document->size())
             return;
 
         dbgln_if(HEX_DEBUG, "HexEditor::mousedown_event(text): offset={}", offset);
@@ -306,7 +336,7 @@ void HexEditor::mousemove_event(GUI::MouseEvent& event)
             auto byte_y = (absolute_y - hex_start_y) / line_height();
             auto offset = (byte_y * m_bytes_per_row) + byte_x;
 
-            if (offset > m_buffer.size())
+            if (offset > m_document->size())
                 return;
 
             m_selection_end = offset;
@@ -321,8 +351,7 @@ void HexEditor::mousemove_event(GUI::MouseEvent& event)
             auto byte_x = (absolute_x - text_start_x) / character_width();
             auto byte_y = (absolute_y - text_start_y) / line_height();
             auto offset = (byte_y * m_bytes_per_row) + byte_x;
-
-            if (offset > m_buffer.size())
+            if (offset > m_document->size())
                 return;
 
             m_selection_end = offset;
@@ -369,68 +398,65 @@ void HexEditor::keydown_event(GUI::KeyEvent& event)
 {
     dbgln_if(HEX_DEBUG, "HexEditor::keydown_event key={}", static_cast<u8>(event.key()));
 
+    auto move_and_update_cursor_by = [&](i64 cursor_location_change) {
+        size_t new_position = m_position + cursor_location_change;
+        if (event.modifiers() & Mod_Shift) {
+            size_t selection_pivot = m_position == m_selection_end ? m_selection_start : m_selection_end;
+            m_position = new_position;
+            m_selection_start = selection_pivot;
+            m_selection_end = m_position;
+            if (m_selection_start > m_selection_end)
+                swap(m_selection_start, m_selection_end);
+        } else
+            m_selection_start = m_selection_end = m_position = new_position;
+        m_cursor_at_low_nibble = false;
+        reset_cursor_blink_state();
+        scroll_position_into_view(m_position);
+        update();
+        update_status();
+    };
+
     if (event.key() == KeyCode::Key_Up) {
-        if (m_position >= bytes_per_row()) {
-            m_position -= bytes_per_row();
-            m_selection_start = m_selection_end = m_position;
-            m_cursor_at_low_nibble = false;
-            reset_cursor_blink_state();
-            scroll_position_into_view(m_position);
-            update();
-            update_status();
-        }
+        if (m_position >= bytes_per_row())
+            move_and_update_cursor_by(-bytes_per_row());
         return;
     }
 
     if (event.key() == KeyCode::Key_Down) {
-        if (m_position + bytes_per_row() < m_buffer.size()) {
-            m_position += bytes_per_row();
-            m_selection_start = m_selection_end = m_position;
-            m_cursor_at_low_nibble = false;
-            reset_cursor_blink_state();
-            scroll_position_into_view(m_position);
-            update();
-            update_status();
-        }
+        if (m_position + bytes_per_row() < m_document->size())
+            move_and_update_cursor_by(bytes_per_row());
         return;
     }
 
     if (event.key() == KeyCode::Key_Left) {
-        if (m_position >= 1) {
-            m_position--;
-            m_selection_start = m_selection_end = m_position;
-            m_cursor_at_low_nibble = false;
-            reset_cursor_blink_state();
-            scroll_position_into_view(m_position);
-            update();
-            update_status();
-        }
+        if (m_position >= 1)
+            move_and_update_cursor_by(-1);
         return;
     }
 
     if (event.key() == KeyCode::Key_Right) {
-        if (m_position + 1 < m_buffer.size()) {
-            m_position++;
-            m_selection_start = m_selection_end = m_position;
-            m_cursor_at_low_nibble = false;
-            reset_cursor_blink_state();
-            scroll_position_into_view(m_position);
-            update();
-            update_status();
-        }
+        if (m_position + 1 < m_document->size())
+            move_and_update_cursor_by(1);
         return;
     }
 
     if (event.key() == KeyCode::Key_Backspace) {
-        if (m_position > 0) {
-            m_position--;
-            m_selection_start = m_selection_end = m_position;
-            m_cursor_at_low_nibble = false;
-            reset_cursor_blink_state();
-            scroll_position_into_view(m_position);
-            update();
-            update_status();
-        }
+        if (m_position > 0)
+            move_and_update_cursor_by(-1);
+        return;
+    }
+
+    if (event.key() == KeyCode::Key_PageUp) {
+        auto cursor_location_change = min(bytes_per_row() * visible_content_rect().height(), m_position);
+        if (cursor_location_change > 0)
+            move_and_update_cursor_by(-cursor_location_change);
+        return;
+    }
+
+    if (event.key() == KeyCode::Key_PageDown) {
+        auto cursor_location_change = min(bytes_per_row() * visible_content_rect().height(), m_document->size() - m_position);
+        if (cursor_location_change > 0)
+            move_and_update_cursor_by(cursor_location_change);
         return;
     }
 
@@ -446,12 +472,10 @@ void HexEditor::keydown_event(GUI::KeyEvent& event)
 void HexEditor::hex_mode_keydown_event(GUI::KeyEvent& event)
 {
     if ((event.key() >= KeyCode::Key_0 && event.key() <= KeyCode::Key_9) || (event.key() >= KeyCode::Key_A && event.key() <= KeyCode::Key_F)) {
-        if (m_buffer.is_empty())
-            return;
-        if (m_position == m_buffer.size())
+        if (m_document->size() == 0)
             return;
 
-        VERIFY(m_position <= m_buffer.size());
+        VERIFY(m_position <= m_document->size());
 
         // yes, this is terrible... but it works.
         auto value = (event.key() >= KeyCode::Key_0 && event.key() <= KeyCode::Key_9)
@@ -459,12 +483,13 @@ void HexEditor::hex_mode_keydown_event(GUI::KeyEvent& event)
             : (event.key() - KeyCode::Key_A) + 0xA;
 
         if (!m_cursor_at_low_nibble) {
-            m_tracked_changes.set(m_position, m_buffer.data()[m_position]);
-            m_buffer.data()[m_position] = value << 4 | (m_buffer.data()[m_position] & 0xF); // shift new value left 4 bits, OR with existing last 4 bits
+            u8 existing_change = m_document->get(m_position).value;
+            existing_change = value << 4 | (existing_change & 0xF); // shift new value left 4 bits, OR with existing last 4 bits
+            m_document->set(m_position, existing_change);
             m_cursor_at_low_nibble = true;
         } else {
-            m_buffer.data()[m_position] = (m_buffer.data()[m_position] & 0xF0) | value; // save the first 4 bits, OR the new value in the last 4
-            if (m_position + 1 < m_buffer.size())
+            m_document->set(m_position, (m_document->get(m_position).value & 0xF0) | value); // save the first 4 bits, OR the new value in the last 4
+            if (m_position + 1 < m_document->size())
                 m_position++;
             m_cursor_at_low_nibble = false;
         }
@@ -478,16 +503,15 @@ void HexEditor::hex_mode_keydown_event(GUI::KeyEvent& event)
 
 void HexEditor::text_mode_keydown_event(GUI::KeyEvent& event)
 {
-    if (m_buffer.is_empty())
+    if (m_document->size() == 0)
         return;
-    VERIFY(m_position < m_buffer.size());
+    VERIFY(m_position < m_document->size());
 
     if (event.code_point() == 0) // This is a control key
         return;
 
-    m_tracked_changes.set(m_position, m_buffer.data()[m_position]);
-    m_buffer.data()[m_position] = event.code_point();
-    if (m_position + 1 < m_buffer.size())
+    m_document->set(m_position, event.code_point());
+    if (m_position + 1 < m_document->size())
         m_position++;
     m_cursor_at_low_nibble = false;
 
@@ -518,7 +542,7 @@ void HexEditor::paint_event(GUI::PaintEvent& event)
     painter.add_clip_rect(event.rect());
     painter.fill_rect(event.rect(), palette().color(background_role()));
 
-    if (m_buffer.is_empty())
+    if (m_document->size() == 0)
         return;
 
     painter.translate(frame_thickness(), frame_thickness());
@@ -564,14 +588,14 @@ void HexEditor::paint_event(GUI::PaintEvent& event)
     for (size_t i = min_row; i < max_row; i++) {
         for (size_t j = 0; j < bytes_per_row(); j++) {
             auto byte_position = (i * bytes_per_row()) + j;
-            if (byte_position >= m_buffer.size())
+            if (byte_position >= m_document->size())
                 return;
 
-            const bool edited_flag = m_tracked_changes.contains(byte_position);
+            bool const edited_flag = m_document->get(byte_position).modified;
 
-            const bool selection_inbetween_start_end = byte_position >= m_selection_start && byte_position < m_selection_end;
-            const bool selection_inbetween_end_start = byte_position >= m_selection_end && byte_position < m_selection_start;
-            const bool highlight_flag = selection_inbetween_start_end || selection_inbetween_end_start;
+            bool const selection_inbetween_start_end = byte_position >= m_selection_start && byte_position < m_selection_end;
+            bool const selection_inbetween_end_start = byte_position >= m_selection_end && byte_position < m_selection_start;
+            bool const highlight_flag = selection_inbetween_start_end || selection_inbetween_end_start;
 
             Gfx::IntRect hex_display_rect {
                 frame_thickness() + offset_margin_width() + static_cast<int>(j) * cell_width() + 2 * m_padding,
@@ -592,7 +616,8 @@ void HexEditor::paint_event(GUI::PaintEvent& event)
             }
             painter.fill_rect(hex_display_rect, background_color);
 
-            auto line = String::formatted("{:02X}", m_buffer[byte_position]);
+            const u8 cell_value = m_document->get(byte_position).value;
+            auto line = String::formatted("{:02X}", cell_value);
             painter.draw_text(hex_display_rect, line, Gfx::TextAlignment::TopLeft, text_color);
 
             if (m_edit_mode == EditMode::Hex) {
@@ -626,7 +651,7 @@ void HexEditor::paint_event(GUI::PaintEvent& event)
             }
 
             painter.fill_rect(text_display_rect, background_color);
-            painter.draw_text(text_display_rect, String::formatted("{:c}", isprint(m_buffer[byte_position]) ? m_buffer[byte_position] : '.'), Gfx::TextAlignment::TopLeft, text_color);
+            painter.draw_text(text_display_rect, String::formatted("{:c}", isprint(cell_value) ? cell_value : '.'), Gfx::TextAlignment::TopLeft, text_color);
 
             if (m_edit_mode == EditMode::Text) {
                 if (byte_position == m_position && m_cursor_blink_active) {
@@ -642,7 +667,7 @@ void HexEditor::paint_event(GUI::PaintEvent& event)
 
 void HexEditor::select_all()
 {
-    highlight(0, m_buffer.size() - 1);
+    highlight(0, m_document->size() - 1);
     set_position(0);
 }
 
@@ -664,38 +689,50 @@ Optional<size_t> HexEditor::find_and_highlight(ByteBuffer& needle, size_t start)
 
 Optional<size_t> HexEditor::find(ByteBuffer& needle, size_t start)
 {
-    if (m_buffer.is_empty())
+    if (m_document->size() == 0)
         return {};
 
-    auto raw_offset = memmem(m_buffer.data() + start, m_buffer.size() - start, needle.data(), needle.size());
-    if (raw_offset == NULL)
-        return {};
+    for (size_t i = start; i < m_document->size(); i++) {
+        if (m_document->get(i).value == *needle.data()) {
+            bool found = true;
+            for (size_t j = 1; j < needle.size(); j++) {
+                if (m_document->get(i + j).value != needle.data()[j]) {
+                    found = false;
+                    break;
+                }
+            }
+            if (found) {
+                auto end_of_match = i + needle.size();
+                return end_of_match;
+            }
+        }
+    }
 
-    int relative_offset = static_cast<const u8*>(raw_offset) - m_buffer.data();
-    dbgln("find: start={} raw_offset={} relative_offset={}", start, raw_offset, relative_offset);
-
-    auto end_of_match = relative_offset + needle.size();
-
-    return end_of_match;
+    return {};
 }
 
 Vector<Match> HexEditor::find_all(ByteBuffer& needle, size_t start)
 {
-    if (m_buffer.is_empty())
+    if (m_document->size() == 0 || needle.size() == 0)
         return {};
 
     Vector<Match> matches;
 
     size_t i = start;
-    while (i < m_buffer.size()) {
-        auto raw_offset = memmem(m_buffer.data() + i, m_buffer.size() - i, needle.data(), needle.size());
-        if (raw_offset == NULL)
-            break;
-
-        int relative_offset = static_cast<const u8*>(raw_offset) - m_buffer.data();
-        dbgln("find_all: needle={} start={} raw_offset={} relative_offset={}", needle.data(), i, raw_offset, relative_offset);
-        matches.append({ relative_offset, String::formatted("{}", StringView { needle }.to_string().characters()) });
-        i = relative_offset + needle.size();
+    for (; i < m_document->size(); i++) {
+        if (m_document->get(i).value == *needle.data()) {
+            bool found = true;
+            for (size_t j = 1; j < needle.size(); j++) {
+                if (m_document->get(i + j).value != needle.data()[j]) {
+                    found = false;
+                    break;
+                }
+            }
+            if (found) {
+                matches.append({ i, String::formatted("{}", StringView { needle }.to_string().characters()) });
+                i += needle.size() - 1;
+            }
+        }
     }
 
     if (matches.is_empty())
@@ -709,18 +746,21 @@ Vector<Match> HexEditor::find_all(ByteBuffer& needle, size_t start)
 
 Vector<Match> HexEditor::find_all_strings(size_t min_length)
 {
-    if (m_buffer.is_empty())
+    if (m_document->size() == 0)
         return {};
 
     Vector<Match> matches;
 
-    int offset = -1;
+    bool found_string = false;
+    size_t offset = 0;
     StringBuilder builder;
-    for (size_t i = 0; i < m_buffer.size(); i++) {
-        char c = m_buffer.bytes().at(i);
+    for (size_t i = 0; i < m_document->size(); i++) {
+        char c = m_document->get(i).value;
         if (isprint(c)) {
-            if (offset == -1)
+            if (!found_string) {
                 offset = i;
+                found_string = true;
+            }
             builder.append(c);
         } else {
             if (builder.length() >= min_length) {
@@ -728,7 +768,7 @@ Vector<Match> HexEditor::find_all_strings(size_t min_length)
                 matches.append({ offset, builder.to_string() });
             }
             builder.clear();
-            offset = -1;
+            found_string = false;
         }
     }
 

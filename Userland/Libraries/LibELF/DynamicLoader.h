@@ -42,10 +42,10 @@ enum class ShouldInitializeWeak {
 
 class DynamicLoader : public RefCounted<DynamicLoader> {
 public:
-    static Result<NonnullRefPtr<DynamicLoader>, DlErrorMessage> try_create(int fd, String filename);
+    static Result<NonnullRefPtr<DynamicLoader>, DlErrorMessage> try_create(int fd, String filename, String filepath);
     ~DynamicLoader();
 
-    const String& filename() const { return m_filename; }
+    String const& filename() const { return m_filename; }
 
     bool is_valid() const { return m_valid; }
 
@@ -74,14 +74,16 @@ public:
     void for_each_needed_library(F) const;
 
     VirtualAddress base_address() const { return m_base_address; }
-    const Vector<LoadedSegment> text_segments() const { return m_text_segments; }
+    Vector<LoadedSegment> const text_segments() const { return m_text_segments; }
     bool is_dynamic() const { return m_elf_image.is_dynamic(); }
 
     static Optional<DynamicObject::SymbolLookupResult> lookup_symbol(const ELF::DynamicObject::Symbol&);
     void copy_initial_tls_data_into(ByteBuffer& buffer) const;
 
+    DynamicObject const& dynamic_object() const;
+
 private:
-    DynamicLoader(int fd, String filename, void* file_data, size_t file_size);
+    DynamicLoader(int fd, String filename, void* file_data, size_t file_size, String filepath);
 
     class ProgramHeaderRegion {
     public:
@@ -107,8 +109,6 @@ private:
         ElfW(Phdr) m_program_header; // Explicitly a copy of the PHDR in the image
     };
 
-    const DynamicObject& dynamic_object() const;
-
     // Stage 1
     void load_program_headers();
 
@@ -129,12 +129,13 @@ private:
         Success = 1,
         ResolveLater = 2,
     };
-    RelocationResult do_relocation(const DynamicObject::Relocation&, ShouldInitializeWeak should_initialize_weak);
+    RelocationResult do_relocation(DynamicObject::Relocation const&, ShouldInitializeWeak should_initialize_weak);
+    void do_relr_relocations();
     size_t calculate_tls_size() const;
     ssize_t negative_offset_from_tls_block_end(ssize_t tls_offset, size_t value_of_symbol) const;
 
     String m_filename;
-    String m_program_interpreter;
+    String m_filepath;
     size_t m_file_size { 0 };
     int m_image_fd { -1 };
     void* m_file_data { nullptr };

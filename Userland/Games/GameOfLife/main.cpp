@@ -6,8 +6,10 @@
  */
 
 #include "BoardWidget.h"
+#include <AK/URL.h>
 #include <Games/GameOfLife/GameOfLifeGML.h>
 #include <LibCore/System.h>
+#include <LibDesktop/Launcher.h>
 #include <LibGUI/Application.h>
 #include <LibGUI/BoxLayout.h>
 #include <LibGUI/Button.h>
@@ -21,7 +23,7 @@
 #include <LibGUI/Window.h>
 #include <LibMain/Main.h>
 
-const char* click_tip = "Tip: click the board to toggle individual cells, or click+drag to toggle multiple cells";
+char const* click_tip = "Tip: click the board to toggle individual cells, or click+drag to toggle multiple cells";
 
 ErrorOr<int> serenity_main(Main::Arguments arguments)
 {
@@ -29,12 +31,16 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
 
     auto app = TRY(GUI::Application::try_create(arguments));
 
+    TRY(Desktop::Launcher::add_allowed_handler_with_only_specific_urls("/bin/Help", { URL::create_with_file_protocol("/usr/share/man/man6/GameOfLife.md") }));
+    TRY(Desktop::Launcher::seal_allowlist());
+
     TRY(Core::System::pledge("stdio rpath recvfd sendfd"));
 
     TRY(Core::System::unveil("/res", "r"));
+    TRY(Core::System::unveil("/tmp/portal/launch", "rw"));
     TRY(Core::System::unveil(nullptr, nullptr));
 
-    auto app_icon = GUI::Icon::default_icon("app-gameoflife");
+    auto app_icon = TRY(GUI::Icon::try_create_default_icon("app-gameoflife"));
 
     auto window = TRY(GUI::Window::try_create());
     window->set_icon(app_icon.bitmap_for_size(16));
@@ -98,27 +104,27 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
         statusbar.set_text(click_tip);
         board_widget->run_generation();
     });
-    TRY(main_toolbar.try_add_action(run_one_generation_action));
+    (void)TRY(main_toolbar.try_add_action(run_one_generation_action));
 
     auto clear_board_action = GUI::Action::create("&Clear board", { Mod_Ctrl, Key_N }, Gfx::Bitmap::try_load_from_file("/res/icons/16x16/delete.png").release_value_but_fixme_should_propagate_errors(), [&](auto&) {
         statusbar.set_text(click_tip);
         board_widget->clear_cells();
         board_widget->update();
     });
-    TRY(main_toolbar.try_add_action(clear_board_action));
+    (void)TRY(main_toolbar.try_add_action(clear_board_action));
 
     auto randomize_cells_action = GUI::Action::create("&Randomize board", { Mod_Ctrl, Key_R }, Gfx::Bitmap::try_load_from_file("/res/icons/16x16/reload.png").release_value_but_fixme_should_propagate_errors(), [&](auto&) {
         statusbar.set_text(click_tip);
         board_widget->randomize_cells();
         board_widget->update();
     });
-    TRY(main_toolbar.try_add_action(randomize_cells_action));
+    (void)TRY(main_toolbar.try_add_action(randomize_cells_action));
 
     auto rotate_pattern_action = GUI::Action::create("&Rotate pattern", { 0, Key_R }, Gfx::Bitmap::try_load_from_file("/res/icons/16x16/redo.png").release_value_but_fixme_should_propagate_errors(), [&](auto&) {
         board_widget->selected_pattern()->rotate_clockwise();
     });
     rotate_pattern_action->set_enabled(false);
-    TRY(main_toolbar.try_add_action(rotate_pattern_action));
+    (void)TRY(main_toolbar.try_add_action(rotate_pattern_action));
 
     auto game_menu = TRY(window->try_add_menu("&Game"));
 
@@ -133,6 +139,9 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
     })));
 
     auto help_menu = TRY(window->try_add_menu("&Help"));
+    TRY(help_menu->try_add_action(GUI::CommonActions::make_help_action([](auto&) {
+        Desktop::Launcher::open(URL::create_with_file_protocol("/usr/share/man/man6/GameOfLife.md"), "/bin/Help");
+    })));
     TRY(help_menu->try_add_action(GUI::CommonActions::make_about_action("Game Of Life", app_icon, window)));
 
     board_widget->on_running_state_change = [&]() {

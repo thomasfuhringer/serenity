@@ -8,7 +8,15 @@
 #pragma once
 
 #include <AK/Function.h>
-#include <Kernel/Arch/x86/ASM_wrapper.h>
+#include <Kernel/Arch/DeferredCallEntry.h>
+
+#if ARCH(X86_64) || ARCH(I386)
+#    include <Kernel/Arch/x86/Processor.h>
+#elif ARCH(AARCH64)
+#    include <Kernel/Arch/aarch64/Processor.h>
+#else
+#    error "Unknown architecture"
+#endif
 
 namespace Kernel {
 
@@ -17,12 +25,6 @@ class PageDirectory;
 }
 
 struct ProcessorMessageEntry;
-struct DeferredCallEntry;
-
-enum class ProcessorSpecificDataID {
-    MemoryManager,
-    __Count,
-};
 struct ProcessorMessage {
     using CallbackFunction = Function<void()>;
 
@@ -42,7 +44,7 @@ struct ProcessorMessage {
         } flush_tlb;
     };
 
-    volatile bool async;
+    bool volatile async;
 
     ProcessorMessageEntry* per_proc_entries;
 
@@ -63,35 +65,6 @@ struct ProcessorMessageEntry {
     ProcessorMessage* msg;
 };
 
-struct DeferredCallEntry {
-    using HandlerFunction = Function<void()>;
-
-    DeferredCallEntry* next;
-    alignas(HandlerFunction) u8 handler_storage[sizeof(HandlerFunction)];
-    bool was_allocated;
-
-    HandlerFunction& handler_value()
-    {
-        return *bit_cast<HandlerFunction*>(&handler_storage);
-    }
-
-    void invoke_handler()
-    {
-        handler_value()();
-    }
-};
-
-}
-
-#if ARCH(X86_64) || ARCH(I386)
-#    include <Kernel/Arch/x86/Processor.h>
-#elif ARCH(AARCH64)
-#    include <Kernel/Arch/aarch64/Processor.h>
-#else
-#    error "Unknown architecture"
-#endif
-
-namespace Kernel {
 template<typename T>
 class ProcessorSpecific {
 public:

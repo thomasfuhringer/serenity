@@ -1,5 +1,6 @@
 /*
- * Copyright (c) 2018-2021, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2018-2022, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2022, Sam Atkins <atkinssj@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -12,6 +13,8 @@
 #include <LibWeb/DOM/ShadowRoot.h>
 #include <LibWeb/Dump.h>
 #include <LibWeb/Layout/InitialContainingBlock.h>
+#include <LibWeb/Layout/ListItemBox.h>
+#include <LibWeb/Layout/ListItemMarkerBox.h>
 #include <LibWeb/Layout/Node.h>
 #include <LibWeb/Layout/TableBox.h>
 #include <LibWeb/Layout/TableCellBox.h>
@@ -21,12 +24,34 @@
 
 namespace Web::Layout {
 
-TreeBuilder::TreeBuilder()
+TreeBuilder::TreeBuilder() = default;
+
+static bool has_inline_or_in_flow_block_children(Layout::Node const& layout_node)
 {
+    for (auto const* child = layout_node.first_child(); child; child = child->next_sibling()) {
+        if (child->is_inline())
+            return true;
+        if (!child->is_floating() && !child->is_absolutely_positioned())
+            return true;
+    }
+    return false;
 }
 
-// The insertion_parent_for_*() functions maintain the invariant that block-level boxes must have either
-// only block-level children or only inline-level children.
+static bool has_in_flow_block_children(Layout::Node const& layout_node)
+{
+    if (layout_node.children_are_inline())
+        return false;
+    for (auto const* child = layout_node.first_child(); child; child = child->next_sibling()) {
+        if (child->is_inline())
+            continue;
+        if (!child->is_floating() && !child->is_absolutely_positioned())
+            return true;
+    }
+    return false;
+}
+
+// The insertion_parent_for_*() functions maintain the invariant that the in-flow children of
+// block-level boxes must be either all block-level or all inline-level.
 
 static Layout::Node& insertion_parent_for_inline_node(Layout::NodeWithStyle& layout_parent)
 {
@@ -37,7 +62,7 @@ static Layout::Node& insertion_parent_for_inline_node(Layout::NodeWithStyle& lay
         layout_parent.append_child(layout_parent.create_anonymous_wrapper());
     }
 
-    if (!layout_parent.has_children() || layout_parent.children_are_inline())
+    if (!has_in_flow_block_children(layout_parent) || layout_parent.children_are_inline())
         return layout_parent;
 
     // Parent has block-level children, insert into an anonymous wrapper block (and create it first if needed)
@@ -47,15 +72,20 @@ static Layout::Node& insertion_parent_for_inline_node(Layout::NodeWithStyle& lay
     return *layout_parent.last_child();
 }
 
-static Layout::Node& insertion_parent_for_block_node(Layout::Node& layout_parent, Layout::Node& layout_node)
+static Layout::Node& insertion_parent_for_block_node(Layout::NodeWithStyle& layout_parent, Layout::Node& layout_node)
 {
-    if (!layout_parent.has_children()) {
+    if (!has_inline_or_in_flow_block_children(layout_parent)) {
         // Parent block has no children, insert this block into parent.
         return layout_parent;
     }
 
     if (!layout_parent.children_are_inline()) {
         // Parent block has block-level children, insert this block into parent.
+        return layout_parent;
+    }
+
+    if (layout_node.is_floating() || layout_node.is_absolutely_positioned()) {
+        // Block is out-of-flow, it can have inline siblings if necessary.
         return layout_parent;
     }
 
@@ -66,7 +96,7 @@ static Layout::Node& insertion_parent_for_block_node(Layout::Node& layout_parent
         layout_parent.remove_child(*child);
         children.append(child.release_nonnull());
     }
-    layout_parent.append_child(adopt_ref(*new BlockContainer(layout_node.document(), nullptr, layout_parent.computed_values().clone_inherited_values())));
+    layout_parent.append_child(layout_parent.create_anonymous_wrapper());
     layout_parent.set_children_are_inline(false);
     for (auto& child : children) {
         layout_parent.last_child()->append_child(child);
@@ -90,32 +120,71 @@ void TreeBuilder::create_layout_tree(DOM::Node& dom_node, TreeBuilder::Context& 
         return;
     }
 
-    auto layout_node = dom_node.create_layout_node();
+    auto& document = dom_node.document();
+    auto& style_computer = document.style_computer();
+    RefPtr<Layout::Node> layout_node;
+    RefPtr<CSS::StyleProperties> style;
+
+    if (is<DOM::Element>(dom_node)) {
+        auto& element = static_cast<DOM::Element&>(dom_node);
+        element.clear_pseudo_element_nodes({});
+        VERIFY(!element.needs_style_update());
+        style = element.computed_css_values();
+        if (style->display().is_none())
+            return;
+        layout_node = element.create_layout_node(*style);
+    } else if (is<DOM::Document>(dom_node)) {
+        style = style_computer.create_document_style();
+        layout_node = adopt_ref(*new Layout::InitialContainingBlock(static_cast<DOM::Document&>(dom_node), *style));
+    } else if (is<DOM::Text>(dom_node)) {
+        layout_node = adopt_ref(*new Layout::TextNode(document, static_cast<DOM::Text&>(dom_node)));
+    } else if (is<DOM::ShadowRoot>(dom_node)) {
+        layout_node = adopt_ref(*new Layout::BlockContainer(document, &static_cast<DOM::ShadowRoot&>(dom_node), CSS::ComputedValues {}));
+    }
+
     if (!layout_node)
         return;
 
-    if (!dom_node.parent_or_shadow_host()) {
-        m_layout_root = layout_node;
-    } else {
-        if (layout_node->is_inline() && !(layout_node->is_inline_block() && m_parent_stack.last()->computed_values().display().is_flex_inside())) {
+    auto insert_node_into_inline_or_block_ancestor = [this](auto& node, bool prepend = false) {
+        if (node->is_inline() && !(node->is_inline_block() && m_ancestor_stack.last().computed_values().display().is_flex_inside())) {
             // Inlines can be inserted into the nearest ancestor.
-            auto& insertion_point = insertion_parent_for_inline_node(*m_parent_stack.last());
-            insertion_point.append_child(*layout_node);
+            auto& insertion_point = insertion_parent_for_inline_node(m_ancestor_stack.last());
+            if (prepend)
+                insertion_point.prepend_child(*node);
+            else
+                insertion_point.append_child(*node);
             insertion_point.set_children_are_inline(true);
         } else {
             // Non-inlines can't be inserted into an inline parent, so find the nearest non-inline ancestor.
-            auto& nearest_non_inline_ancestor = [&]() -> Layout::Node& {
-                for (ssize_t i = m_parent_stack.size() - 1; i >= 0; --i) {
-                    if (!m_parent_stack[i]->is_inline() || m_parent_stack[i]->is_inline_block())
-                        return *m_parent_stack[i];
+            auto& nearest_non_inline_ancestor = [&]() -> Layout::NodeWithStyle& {
+                for (auto& ancestor : m_ancestor_stack.in_reverse()) {
+                    if (!ancestor.is_inline() || ancestor.is_inline_block())
+                        return ancestor;
                 }
                 VERIFY_NOT_REACHED();
             }();
-            auto& insertion_point = insertion_parent_for_block_node(nearest_non_inline_ancestor, *layout_node);
-            insertion_point.append_child(*layout_node);
-            insertion_point.set_children_are_inline(false);
+            auto& insertion_point = insertion_parent_for_block_node(nearest_non_inline_ancestor, *node);
+            if (prepend)
+                insertion_point.prepend_child(*node);
+            else
+                insertion_point.append_child(*node);
+
+            // After inserting an in-flow block-level box into a parent, mark the parent as having non-inline children.
+            if (!node->is_floating() && !node->is_absolutely_positioned())
+                insertion_point.set_children_are_inline(false);
         }
+    };
+
+    if (!dom_node.parent_or_shadow_host()) {
+        m_layout_root = layout_node;
+    } else if (layout_node->is_svg_box()) {
+        m_ancestor_stack.last().append_child(*layout_node);
+    } else {
+        insert_node_into_inline_or_block_ancestor(layout_node);
     }
+
+    if (layout_node->has_style() && style)
+        static_cast<Layout::NodeWithStyle&>(*layout_node).did_insert_into_layout_tree(*style);
 
     auto* shadow_root = is<DOM::Element>(dom_node) ? verify_cast<DOM::Element>(dom_node).shadow_root() : nullptr;
 
@@ -128,15 +197,66 @@ void TreeBuilder::create_layout_tree(DOM::Node& dom_node, TreeBuilder::Context& 
         });
         pop_parent();
     }
+
+    // Add nodes for the ::before and ::after pseudo-elements.
+    if (is<DOM::Element>(dom_node)) {
+        auto& element = static_cast<DOM::Element&>(dom_node);
+        auto create_pseudo_element_if_needed = [&](CSS::Selector::PseudoElement pseudo_element) -> RefPtr<Node> {
+            auto pseudo_element_style = style_computer.compute_style(element, pseudo_element);
+            auto pseudo_element_content = pseudo_element_style->content();
+            auto pseudo_element_display = pseudo_element_style->display();
+            // ::before and ::after only exist if they have content. `content: normal` computes to `none` for them.
+            // We also don't create them if they are `display: none`.
+            if (pseudo_element_display.is_none()
+                || pseudo_element_content.type == CSS::ContentData::Type::Normal
+                || pseudo_element_content.type == CSS::ContentData::Type::None)
+                return nullptr;
+
+            if (auto pseudo_element_node = DOM::Element::create_layout_node_for_display_type(document, pseudo_element_display, move(pseudo_element_style), nullptr)) {
+                // FIXME: Handle images, and multiple values
+                if (pseudo_element_content.type == CSS::ContentData::Type::String) {
+                    auto text = adopt_ref(*new DOM::Text(document, pseudo_element_content.data));
+                    auto text_node = adopt_ref(*new TextNode(document, text));
+                    push_parent(verify_cast<NodeWithStyle>(*pseudo_element_node));
+                    insert_node_into_inline_or_block_ancestor(text_node);
+                    pop_parent();
+                } else {
+                    TODO();
+                }
+                return pseudo_element_node;
+            }
+
+            return nullptr;
+        };
+
+        push_parent(verify_cast<NodeWithStyle>(*layout_node));
+        if (auto before_node = create_pseudo_element_if_needed(CSS::Selector::PseudoElement::Before)) {
+            element.set_pseudo_element_node({}, CSS::Selector::PseudoElement::Before, before_node);
+            insert_node_into_inline_or_block_ancestor(before_node, true);
+        }
+        if (auto after_node = create_pseudo_element_if_needed(CSS::Selector::PseudoElement::After)) {
+            element.set_pseudo_element_node({}, CSS::Selector::PseudoElement::After, after_node);
+            insert_node_into_inline_or_block_ancestor(after_node);
+        }
+        pop_parent();
+    }
+
+    if (is<ListItemBox>(*layout_node)) {
+        auto& element = static_cast<DOM::Element&>(dom_node);
+        int child_index = layout_node->parent()->index_of_child<ListItemBox>(*layout_node).value();
+        auto marker_style = style_computer.compute_style(element, CSS::Selector::PseudoElement::Marker);
+        auto list_item_marker = adopt_ref(*new ListItemMarkerBox(document, layout_node->computed_values().list_style_type(), child_index + 1, *marker_style));
+        if (layout_node->first_child())
+            list_item_marker->set_inline(layout_node->first_child()->is_inline());
+        static_cast<ListItemBox&>(*layout_node).set_marker(list_item_marker);
+        element.set_pseudo_element_node({}, CSS::Selector::PseudoElement::Marker, list_item_marker);
+        layout_node->append_child(move(list_item_marker));
+    }
 }
 
 RefPtr<Node> TreeBuilder::build(DOM::Node& dom_node)
 {
-    if (dom_node.parent()) {
-        // We're building a partial layout tree, so start by building up the stack of parent layout nodes.
-        for (auto* ancestor = dom_node.parent()->layout_node(); ancestor; ancestor = ancestor->parent())
-            m_parent_stack.prepend(verify_cast<NodeWithStyle>(ancestor));
-    }
+    VERIFY(dom_node.is_document());
 
     Context context;
     create_layout_tree(dom_node, context);
@@ -163,7 +283,7 @@ void TreeBuilder::for_each_in_tree_with_inside_display(NodeWithStyle& root, Call
 {
     root.for_each_in_inclusive_subtree_of_type<Box>([&](auto& box) {
         auto const& display = box.computed_values().display();
-        if (display.it_outside_and_inside() && display.inside() == inside)
+        if (display.is_outside_and_inside() && display.inside() == inside)
             callback(box);
         return IterationDecision::Continue;
     });
@@ -171,8 +291,6 @@ void TreeBuilder::for_each_in_tree_with_inside_display(NodeWithStyle& root, Call
 
 void TreeBuilder::fixup_tables(NodeWithStyle& root)
 {
-    // NOTE: Even if we only do a partial build, we always do fixup from the root.
-
     remove_irrelevant_boxes(root);
     generate_missing_child_wrappers(root);
     generate_missing_parents(root);
@@ -225,7 +343,7 @@ static bool is_table_track_group(CSS::Display display)
         || display.is_table_column_group();
 }
 
-static bool is_not_proper_table_child(const Node& node)
+static bool is_not_proper_table_child(Node const& node)
 {
     if (!node.has_style())
         return true;
@@ -233,7 +351,7 @@ static bool is_not_proper_table_child(const Node& node)
     return !is_table_track_group(display) && !is_table_track(display) && !display.is_table_caption();
 }
 
-static bool is_not_table_row(const Node& node)
+static bool is_not_table_row(Node const& node)
 {
     if (!node.has_style())
         return true;
@@ -241,7 +359,7 @@ static bool is_not_table_row(const Node& node)
     return !display.is_table_row();
 }
 
-static bool is_not_table_cell(const Node& node)
+static bool is_not_table_cell(Node const& node)
 {
     if (!node.has_style())
         return true;

@@ -11,8 +11,8 @@
 #include <LibWeb/Bindings/WindowObject.h>
 #include <LibWeb/Bindings/Wrappable.h>
 #include <LibWeb/DOM/AbortSignal.h>
-#include <LibWeb/DOM/Window.h>
 #include <LibWeb/Forward.h>
+#include <LibWeb/HTML/Window.h>
 
 namespace Web::DOM {
 
@@ -24,25 +24,25 @@ class AbortController final
 public:
     using WrapperType = Bindings::AbortControllerWrapper;
 
-    static NonnullRefPtr<AbortController> create(Document& document)
+    static NonnullRefPtr<AbortController> create()
     {
-        return adopt_ref(*new AbortController(document));
+        return adopt_ref(*new AbortController());
     }
 
-    static NonnullRefPtr<AbortController> create_with_global_object(Bindings::WindowObject& window_object)
+    static NonnullRefPtr<AbortController> create_with_global_object(Bindings::WindowObject&)
     {
-        return AbortController::create(window_object.impl().associated_document());
+        return AbortController::create();
     }
 
-    virtual ~AbortController() override;
+    virtual ~AbortController() override = default;
 
     // https://dom.spec.whatwg.org/#dom-abortcontroller-signal
     NonnullRefPtr<AbortSignal> signal() const { return m_signal; }
 
-    void abort();
+    void abort(JS::Value reason);
 
 private:
-    AbortController(Document& document);
+    AbortController();
 
     // https://dom.spec.whatwg.org/#abortcontroller-signal
     NonnullRefPtr<AbortSignal> m_signal;

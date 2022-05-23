@@ -33,12 +33,13 @@ public:
     ReadonlyBytes debug_range_lists_data() const { return m_debug_range_lists_data; }
     ReadonlyBytes debug_str_offsets_data() const { return m_debug_str_offsets_data; }
     ReadonlyBytes debug_addr_data() const { return m_debug_addr_data; }
+    ReadonlyBytes debug_ranges_data() const { return m_debug_ranges_data; }
 
     template<typename Callback>
     void for_each_compilation_unit(Callback) const;
 
     AttributeValue get_attribute_value(AttributeDataForm form, ssize_t implicit_const_value,
-        InputMemoryStream& debug_info_stream, const CompilationUnit* unit = nullptr) const;
+        InputMemoryStream& debug_info_stream, CompilationUnit const* unit = nullptr) const;
 
     Optional<DIE> get_die_at_address(FlatPtr) const;
 
@@ -64,6 +65,7 @@ private:
     ReadonlyBytes m_debug_range_lists_data;
     ReadonlyBytes m_debug_str_offsets_data;
     ReadonlyBytes m_debug_addr_data;
+    ReadonlyBytes m_debug_ranges_data;
 
     NonnullOwnPtrVector<Dwarf::CompilationUnit> m_compilation_units;
 
@@ -87,7 +89,7 @@ private:
 template<typename Callback>
 void DwarfInfo::for_each_compilation_unit(Callback callback) const
 {
-    for (const auto& unit : m_compilation_units) {
+    for (auto const& unit : m_compilation_units) {
         callback(unit);
     }
 }

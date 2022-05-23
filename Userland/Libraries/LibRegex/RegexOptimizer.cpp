@@ -9,6 +9,10 @@
 #include <AK/Stack.h>
 #include <LibRegex/Regex.h>
 #include <LibRegex/RegexBytecodeStreamOptimizer.h>
+#if REGEX_DEBUG
+#    include <AK/ScopeGuard.h>
+#    include <AK/ScopeLogger.h>
+#endif
 
 namespace regex {
 
@@ -21,17 +25,18 @@ void Regex<Parser>::run_optimization_passes()
 
     // Rewrite fork loops as atomic groups
     // e.g. a*b -> (ATOMIC a*)b
-    attempt_rewrite_loops_as_atomic_groups(split_basic_blocks());
+    attempt_rewrite_loops_as_atomic_groups(split_basic_blocks(parser_result.bytecode));
 
     parser_result.bytecode.flatten();
 }
 
 template<typename Parser>
-typename Regex<Parser>::BasicBlockList Regex<Parser>::split_basic_blocks()
+typename Regex<Parser>::BasicBlockList Regex<Parser>::split_basic_blocks(ByteCode const& bytecode)
 {
     BasicBlockList block_boundaries;
-    auto& bytecode = parser_result.bytecode;
     size_t end_of_last_block = 0;
+
+    auto bytecode_size = bytecode.size();
 
     MatchState state;
     state.instruction_position = 0;
@@ -89,14 +94,14 @@ typename Regex<Parser>::BasicBlockList Regex<Parser>::split_basic_blocks()
         }
 
         auto next_ip = state.instruction_position + opcode.size();
-        if (next_ip < bytecode.size())
+        if (next_ip < bytecode_size)
             state.instruction_position = next_ip;
         else
             break;
     }
 
-    if (end_of_last_block < bytecode.size())
-        block_boundaries.append({ end_of_last_block, bytecode.size() });
+    if (end_of_last_block < bytecode_size)
+        block_boundaries.append({ end_of_last_block, bytecode_size });
 
     quick_sort(block_boundaries, [](auto& a, auto& b) { return a.start < b.start; });
 
@@ -212,7 +217,7 @@ void Regex<Parser>::attempt_rewrite_loops_as_atomic_groups(BasicBlockList const&
     if constexpr (REGEX_DEBUG) {
         RegexDebug dbg;
         dbg.print_bytecode(*this);
-        for (auto& block : basic_blocks)
+        for (auto const& block : basic_blocks)
             dbgln("block from {} to {}", block.start, block.end);
     }
 
@@ -222,7 +227,6 @@ void Regex<Parser>::attempt_rewrite_loops_as_atomic_groups(BasicBlockList const&
     //     -------------------------
     //     bb1       |  RE1
     // can be rewritten as:
-    //     loop.hdr  | ForkStay bb1 (if RE1 matches _something_, empty otherwise)
     //     -------------------------
     //     bb0       | RE0
     //               | ForkReplaceX bb0
@@ -263,7 +267,7 @@ void Regex<Parser>::attempt_rewrite_loops_as_atomic_groups(BasicBlockList const&
     auto is_an_eligible_jump = [](OpCode const& opcode, size_t ip, size_t block_start, AlternateForm alternate_form) {
         switch (opcode.opcode_id()) {
         case OpCodeId::JumpNonEmpty: {
-            auto& op = static_cast<OpCode_JumpNonEmpty const&>(opcode);
+            auto const& op = static_cast<OpCode_JumpNonEmpty const&>(opcode);
             auto form = op.form();
             if (form != OpCodeId::Jump && alternate_form == AlternateForm::DirectLoopWithHeader)
                 return false;
@@ -370,19 +374,11 @@ void Regex<Parser>::attempt_rewrite_loops_as_atomic_groups(BasicBlockList const&
         } else {
             VERIFY_NOT_REACHED();
         }
-
-        if (candidate.form == AlternateForm::DirectLoopWithoutHeader) {
-            if (candidate.new_target_block.has_value()) {
-                // Insert a fork-stay targeted at the second block.
-                bytecode.insert(candidate.forking_block.start, (ByteCodeValueType)OpCodeId::ForkStay);
-                bytecode.insert(candidate.forking_block.start + 1, candidate.new_target_block->start - candidate.forking_block.start);
-                needed_patches.insert(candidate.forking_block.start, 2u);
-            }
-        }
     }
 
     if (!needed_patches.is_empty()) {
         MatchState state;
+        auto bytecode_size = bytecode.size();
         state.instruction_position = 0;
         struct Patch {
             ssize_t value;
@@ -390,7 +386,7 @@ void Regex<Parser>::attempt_rewrite_loops_as_atomic_groups(BasicBlockList const&
             bool should_negate { false };
         };
         for (;;) {
-            if (state.instruction_position >= bytecode.size())
+            if (state.instruction_position >= bytecode_size)
                 break;
 
             auto& opcode = bytecode.get_opcode(state);
@@ -425,9 +421,9 @@ void Regex<Parser>::attempt_rewrite_loops_as_atomic_groups(BasicBlockList const&
                     if (patch_it.key() == ip)
                         return;
 
-                    if (patch_point.value < 0 && target_offset < patch_it.key() && ip > patch_it.key())
+                    if (patch_point.value < 0 && target_offset <= patch_it.key() && ip > patch_it.key())
                         bytecode[patch_point.offset] += (patch_point.should_negate ? 1 : -1) * (*patch_it);
-                    else if (patch_point.value > 0 && target_offset > patch_it.key() && ip < patch_it.key())
+                    else if (patch_point.value > 0 && target_offset >= patch_it.key() && ip < patch_it.key())
                         bytecode[patch_point.offset] += (patch_point.should_negate ? -1 : 1) * (*patch_it);
                 };
 
@@ -452,66 +448,166 @@ void Regex<Parser>::attempt_rewrite_loops_as_atomic_groups(BasicBlockList const&
 
 void Optimizer::append_alternation(ByteCode& target, ByteCode&& left, ByteCode&& right)
 {
-    auto left_is_empty = left.is_empty();
-    auto right_is_empty = right.is_empty();
-    if (left_is_empty || right_is_empty) {
-        if (left_is_empty && right_is_empty)
-            return;
+    Array<ByteCode, 2> alternatives;
+    alternatives[0] = move(left);
+    alternatives[1] = move(right);
 
-        // ForkJump right (+ left.size() + 2 + right.size())
-        // (left)
-        // Jump end (+ right.size())
-        // (right)
-        // LABEL end
-        target.append(static_cast<ByteCodeValueType>(OpCodeId::ForkJump));
-        target.append(left.size() + 2 + right.size());
-        target.extend(move(left));
-        target.append(static_cast<ByteCodeValueType>(OpCodeId::Jump));
-        target.append(right.size());
-        target.extend(move(right));
+    append_alternation(target, alternatives);
+}
+
+void Optimizer::append_alternation(ByteCode& target, Span<ByteCode> alternatives)
+{
+    if (alternatives.size() == 0)
         return;
+
+    if (alternatives.size() == 1)
+        return target.extend(move(alternatives[0]));
+
+    if (all_of(alternatives, [](auto& x) { return x.is_empty(); }))
+        return;
+
+    for (auto& entry : alternatives)
+        entry.flatten();
+
+#if REGEX_DEBUG
+    ScopeLogger<true> log;
+    warnln("Alternations:");
+    RegexDebug dbg;
+    for (auto& entry : alternatives) {
+        warnln("----------");
+        dbg.print_bytecode(entry);
     }
+    ScopeGuard print_at_end {
+        [&] {
+            warnln("======================");
+            RegexDebug dbg;
+            dbg.print_bytecode(target);
+        }
+    };
+#endif
+
+    Vector<Vector<Detail::Block>> basic_blocks;
+    basic_blocks.ensure_capacity(alternatives.size());
+
+    for (auto& entry : alternatives)
+        basic_blocks.append(Regex<PosixBasicParser>::split_basic_blocks(entry));
 
     size_t left_skip = 0;
+    size_t shared_block_count = basic_blocks.first().size();
+    for (auto& entry : basic_blocks)
+        shared_block_count = min(shared_block_count, entry.size());
+
     MatchState state;
-    for (state.instruction_position = 0; state.instruction_position < left.size() && state.instruction_position < right.size();) {
-        auto left_size = left.get_opcode(state).size();
-        auto right_size = right.get_opcode(state).size();
-        if (left_size != right_size)
+    for (size_t block_index = 0; block_index < shared_block_count; block_index++) {
+        auto& left_block = basic_blocks.first()[block_index];
+        auto left_end = block_index + 1 == basic_blocks.first().size() ? left_block.end : basic_blocks.first()[block_index + 1].start;
+        auto can_continue = true;
+        for (size_t i = 1; i < alternatives.size(); ++i) {
+            auto& right_blocks = basic_blocks[i];
+            auto& right_block = right_blocks[block_index];
+            auto right_end = block_index + 1 == right_blocks.size() ? right_block.end : right_blocks[block_index + 1].start;
+
+            if (left_end - left_block.start != right_end - right_block.start) {
+                can_continue = false;
+                break;
+            }
+
+            if (alternatives[0].spans().slice(left_block.start, left_end - left_block.start) != alternatives[i].spans().slice(right_block.start, right_end - right_block.start)) {
+                can_continue = false;
+                break;
+            }
+        }
+        if (!can_continue)
             break;
 
-        if (left.spans().slice(state.instruction_position, left_size) == right.spans().slice(state.instruction_position, right_size))
-            left_skip = state.instruction_position + left_size;
-        else
+        size_t i = 0;
+        for (auto& entry : alternatives) {
+            auto& blocks = basic_blocks[i];
+            auto& block = blocks[block_index];
+            auto end = block_index + 1 == blocks.size() ? block.end : blocks[block_index + 1].start;
+            state.instruction_position = block.start;
+            size_t skip = 0;
+            while (state.instruction_position < end) {
+                auto& opcode = entry.get_opcode(state);
+                state.instruction_position += opcode.size();
+                skip = state.instruction_position;
+            }
+            left_skip = min(skip, left_skip);
+        }
+    }
+
+    dbgln_if(REGEX_DEBUG, "Skipping {}/{} bytecode entries from {}", left_skip, 0, alternatives[0].size());
+
+    if (left_skip > 0) {
+        target.extend(alternatives[0].release_slice(basic_blocks.first().first().start, left_skip));
+        auto first = true;
+        for (auto& entry : alternatives) {
+            if (first) {
+                first = false;
+                continue;
+            }
+            entry = entry.release_slice(left_skip);
+        }
+    }
+
+    if (all_of(alternatives, [](auto& entry) { return entry.is_empty(); }))
+        return;
+
+    size_t patch_start = target.size();
+    for (size_t i = 1; i < alternatives.size(); ++i) {
+        target.empend(static_cast<ByteCodeValueType>(OpCodeId::ForkJump));
+        target.empend(0u); // To be filled later.
+    }
+
+    size_t size_to_jump = 0;
+    bool seen_one_empty = false;
+    for (size_t i = alternatives.size(); i > 0; --i) {
+        auto& entry = alternatives[i - 1];
+        if (entry.is_empty()) {
+            if (seen_one_empty)
+                continue;
+            seen_one_empty = true;
+        }
+
+        auto is_first = i == 1;
+        auto instruction_size = entry.size() + (is_first ? 0 : 2); // Jump; -> +2
+        size_to_jump += instruction_size;
+
+        if (!is_first)
+            target[patch_start + (i - 2) * 2 + 1] = size_to_jump + (alternatives.size() - i) * 2;
+
+        dbgln_if(REGEX_DEBUG, "{} size = {}, cum={}", i - 1, instruction_size, size_to_jump);
+    }
+
+    seen_one_empty = false;
+    for (size_t i = alternatives.size(); i > 0; --i) {
+        auto& chunk = alternatives[i - 1];
+        if (chunk.is_empty()) {
+            if (seen_one_empty)
+                continue;
+            seen_one_empty = true;
+        }
+
+        ByteCode* previous_chunk = nullptr;
+        size_t j = i - 1;
+        auto seen_one_empty_before = chunk.is_empty();
+        while (j >= 1) {
+            --j;
+            auto& candidate_chunk = alternatives[j];
+            if (candidate_chunk.is_empty()) {
+                if (seen_one_empty_before)
+                    continue;
+            }
+            previous_chunk = &candidate_chunk;
             break;
+        }
 
-        state.instruction_position += left_size;
-    }
+        size_to_jump -= chunk.size() + (previous_chunk ? 2 : 0);
 
-    dbgln_if(REGEX_DEBUG, "Skipping {}/{} bytecode entries from {}/{}", left_skip, 0, left.size(), right.size());
-
-    if (left_skip) {
-        target.extend(left.release_slice(0, left_skip));
-        right = right.release_slice(left_skip);
-    }
-
-    auto left_size = left.size();
-
-    target.empend(static_cast<ByteCodeValueType>(OpCodeId::ForkJump));
-    target.empend(right.size() + (left_size ? 2 : 0)); // Jump to the _ALT label
-
-    target.extend(move(right));
-
-    if (left_size != 0) {
+        target.extend(move(chunk));
         target.empend(static_cast<ByteCodeValueType>(OpCodeId::Jump));
-        target.empend(left.size()); // Jump to the _END label
+        target.empend(size_to_jump); // Jump to the _END label
     }
-
-    // LABEL _ALT = bytecode.size() + 2
-
-    target.extend(move(left));
-
-    // LABEL _END = alterantive_bytecode.size
 }
 
 enum class LookupTableInsertionOutcome {

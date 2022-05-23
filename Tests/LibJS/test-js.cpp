@@ -1,10 +1,11 @@
 /*
  * Copyright (c) 2020, Matthew Olsson <mattco@serenityos.org>
- * Copyright (c) 2020-2021, Linus Groh <linusg@serenityos.org>
+ * Copyright (c) 2020-2022, Linus Groh <linusg@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <LibJS/Runtime/ArrayBuffer.h>
 #include <LibTest/JavaScriptTestRunner.h>
 
 TEST_ROOT("Userland/Libraries/LibJS/Tests");
@@ -20,7 +21,7 @@ TESTJS_GLOBAL_FUNCTION(can_parse_source, canParseSource)
 {
     auto source = TRY(vm.argument(0).to_string(global_object));
     auto parser = JS::Parser(JS::Lexer(source));
-    parser.parse_program();
+    (void)parser.parse_program();
     return JS::Value(!parser.has_errors());
 }
 
@@ -63,7 +64,7 @@ TESTJS_GLOBAL_FUNCTION(mark_as_garbage, markAsGarbage)
     if (!outer_environment.has_value())
         return vm.throw_completion<JS::ReferenceError>(global_object, JS::ErrorType::UnknownIdentifier, variable_name.string());
 
-    auto reference = vm.resolve_binding(variable_name.string(), outer_environment.value()->lexical_environment);
+    auto reference = TRY(vm.resolve_binding(variable_name.string(), outer_environment.value()->lexical_environment));
 
     auto value = TRY(reference.get_value(global_object));
 
@@ -76,7 +77,18 @@ TESTJS_GLOBAL_FUNCTION(mark_as_garbage, markAsGarbage)
     return JS::js_undefined();
 }
 
-TESTJS_RUN_FILE_FUNCTION(String const& test_file, JS::Interpreter& interpreter)
+TESTJS_GLOBAL_FUNCTION(detach_array_buffer, detachArrayBuffer)
+{
+    auto array_buffer = vm.argument(0);
+    if (!array_buffer.is_object() || !is<JS::ArrayBuffer>(array_buffer.as_object()))
+        return vm.throw_completion<JS::TypeError>(global_object, JS::ErrorType::NotAnObjectOfType, "ArrayBuffer");
+
+    auto& array_buffer_object = static_cast<JS::ArrayBuffer&>(array_buffer.as_object());
+    TRY(JS::detach_array_buffer(global_object, array_buffer_object, vm.argument(1)));
+    return JS::js_null();
+}
+
+TESTJS_RUN_FILE_FUNCTION(String const& test_file, JS::Interpreter& interpreter, JS::ExecutionContext&)
 {
     if (!test262_parser_tests)
         return Test::JS::RunFileHookResult::RunAsNormal;
@@ -132,12 +144,13 @@ TESTJS_RUN_FILE_FUNCTION(String const& test_file, JS::Interpreter& interpreter)
     }
 
     auto test_result = test_passed ? Test::Result::Pass : Test::Result::Fail;
-
+    auto test_path = LexicalPath::relative_path(test_file, Test::JS::g_test_root);
+    auto duration_ms = Test::get_time_in_ms() - start_time;
     return Test::JS::JSFileResult {
-        LexicalPath::relative_path(test_file, Test::JS::g_test_root),
+        test_path,
         {},
-        Test::get_time_in_ms() - start_time,
+        duration_ms,
         test_result,
-        { Test::Suite { "Parse file", test_result, { { expectation_string, test_result, message } } } }
+        { Test::Suite { test_path, "Parse file", test_result, { { expectation_string, test_result, message, static_cast<u64>(duration_ms) * 1000u } } } }
     };
 }

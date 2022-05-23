@@ -8,10 +8,14 @@
 #include <LibCore/ArgsParser.h>
 #include <LibCore/ConfigFile.h>
 #include <LibCore/File.h>
+#include <LibCore/System.h>
+#include <LibCoredump/Backtrace.h>
+#include <LibMain/Main.h>
 #include <LibRegex/Regex.h>
 #include <LibTest/TestRunner.h>
 #include <signal.h>
 #include <spawn.h>
+#include <stdlib.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
@@ -26,33 +30,37 @@ struct FileResult {
     double time_taken { 0 };
     Test::Result result { Test::Result::Pass };
     int stdout_err_fd { -1 };
+    pid_t child_pid { 0 };
 };
 
 String g_currently_running_test;
 
 class TestRunner : public ::Test::TestRunner {
 public:
-    TestRunner(String test_root, Regex<PosixExtended> exclude_regex, NonnullRefPtr<Core::ConfigFile> config, Regex<PosixExtended> skip_regex, bool print_progress, bool print_json, bool print_all_output, bool print_times = true)
+    TestRunner(String test_root, Regex<PosixExtended> exclude_regex, NonnullRefPtr<Core::ConfigFile> config, Regex<PosixExtended> skip_regex, bool run_skipped_tests, bool print_progress, bool print_json, bool print_all_output, bool print_times = true)
         : ::Test::TestRunner(move(test_root), print_times, print_progress, print_json)
         , m_exclude_regex(move(exclude_regex))
         , m_config(move(config))
         , m_skip_regex(move(skip_regex))
+        , m_run_skipped_tests(run_skipped_tests)
         , m_print_all_output(print_all_output)
     {
-        m_skip_directories = m_config->read_entry("Global", "SkipDirectories", "").split(' ');
-        m_skip_files = m_config->read_entry("Global", "SkipTests", "").split(' ');
+        if (!run_skipped_tests) {
+            m_skip_directories = m_config->read_entry("Global", "SkipDirectories", "").split(' ');
+            m_skip_files = m_config->read_entry("Global", "SkipTests", "").split(' ');
+        }
     }
 
     virtual ~TestRunner() = default;
 
 protected:
-    virtual void do_run_single_test(const String& test_path, size_t current_text_index, size_t num_tests) override;
+    virtual void do_run_single_test(String const& test_path, size_t current_text_index, size_t num_tests) override;
     virtual Vector<String> get_test_paths() const override;
-    virtual const Vector<String>* get_failed_test_names() const override { return &m_failed_test_names; }
+    virtual Vector<String> const* get_failed_test_names() const override { return &m_failed_test_names; }
 
-    virtual FileResult run_test_file(const String& test_path);
+    virtual FileResult run_test_file(String const& test_path);
 
-    bool should_skip_test(const LexicalPath& test_path);
+    bool should_skip_test(LexicalPath const& test_path);
 
     Regex<PosixExtended> m_exclude_regex;
     NonnullRefPtr<Core::ConfigFile> m_config;
@@ -60,13 +68,14 @@ protected:
     Vector<String> m_skip_files;
     Vector<String> m_failed_test_names;
     Regex<PosixExtended> m_skip_regex;
+    bool m_run_skipped_tests { false };
     bool m_print_all_output { false };
 };
 
 Vector<String> TestRunner::get_test_paths() const
 {
     Vector<String> paths;
-    Test::iterate_directory_recursively(m_test_root, [&](const String& file_path) {
+    Test::iterate_directory_recursively(m_test_root, [&](String const& file_path) {
         if (access(file_path.characters(), R_OK | X_OK) != 0)
             return;
         auto result = m_exclude_regex.match(file_path, PosixFlags::Global);
@@ -77,13 +86,16 @@ Vector<String> TestRunner::get_test_paths() const
     return paths;
 }
 
-bool TestRunner::should_skip_test(const LexicalPath& test_path)
+bool TestRunner::should_skip_test(LexicalPath const& test_path)
 {
-    for (const String& dir : m_skip_directories) {
+    if (m_run_skipped_tests)
+        return false;
+
+    for (String const& dir : m_skip_directories) {
         if (test_path.dirname().contains(dir))
             return true;
     }
-    for (const String& file : m_skip_files) {
+    for (String const& file : m_skip_files) {
         if (test_path.basename().contains(file))
             return true;
     }
@@ -94,7 +106,7 @@ bool TestRunner::should_skip_test(const LexicalPath& test_path)
     return false;
 }
 
-void TestRunner::do_run_single_test(const String& test_path, size_t current_test_index, size_t num_tests)
+void TestRunner::do_run_single_test(String const& test_path, size_t current_test_index, size_t num_tests)
 {
     g_currently_running_test = test_path;
     auto test_relative_path = LexicalPath::relative_path(test_path, m_test_root);
@@ -128,6 +140,32 @@ void TestRunner::do_run_single_test(const String& test_path, size_t current_test
         print_modifiers({ Test::BG_RED, Test::FG_BLACK, Test::FG_BOLD });
         out("{}", test_result.result == Test::Result::Fail ? " FAIL  " : "CRASHED");
         print_modifiers({ Test::CLEAR });
+        if (test_result.result == Test::Result::Crashed) {
+            auto pid_search_string = String::formatted("_{}_", test_result.child_pid);
+            Core::DirIterator iterator("/tmp/coredump"sv);
+            if (!iterator.has_error()) {
+                while (iterator.has_next()) {
+                    auto path = iterator.next_full_path();
+                    if (!path.contains(pid_search_string))
+                        continue;
+
+                    auto reader = Coredump::Reader::create(path);
+                    if (!reader)
+                        break;
+
+                    dbgln("Last crash backtrace for {} (was pid {}):", test_path, test_result.child_pid);
+                    reader->for_each_thread_info([&](auto thread_info) {
+                        Coredump::Backtrace thread_backtrace(*reader, thread_info);
+                        auto tid = thread_info.tid; // Note: Yoinking this out of the struct because we can't pass a reference to it (as it's a misaligned field in a packed struct)
+                        dbgln("Thread {}", tid);
+                        for (auto const& entry : thread_backtrace.entries())
+                            dbgln("- {}", entry.to_string(true));
+                        return IterationDecision::Continue;
+                    });
+                    break;
+                }
+            }
+        }
     } else {
         print_modifiers({ Test::BG_GREEN, Test::FG_BLACK, Test::FG_BOLD });
         out(" PASS  ");
@@ -187,7 +225,7 @@ void TestRunner::do_run_single_test(const String& test_path, size_t current_test
     close(test_result.stdout_err_fd);
 }
 
-FileResult TestRunner::run_test_file(const String& test_path)
+FileResult TestRunner::run_test_file(String const& test_path)
 {
     double start_time = get_time_in_ms();
 
@@ -210,7 +248,7 @@ FileResult TestRunner::run_test_file(const String& test_path)
     (void)posix_spawn_file_actions_adddup2(&file_actions, child_out_err_file, STDERR_FILENO);
     (void)posix_spawn_file_actions_addchdir(&file_actions, dirname.characters());
 
-    Vector<const char*, 4> argv;
+    Vector<char const*, 4> argv;
     argv.append(basename.characters());
     auto extra_args = m_config->read_entry(path_for_test.basename(), "Arguments", "").split(' ');
     for (auto& arg : extra_args)
@@ -250,20 +288,21 @@ FileResult TestRunner::run_test_file(const String& test_path)
     ret = unlink(child_out_err_path);
     VERIFY(ret == 0);
 
-    return FileResult { move(path_for_test), get_time_in_ms() - start_time, test_result, child_out_err_file };
+    return FileResult { move(path_for_test), get_time_in_ms() - start_time, test_result, child_out_err_file, child_pid };
 }
 
-int main(int argc, char** argv)
+ErrorOr<int> serenity_main(Main::Arguments arguments)
 {
-    auto program_name = LexicalPath::basename(argv[0]);
+
+    auto program_name = LexicalPath::basename(arguments.strings[0]);
 
 #ifdef SIGINFO
-    signal(SIGINFO, [](int) {
+    TRY(Core::System::signal(SIGINFO, [](int) {
         static char buffer[4096];
         auto& counts = ::Test::TestRunner::the()->counts();
         int len = snprintf(buffer, sizeof(buffer), "Pass: %d, Fail: %d, Skip: %d\nCurrent test: %s\n", counts.tests_passed, counts.tests_failed, counts.tests_skipped, g_currently_running_test.characters());
         write(STDOUT_FILENO, buffer, len);
-    });
+    }));
 #endif
 
     bool print_progress =
@@ -274,7 +313,9 @@ int main(int argc, char** argv)
 #endif
     bool print_json = false;
     bool print_all_output = false;
-    const char* specified_test_root = nullptr;
+    bool run_benchmarks = false;
+    bool run_skipped_tests = false;
+    char const* specified_test_root = nullptr;
     String test_glob;
     String exclude_pattern;
     String config_file;
@@ -297,17 +338,25 @@ int main(int argc, char** argv)
     });
     args_parser.add_option(print_json, "Show results as JSON", "json", 'j');
     args_parser.add_option(print_all_output, "Show all test output", "verbose", 'v');
+    args_parser.add_option(run_benchmarks, "Run benchmarks as well", "benchmarks", 'b');
+    args_parser.add_option(run_skipped_tests, "Run all matching tests, even those marked as 'skip'", "all", 'a');
     args_parser.add_option(test_glob, "Only run tests matching the given glob", "filter", 'f', "glob");
     args_parser.add_option(exclude_pattern, "Regular expression to use to exclude paths from being considered tests", "exclude-pattern", 'e', "pattern");
     args_parser.add_option(config_file, "Configuration file to use", "config-file", 'c', "filename");
     args_parser.add_positional_argument(specified_test_root, "Tests root directory", "path", Core::ArgsParser::Required::No);
-    args_parser.parse(argc, argv);
+    args_parser.parse(arguments);
 
     test_glob = String::formatted("*{}*", test_glob);
 
     if (getenv("DISABLE_DBG_OUTPUT")) {
         AK::set_debug_enabled(false);
     }
+
+    // Make UBSAN deadly for all tests we run by default.
+    TRY(Core::System::setenv("UBSAN_OPTIONS", "halt_on_error=1", true));
+
+    if (!run_benchmarks)
+        TRY(Core::System::setenv("TESTS_ONLY", "1", true));
 
     String test_root;
 
@@ -323,13 +372,19 @@ int main(int argc, char** argv)
 
     test_root = Core::File::real_path_for(test_root);
 
-    if (chdir(test_root.characters()) < 0) {
-        auto saved_errno = errno;
-        warnln("chdir failed: {}", strerror(saved_errno));
-        return 1;
+    auto void_or_error = Core::System::chdir(test_root);
+    if (void_or_error.is_error()) {
+        warnln("chdir failed: {}", void_or_error.error());
+        return void_or_error.release_error();
     }
 
-    auto config = config_file.is_empty() ? Core::ConfigFile::open_for_app("Tests") : Core::ConfigFile::open(config_file);
+    auto config_or_error = config_file.is_empty() ? Core::ConfigFile::open_for_app("Tests") : Core::ConfigFile::open(config_file);
+    if (config_or_error.is_error()) {
+        warnln("Failed to open configuration file ({}): {}", config_file.is_empty() ? "User config for Tests" : config_file.characters(), config_or_error.error());
+        return config_or_error.release_error();
+    }
+    auto config = config_or_error.release_value();
+
     if (config->num_groups() == 0)
         warnln("Empty configuration file ({}) loaded!", config_file.is_empty() ? "User config for Tests" : config_file.characters());
 
@@ -351,7 +406,7 @@ int main(int argc, char** argv)
         return 1;
     }
 
-    TestRunner test_runner(test_root, move(exclude_regex), move(config), move(skip_regex), print_progress, print_json, print_all_output);
+    TestRunner test_runner(test_root, move(exclude_regex), move(config), move(skip_regex), run_skipped_tests, print_progress, print_json, print_all_output);
     test_runner.run(test_glob);
 
     return test_runner.counts().tests_failed;

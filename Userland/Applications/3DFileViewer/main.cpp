@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2021, Jesse Buhagiar <jooster669@gmail.com>
+ * Copyright (c) 2022, the SerenityOS developers.
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -28,16 +29,12 @@
 #include "Mesh.h"
 #include "WavefrontOBJLoader.h"
 
-static constexpr u16 RENDER_WIDTH = 640;
-static constexpr u16 RENDER_HEIGHT = 480;
-
 class GLContextWidget final : public GUI::Frame {
     C_OBJECT(GLContextWidget);
 
 public:
     bool load_path(String const& fname);
-    bool load_fd_and_close(int fd, String const& fname);
-    bool load_file(Core::File& file, String const& fname);
+    bool load_file(Core::File& file);
     void toggle_rotate_x() { m_rotate_x = !m_rotate_x; }
     void toggle_rotate_y() { m_rotate_y = !m_rotate_y; }
     void toggle_rotate_z() { m_rotate_z = !m_rotate_z; }
@@ -46,6 +43,7 @@ public:
     void set_wrap_s_mode(GLint mode) { m_wrap_s_mode = mode; }
     void set_wrap_t_mode(GLint mode) { m_wrap_t_mode = mode; }
     void set_texture_scale(float scale) { m_texture_scale = scale; }
+    void set_texture_enabled(bool texture_enabled) { m_texture_enabled = texture_enabled; }
     void set_mag_filter(GLint filter) { m_mag_filter = filter; }
 
     void toggle_show_frame_rate()
@@ -58,6 +56,8 @@ private:
     GLContextWidget()
         : m_mesh_loader(adopt_own(*new WavefrontOBJLoader()))
     {
+        constexpr u16 RENDER_WIDTH = 640;
+        constexpr u16 RENDER_HEIGHT = 480;
         m_bitmap = Gfx::Bitmap::try_create(Gfx::BitmapFormat::BGRx8888, { RENDER_WIDTH, RENDER_HEIGHT }).release_value_but_fixme_should_propagate_errors();
         m_context = GL::create_context(*m_bitmap);
 
@@ -67,6 +67,12 @@ private:
         glFrontFace(GL_CCW);
         glEnable(GL_CULL_FACE);
         glEnable(GL_DEPTH_TEST);
+
+        // Enable lighting
+        glEnable(GL_LIGHTING);
+        glEnable(GL_LIGHT0);
+        glEnable(GL_LIGHT1);
+        glEnable(GL_LIGHT2);
 
         // Set projection matrix
         glMatrixMode(GL_PROJECTION);
@@ -85,11 +91,13 @@ private:
         glEndList();
     }
 
+    virtual void drop_event(GUI::DropEvent&) override;
     virtual void paint_event(GUI::PaintEvent&) override;
     virtual void resize_event(GUI::ResizeEvent&) override;
     virtual void timer_event(Core::TimerEvent&) override;
     virtual void mousemove_event(GUI::MouseEvent&) override;
     virtual void mousewheel_event(GUI::MouseEvent&) override;
+    virtual void keydown_event(GUI::KeyEvent&) override;
 
 private:
     RefPtr<Mesh> m_mesh;
@@ -111,10 +119,32 @@ private:
     RefPtr<GUI::Label> m_stats;
     GLint m_wrap_s_mode = GL_REPEAT;
     GLint m_wrap_t_mode = GL_REPEAT;
+    bool m_texture_enabled { true };
     float m_texture_scale = 1.0f;
     GLint m_mag_filter = GL_NEAREST;
     float m_zoom = 1;
 };
+
+void GLContextWidget::drop_event(GUI::DropEvent& event)
+{
+    if (!event.mime_data().has_urls())
+        return;
+
+    event.accept();
+
+    if (event.mime_data().urls().is_empty())
+        return;
+
+    for (auto& url : event.mime_data().urls()) {
+        if (url.protocol() != "file")
+            continue;
+
+        auto response = FileSystemAccessClient::Client::the().try_request_file(window(), url.path(), Core::OpenMode::ReadOnly);
+        if (response.is_error())
+            return;
+        load_file(response.value());
+    }
+}
 
 void GLContextWidget::paint_event(GUI::PaintEvent& event)
 {
@@ -148,15 +178,24 @@ void GLContextWidget::mousemove_event(GUI::MouseEvent& event)
 
 void GLContextWidget::mousewheel_event(GUI::MouseEvent& event)
 {
-    if (event.wheel_delta() > 0)
+    if (event.wheel_delta_y() > 0)
         m_zoom /= 1.1f;
     else
         m_zoom *= 1.1f;
 }
 
+void GLContextWidget::keydown_event(GUI::KeyEvent& event)
+{
+    if (event.key() == Key_Escape && window()->is_fullscreen()) {
+        window()->set_fullscreen(false);
+        return;
+    }
+}
+
 void GLContextWidget::timer_event(Core::TimerEvent&)
 {
     auto timer = Core::ElapsedTimer::start_new();
+    static unsigned int light_counter = 0;
 
     glCallList(m_init_list);
 
@@ -173,9 +212,41 @@ void GLContextWidget::timer_event(Core::TimerEvent&)
     glRotatef(m_angle_y, 0, 1, 0);
     glRotatef(m_angle_z, 0, 0, 1);
 
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, m_wrap_s_mode);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, m_wrap_t_mode);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, m_mag_filter);
+    glPushMatrix();
+    glLoadIdentity();
+    // Disco time ;)
+    GLfloat const light0_position[4] = { -4.0f, 0.0f, 0.0f, 0.0f };
+    GLfloat const light0_diffuse[4] = { 1.0f, 0.0f, 0.0f, 0.0f };
+    GLfloat const light0_specular[4] = { 0.75f, 0.75f, 0.75f };
+    GLfloat const light1_position[4] = { 4.0f, 0.0f, 0.0f, 0.0f };
+    GLfloat const light1_diffuse[4] = { 0.0f, 1.0f, 0.0f, 0.0f };
+    GLfloat const light1_specular[4] = { 0.75f, 0.75f, 0.75f };
+    GLfloat const light2_position[4] = { 0.0f, 5.0f, 0.0f, 0.0f };
+    GLfloat const light2_diffuse[4] = { 0.0f, 0.0f, 1.0f, 0.0f };
+    GLfloat const light2_specular[4] = { 0.75f, 0.75f, 0.75f };
+    glLightfv(GL_LIGHT0, GL_POSITION, &light0_position[0]);
+    glLightfv(GL_LIGHT0, GL_DIFFUSE, &light0_diffuse[0]);
+    glLightfv(GL_LIGHT0, GL_SPECULAR, &light0_specular[0]);
+    glLightfv(GL_LIGHT1, GL_POSITION, &light1_position[0]);
+    glLightfv(GL_LIGHT1, GL_DIFFUSE, &light1_diffuse[0]);
+    glLightfv(GL_LIGHT1, GL_SPECULAR, &light1_specular[0]);
+    glLightfv(GL_LIGHT2, GL_POSITION, &light2_position[0]);
+    glLightfv(GL_LIGHT2, GL_DIFFUSE, &light2_diffuse[0]);
+    glLightfv(GL_LIGHT2, GL_SPECULAR, &light2_specular[0]);
+
+    GLfloat const material_specular_color[4] = { 1.0f, 1.0f, 1.0f, 1.0f };
+    glMaterialf(GL_FRONT, GL_SHININESS, 45.0f);
+    glMaterialfv(GL_FRONT, GL_SPECULAR, &material_specular_color[0]);
+    glPopMatrix();
+
+    if (m_texture_enabled) {
+        glEnable(GL_TEXTURE_2D);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, m_wrap_s_mode);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, m_wrap_t_mode);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, m_mag_filter);
+    } else {
+        glDisable(GL_TEXTURE_2D);
+    }
     glScalef(m_zoom, m_zoom, m_zoom);
 
     if (!m_mesh.is_null())
@@ -188,6 +259,18 @@ void GLContextWidget::timer_event(Core::TimerEvent&)
         auto frame_rate = render_time > 0 ? 1000 / render_time : 0;
         m_stats->set_text(String::formatted("{:.0f} fps, {:.1f} ms", frame_rate, render_time));
         m_accumulated_time = 0;
+
+        glEnable(GL_LIGHT0);
+        glEnable(GL_LIGHT1);
+        glEnable(GL_LIGHT2);
+        light_counter++;
+
+        if ((light_counter % 3) == 0)
+            glDisable(GL_LIGHT0);
+        else if ((light_counter % 3) == 1)
+            glDisable(GL_LIGHT1);
+        else
+            glDisable(GL_LIGHT2);
     }
 
     update();
@@ -205,23 +288,12 @@ bool GLContextWidget::load_path(String const& filename)
         return false;
     }
 
-    return load_file(file, filename);
+    return load_file(file);
 }
 
-bool GLContextWidget::load_fd_and_close(int fd, String const& filename)
+bool GLContextWidget::load_file(Core::File& file)
 {
-    auto file = Core::File::construct();
-
-    if (!file->open(fd, Core::OpenMode::ReadOnly, Core::File::ShouldCloseFileDescriptor::Yes) && file->error() != ENOENT) {
-        GUI::MessageBox::show(window(), String::formatted("Opening \"{}\" failed: {}", filename, strerror(errno)), "Error", GUI::MessageBox::Type::Error);
-        return false;
-    }
-
-    return load_file(file, filename);
-}
-
-bool GLContextWidget::load_file(Core::File& file, String const& filename)
-{
+    auto const& filename = file.filename();
     if (!filename.ends_with(".obj")) {
         GUI::MessageBox::show(window(), String::formatted("Opening \"{}\" failed: invalid file type", filename), "Error", GUI::MessageBox::Type::Error);
         return false;
@@ -257,15 +329,13 @@ bool GLContextWidget::load_file(Core::File& file, String const& filename)
         if (!bitmap_or_error.is_error())
             texture_image = bitmap_or_error.release_value_but_fixme_should_propagate_errors();
     } else {
-        auto result = FileSystemAccessClient::Client::the().request_file(window()->window_id(), builder.string_view(), Core::OpenMode::ReadOnly);
-
-        if (result.error != 0) {
-            return false;
+        auto response = FileSystemAccessClient::Client::the().try_request_file(window(), builder.string_view(), Core::OpenMode::ReadOnly);
+        if (!response.is_error()) {
+            auto texture_file = response.value();
+            auto bitmap_or_error = Gfx::Bitmap::try_load_from_fd_and_close(texture_file->leak_fd(), texture_file->filename());
+            if (!bitmap_or_error.is_error())
+                texture_image = bitmap_or_error.release_value_but_fixme_should_propagate_errors();
         }
-
-        auto bitmap_or_error = Gfx::Bitmap::try_load_from_fd_and_close(*result.fd, *result.chosen_file);
-        if (!bitmap_or_error.is_error())
-            texture_image = bitmap_or_error.release_value_but_fixme_should_propagate_errors();
     }
 
     GLuint tex;
@@ -286,14 +356,14 @@ bool GLContextWidget::load_file(Core::File& file, String const& filename)
 
 ErrorOr<int> serenity_main(Main::Arguments arguments)
 {
-    auto app = GUI::Application::construct(arguments);
+    auto app = TRY(GUI::Application::try_create(arguments));
 
-    TRY(Core::System::pledge("stdio thread recvfd sendfd rpath unix"));
+    TRY(Core::System::pledge("stdio thread recvfd sendfd rpath unix prot_exec"));
 
     TRY(Core::System::unveil("/tmp/portal/filesystemaccess", "rw"));
-    TRY(Core::System::unveil("/home/anon/Documents/3D Models/teapot.obj", "r"));
-    TRY(Core::System::unveil("/home/anon/Documents/3D Models/teapot.bmp", "r"));
+    TRY(Core::System::unveil("/home/anon/Documents/3D Models", "r"));
     TRY(Core::System::unveil("/res", "r"));
+    TRY(Core::System::unveil("/usr/lib", "r"));
     TRY(Core::System::unveil(nullptr, nullptr));
 
     // Construct the main window
@@ -304,26 +374,26 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
     window->resize(640 + 4, 480 + 4);
     window->set_resizable(false);
     window->set_double_buffering_enabled(true);
-    auto& widget = window->set_main_widget<GLContextWidget>();
+    auto widget = TRY(window->try_set_main_widget<GLContextWidget>());
 
-    auto& time = widget.add<GUI::Label>();
+    auto& time = widget->add<GUI::Label>();
     time.set_visible(false);
     time.set_foreground_role(ColorRole::HoverHighlight);
     time.set_relative_rect({ 0, 8, 100, 10 });
     time.set_text_alignment(Gfx::TextAlignment::CenterRight);
-    time.set_x(widget.width() - time.width() - 6);
-    widget.set_stat_label(time);
+    time.set_x(widget->width() - time.width() - 6);
+    widget->set_stat_label(time);
 
     auto& file_menu = window->add_menu("&File");
 
     file_menu.add_action(GUI::CommonActions::make_open_action([&](auto&) {
-        auto result = FileSystemAccessClient::Client::the().open_file(window->window_id());
-
-        if (result.error != 0)
+        auto response = FileSystemAccessClient::Client::the().try_open_file(window);
+        if (response.is_error())
             return;
 
-        if (widget.load_fd_and_close(*result.fd, *result.chosen_file)) {
-            auto canonical_path = Core::File::absolute_path(*result.chosen_file);
+        auto file = response.value();
+        if (widget->load_file(*file)) {
+            auto canonical_path = Core::File::absolute_path(file->filename());
             window->set_title(String::formatted("{} - 3D File Viewer", canonical_path));
         }
     }));
@@ -339,13 +409,13 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
 
     auto& rotation_axis_menu = view_menu.add_submenu("Rotation &Axis");
     auto rotation_x_action = GUI::Action::create_checkable("&X", [&widget](auto&) {
-        widget.toggle_rotate_x();
+        widget->toggle_rotate_x();
     });
     auto rotation_y_action = GUI::Action::create_checkable("&Y", [&widget](auto&) {
-        widget.toggle_rotate_y();
+        widget->toggle_rotate_y();
     });
     auto rotation_z_action = GUI::Action::create_checkable("&Z", [&widget](auto&) {
-        widget.toggle_rotate_z();
+        widget->toggle_rotate_z();
     });
 
     rotation_axis_menu.add_action(*rotation_x_action);
@@ -360,16 +430,16 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
     rotation_speed_actions.set_exclusive(true);
 
     auto no_rotation_action = GUI::Action::create_checkable("N&o Rotation", [&widget](auto&) {
-        widget.set_rotation_speed(0.f);
+        widget->set_rotation_speed(0.f);
     });
     auto slow_rotation_action = GUI::Action::create_checkable("&Slow", [&widget](auto&) {
-        widget.set_rotation_speed(30.f);
+        widget->set_rotation_speed(30.f);
     });
     auto normal_rotation_action = GUI::Action::create_checkable("&Normal", [&widget](auto&) {
-        widget.set_rotation_speed(60.f);
+        widget->set_rotation_speed(60.f);
     });
     auto fast_rotation_action = GUI::Action::create_checkable("&Fast", [&widget](auto&) {
-        widget.set_rotation_speed(90.f);
+        widget->set_rotation_speed(90.f);
     });
 
     rotation_speed_actions.add_action(*no_rotation_action);
@@ -385,25 +455,31 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
     normal_rotation_action->set_checked(true);
 
     auto show_frame_rate_action = GUI::Action::create_checkable("Show Frame &Rate", [&widget](auto&) {
-        widget.toggle_show_frame_rate();
+        widget->toggle_show_frame_rate();
     });
 
     view_menu.add_action(*show_frame_rate_action);
 
     auto& texture_menu = window->add_menu("&Texture");
 
+    auto texture_enabled_action = GUI::Action::create_checkable("&Enable Texture", [&widget](auto& action) {
+        widget->set_texture_enabled(action.is_checked());
+    });
+    texture_enabled_action->set_checked(true);
+    texture_menu.add_action(texture_enabled_action);
+
     auto& wrap_u_menu = texture_menu.add_submenu("Wrap &S");
     GUI::ActionGroup wrap_s_actions;
     wrap_s_actions.set_exclusive(true);
 
     auto wrap_u_repeat_action = GUI::Action::create_checkable("&Repeat", [&widget](auto&) {
-        widget.set_wrap_s_mode(GL_REPEAT);
+        widget->set_wrap_s_mode(GL_REPEAT);
     });
     auto wrap_u_mirrored_repeat_action = GUI::Action::create_checkable("&Mirrored Repeat", [&widget](auto&) {
-        widget.set_wrap_s_mode(GL_MIRRORED_REPEAT);
+        widget->set_wrap_s_mode(GL_MIRRORED_REPEAT);
     });
     auto wrap_u_clamp_action = GUI::Action::create_checkable("&Clamp", [&widget](auto&) {
-        widget.set_wrap_s_mode(GL_CLAMP);
+        widget->set_wrap_s_mode(GL_CLAMP);
     });
 
     wrap_s_actions.add_action(*wrap_u_repeat_action);
@@ -421,13 +497,13 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
     wrap_t_actions.set_exclusive(true);
 
     auto wrap_t_repeat_action = GUI::Action::create_checkable("&Repeat", [&widget](auto&) {
-        widget.set_wrap_t_mode(GL_REPEAT);
+        widget->set_wrap_t_mode(GL_REPEAT);
     });
     auto wrap_t_mirrored_repeat_action = GUI::Action::create_checkable("&Mirrored Repeat", [&widget](auto&) {
-        widget.set_wrap_t_mode(GL_MIRRORED_REPEAT);
+        widget->set_wrap_t_mode(GL_MIRRORED_REPEAT);
     });
     auto wrap_t_clamp_action = GUI::Action::create_checkable("&Clamp", [&widget](auto&) {
-        widget.set_wrap_t_mode(GL_CLAMP);
+        widget->set_wrap_t_mode(GL_CLAMP);
     });
 
     wrap_t_actions.add_action(*wrap_t_repeat_action);
@@ -445,23 +521,23 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
     texture_scale_actions.set_exclusive(true);
 
     auto texture_scale_025_action = GUI::Action::create_checkable("0.25x", [&widget](auto&) {
-        widget.set_texture_scale(0.25f);
+        widget->set_texture_scale(0.25f);
     });
 
     auto texture_scale_05_action = GUI::Action::create_checkable("0.5x", [&widget](auto&) {
-        widget.set_texture_scale(0.5f);
+        widget->set_texture_scale(0.5f);
     });
 
     auto texture_scale_1_action = GUI::Action::create_checkable("1x", [&widget](auto&) {
-        widget.set_texture_scale(1);
+        widget->set_texture_scale(1);
     });
 
     auto texture_scale_2_action = GUI::Action::create_checkable("2x", [&widget](auto&) {
-        widget.set_texture_scale(2);
+        widget->set_texture_scale(2);
     });
 
     auto texture_scale_4_action = GUI::Action::create_checkable("4x", [&widget](auto&) {
-        widget.set_texture_scale(4);
+        widget->set_texture_scale(4);
     });
 
     texture_scale_actions.add_action(*texture_scale_025_action);
@@ -483,11 +559,11 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
     texture_mag_filter_actions.set_exclusive(true);
 
     auto texture_mag_filter_nearest_action = GUI::Action::create_checkable("&Nearest", [&widget](auto&) {
-        widget.set_mag_filter(GL_NEAREST);
+        widget->set_mag_filter(GL_NEAREST);
     });
 
     auto texture_mag_filter_linear_action = GUI::Action::create_checkable("&Linear", [&widget](auto&) {
-        widget.set_mag_filter(GL_LINEAR);
+        widget->set_mag_filter(GL_LINEAR);
     });
 
     texture_mag_filter_actions.add_action(*texture_mag_filter_nearest_action);
@@ -504,7 +580,7 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
     window->show();
 
     auto filename = arguments.argc > 1 ? arguments.argv[1] : "/home/anon/Documents/3D Models/teapot.obj";
-    if (widget.load_path(filename)) {
+    if (widget->load_path(filename)) {
         auto canonical_path = Core::File::absolute_path(filename);
         window->set_title(String::formatted("{} - 3D File Viewer", canonical_path));
     }

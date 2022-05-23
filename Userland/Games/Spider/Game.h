@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2021, Jamie Mansfield <jmansfield@cadixdev.org>
+ * Copyright (c) 2022, the SerenityOS developers.
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -33,7 +34,7 @@ public:
     static constexpr int width = 10 + 10 * Card::width + 90 + 10;
     static constexpr int height = 480;
 
-    ~Game() override;
+    ~Game() override = default;
 
     Mode mode() const { return m_mode; }
     void setup(Mode);
@@ -72,6 +73,7 @@ private:
     void ensure_top_card_is_visible(NonnullRefPtr<CardStack> stack);
     void detect_full_stacks();
     void detect_victory();
+    void move_focused_cards(CardStack& stack);
 
     ALWAYS_INLINE CardStack& stack(StackLocation location)
     {
@@ -98,6 +100,11 @@ private:
     bool m_new_game_animation { false };
     uint8_t m_new_game_animation_delay { 0 };
     uint8_t m_new_game_animation_pile { 0 };
+
+    bool m_draw_animation { false };
+    uint8_t m_draw_animation_delay { 0 };
+    uint8_t m_draw_animation_pile { 0 };
+    Gfx::IntRect m_original_stock_rect;
 
     uint32_t m_score { 500 };
 };

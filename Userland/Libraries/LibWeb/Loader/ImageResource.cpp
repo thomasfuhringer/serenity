@@ -4,20 +4,29 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <AK/Function.h>
 #include <LibGfx/Bitmap.h>
 #include <LibWeb/ImageDecoding.h>
 #include <LibWeb/Loader/ImageResource.h>
 
 namespace Web {
 
-ImageResource::ImageResource(const LoadRequest& request)
+NonnullRefPtr<ImageResource> ImageResource::convert_from_resource(Resource& resource)
+{
+    return adopt_ref(*new ImageResource(resource));
+}
+
+ImageResource::ImageResource(LoadRequest const& request)
     : Resource(Type::Image, request)
 {
 }
 
-ImageResource::~ImageResource()
+ImageResource::ImageResource(Resource& resource)
+    : Resource(Type::Image, resource)
 {
 }
+
+ImageResource::~ImageResource() = default;
 
 int ImageResource::frame_duration(size_t frame_index) const
 {
@@ -38,8 +47,7 @@ void ImageResource::decode_if_needed() const
     if (!m_decoded_frames.is_empty())
         return;
 
-    NonnullRefPtr decoder = image_decoder_client();
-    auto image = decoder->decode_image(encoded_data());
+    auto image = ImageDecoding::Decoder::the().decode_image(encoded_data());
 
     if (image.has_value()) {
         m_loop_count = image.value().loop_count;
@@ -55,7 +63,7 @@ void ImageResource::decode_if_needed() const
     m_has_attempted_decode = true;
 }
 
-const Gfx::Bitmap* ImageResource::bitmap(size_t frame_index) const
+Gfx::Bitmap const* ImageResource::bitmap(size_t frame_index) const
 {
     decode_if_needed();
     if (frame_index >= m_decoded_frames.size())
@@ -97,8 +105,6 @@ void ImageResource::update_volatility()
     m_has_attempted_decode = false;
 }
 
-ImageResourceClient::~ImageResourceClient()
-{
-}
+ImageResourceClient::~ImageResourceClient() = default;
 
 }

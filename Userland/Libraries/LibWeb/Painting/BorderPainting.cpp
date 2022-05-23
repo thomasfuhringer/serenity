@@ -11,20 +11,27 @@
 
 namespace Web::Painting {
 
-BorderRadiusData normalized_border_radius_data(Layout::Node const& node, Gfx::FloatRect const& rect, CSS::Length top_left_radius, CSS::Length top_right_radius, CSS::Length bottom_right_radius, CSS::Length bottom_left_radius)
+BorderRadiusData normalized_border_radius_data(Layout::Node const& node, Gfx::FloatRect const& rect, CSS::LengthPercentage top_left_radius, CSS::LengthPercentage top_right_radius, CSS::LengthPercentage bottom_right_radius, CSS::LengthPercentage bottom_left_radius)
 {
-    // FIXME: some values should be relative to the height() if specified, but which? For now, all relative values are relative to the width.
-    auto bottom_left_radius_px = bottom_left_radius.resolved_or_zero(node, rect.width()).to_px(node);
-    auto bottom_right_radius_px = bottom_right_radius.resolved_or_zero(node, rect.width()).to_px(node);
-    auto top_left_radius_px = top_left_radius.resolved_or_zero(node, rect.width()).to_px(node);
-    auto top_right_radius_px = top_right_radius.resolved_or_zero(node, rect.width()).to_px(node);
+    // FIXME: Some values should be relative to the height() if specified, but which?
+    //        Spec just says "Refer to corresponding dimension of the border box."
+    //        For now, all relative values are relative to the width.
+    auto width_length = CSS::Length::make_px(rect.width());
+    auto bottom_left_radius_px = bottom_left_radius.resolved(node, width_length).to_px(node);
+    auto bottom_right_radius_px = bottom_right_radius.resolved(node, width_length).to_px(node);
+    auto top_left_radius_px = top_left_radius.resolved(node, width_length).to_px(node);
+    auto top_right_radius_px = top_right_radius.resolved(node, width_length).to_px(node);
 
     // Scale overlapping curves according to https://www.w3.org/TR/css-backgrounds-3/#corner-overlap
     auto f = 1.0f;
-    f = min(f, rect.width() / (float)(top_left_radius_px + top_right_radius_px));
-    f = min(f, rect.height() / (float)(top_right_radius_px + bottom_right_radius_px));
-    f = min(f, rect.width() / (float)(bottom_left_radius_px + bottom_right_radius_px));
-    f = min(f, rect.height() / (float)(top_left_radius_px + bottom_left_radius_px));
+    auto width_reciprocal = 1.0f / rect.width();
+    auto height_reciprocal = 1.0f / rect.height();
+    f = max(f, width_reciprocal * (top_left_radius_px + top_right_radius_px));
+    f = max(f, height_reciprocal * (top_right_radius_px + bottom_right_radius_px));
+    f = max(f, width_reciprocal * (bottom_left_radius_px + bottom_right_radius_px));
+    f = max(f, height_reciprocal * (top_left_radius_px + bottom_left_radius_px));
+
+    f = 1.0f / f;
 
     top_left_radius_px = (int)(top_left_radius_px * f);
     top_right_radius_px = (int)(top_right_radius_px * f);
@@ -34,9 +41,11 @@ BorderRadiusData normalized_border_radius_data(Layout::Node const& node, Gfx::Fl
     return BorderRadiusData { top_left_radius_px, top_right_radius_px, bottom_right_radius_px, bottom_left_radius_px };
 }
 
-void paint_border(PaintContext& context, BorderEdge edge, Gfx::FloatRect const& rect, BorderRadiusData const& border_radius_data, BordersData const& borders_data)
+void paint_border(PaintContext& context, BorderEdge edge, Gfx::FloatRect const& a_rect, BorderRadiusData const& border_radius_data, BordersData const& borders_data)
 {
-    const auto& border_data = [&] {
+    auto rect = a_rect.to_rounded<float>();
+
+    auto const& border_data = [&] {
         switch (edge) {
         case BorderEdge::Top:
             return borders_data.top;
@@ -62,7 +71,7 @@ void paint_border(PaintContext& context, BorderEdge edge, Gfx::FloatRect const& 
         Gfx::FloatPoint p2;
     };
 
-    auto points_for_edge = [](BorderEdge edge, const Gfx::FloatRect& rect) -> Points {
+    auto points_for_edge = [](BorderEdge edge, Gfx::FloatRect const& rect) -> Points {
         switch (edge) {
         case BorderEdge::Top:
             return { rect.top_left(), rect.top_right() };

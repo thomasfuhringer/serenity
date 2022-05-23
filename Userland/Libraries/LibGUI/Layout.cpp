@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2018-2020, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2022, the SerenityOS developers.
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -37,21 +38,24 @@ Layout::Layout()
         });
 }
 
-Layout::~Layout()
-{
-}
+Layout::~Layout() = default;
 
 void Layout::notify_adopted(Badge<Widget>, Widget& widget)
 {
     if (m_owner == &widget)
         return;
     m_owner = widget;
+    m_owner->for_each_child_widget([&](Widget& child) {
+        add_widget(child);
+        return IterationDecision::Continue;
+    });
 }
 
 void Layout::notify_disowned(Badge<Widget>, Widget& widget)
 {
     VERIFY(m_owner == &widget);
     m_owner.clear();
+    m_entries.clear();
 }
 
 ErrorOr<void> Layout::try_add_entry(Entry&& entry)
@@ -136,7 +140,7 @@ void Layout::set_spacing(int spacing)
         m_owner->notify_layout_changed({});
 }
 
-void Layout::set_margins(const Margins& margins)
+void Layout::set_margins(Margins const& margins)
 {
     if (m_margins == margins)
         return;

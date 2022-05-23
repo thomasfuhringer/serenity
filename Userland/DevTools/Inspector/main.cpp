@@ -48,11 +48,11 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
     pid_t pid;
 
     auto app = TRY(GUI::Application::try_create(arguments));
-    auto app_icon = GUI::Icon::default_icon("app-inspector");
+    auto app_icon = TRY(GUI::Icon::try_create_default_icon("app-inspector"));
     if (gui_mode) {
     choose_pid:
         auto process_chooser = TRY(GUI::ProcessChooser::try_create("Inspector", "Inspect", app_icon.bitmap_for_size(16)));
-        if (process_chooser->exec() == GUI::Dialog::ExecCancel)
+        if (process_chooser->exec() == GUI::Dialog::ExecResult::Cancel)
             return 0;
         pid = process_chooser->pid();
     } else {
@@ -95,11 +95,11 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
     }));
     help_menu.add_action(GUI::CommonActions::make_about_action("Inspector", app_icon, window));
 
-    auto& widget = window->set_main_widget<GUI::Widget>();
-    widget.set_fill_with_background_color(true);
-    widget.set_layout<GUI::VerticalBoxLayout>();
+    auto widget = TRY(window->try_set_main_widget<GUI::Widget>());
+    widget->set_fill_with_background_color(true);
+    widget->set_layout<GUI::VerticalBoxLayout>();
 
-    auto& splitter = widget.add<GUI::HorizontalSplitter>();
+    auto& splitter = widget->add<GUI::HorizontalSplitter>();
 
     remote_process.on_update = [&] {
         if (!remote_process.process_name().is_null())
@@ -146,10 +146,6 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
     window->show();
     remote_process.update();
 
-    if (pledge("stdio recvfd sendfd rpath", nullptr) < 0) {
-        perror("pledge");
-        return 1;
-    }
-
+    TRY(Core::System::pledge("stdio recvfd sendfd rpath"));
     return app->exec();
 }

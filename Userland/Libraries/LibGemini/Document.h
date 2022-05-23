@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2020, the SerenityOS developers.
+ * Copyright (c) 2020-2022, the SerenityOS developers.
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -10,7 +10,6 @@
 #include <AK/NonnullOwnPtrVector.h>
 #include <AK/String.h>
 #include <AK/URL.h>
-#include <AK/Vector.h>
 
 namespace Gemini {
 
@@ -21,7 +20,7 @@ public:
     {
     }
 
-    virtual ~Line();
+    virtual ~Line() = default;
 
     virtual String render_to_html() const = 0;
 
@@ -57,14 +56,14 @@ public:
         : Line(move(line))
     {
     }
-    virtual ~Text() override;
+    virtual ~Text() override = default;
     virtual String render_to_html() const override;
 };
 
 class Link : public Line {
 public:
-    Link(String line, const Document&);
-    virtual ~Link() override;
+    Link(String line, Document const&);
+    virtual ~Link() override = default;
     virtual String render_to_html() const override;
 
 private:
@@ -78,7 +77,7 @@ public:
         : Line(move(line))
     {
     }
-    virtual ~Preformatted() override;
+    virtual ~Preformatted() override = default;
     virtual String render_to_html() const override;
 };
 
@@ -88,7 +87,7 @@ public:
         : Line(move(line))
     {
     }
-    virtual ~UnorderedList() override;
+    virtual ~UnorderedList() override = default;
     virtual String render_to_html() const override;
 };
 
@@ -105,7 +104,7 @@ public:
         , m_kind(kind)
     {
     }
-    virtual ~Control() override;
+    virtual ~Control() override = default;
     virtual String render_to_html() const override;
 
 private:
@@ -119,7 +118,7 @@ public:
         , m_level(level)
     {
     }
-    virtual ~Heading() override;
+    virtual ~Heading() override = default;
     virtual String render_to_html() const override;
 
 private:

@@ -117,8 +117,8 @@ ErrorOr<NonnullRefPtr<Bitmap>> Bitmap::try_load_from_file(String const& path, in
         auto fd = TRY(Core::System::open(highdpi_icon_string, O_RDONLY));
 
         auto bitmap = TRY(try_load_from_fd_and_close(fd, highdpi_icon_string));
-        VERIFY(bitmap->width() % scale_factor == 0);
-        VERIFY(bitmap->height() % scale_factor == 0);
+        if (bitmap->width() % scale_factor != 0 || bitmap->height() % scale_factor != 0)
+            return Error::from_string_literal("Bitmap::try_load_from_file: HighDPI image size should be divisible by scale factor");
         bitmap->m_size.set_width(bitmap->width() / scale_factor);
         bitmap->m_size.set_height(bitmap->height() / scale_factor);
         bitmap->m_scale = scale_factor;
@@ -175,7 +175,7 @@ static bool check_size(IntSize const& size, int scale_factor, BitmapFormat forma
     return true;
 }
 
-ErrorOr<NonnullRefPtr<Bitmap>> Bitmap::try_create_with_anonymous_buffer(BitmapFormat format, Core::AnonymousBuffer buffer, IntSize const& size, int scale_factor, Vector<RGBA32> const& palette)
+ErrorOr<NonnullRefPtr<Bitmap>> Bitmap::try_create_with_anonymous_buffer(BitmapFormat format, Core::AnonymousBuffer buffer, IntSize const& size, int scale_factor, Vector<ARGB32> const& palette)
 {
     if (size_would_overflow(format, size, scale_factor))
         return Error::from_string_literal("Gfx::Bitmap::try_create_with_anonymous_buffer size overflow");
@@ -201,7 +201,7 @@ ErrorOr<NonnullRefPtr<Bitmap>> Bitmap::try_create_from_serialized_byte_buffer(By
     unsigned scale_factor;
     BitmapFormat format;
     unsigned palette_size;
-    Vector<RGBA32> palette;
+    Vector<ARGB32> palette;
 
     auto read = [&]<typename T>(T& value) {
         if (stream.read({ &value, sizeof(T) }) != sizeof(T))
@@ -231,8 +231,8 @@ ErrorOr<NonnullRefPtr<Bitmap>> Bitmap::try_create_from_serialized_byte_buffer(By
 
     auto bitmap = TRY(Bitmap::try_create(format, { width, height }, scale_factor));
 
-    bitmap->m_palette = new RGBA32[palette_size];
-    memcpy(bitmap->m_palette, palette.data(), palette_size * sizeof(RGBA32));
+    bitmap->m_palette = new ARGB32[palette_size];
+    memcpy(bitmap->m_palette, palette.data(), palette_size * sizeof(ARGB32));
 
     data.copy_to({ bitmap->scanline(0), bitmap->size_in_bytes() });
     return bitmap;
@@ -241,7 +241,7 @@ ErrorOr<NonnullRefPtr<Bitmap>> Bitmap::try_create_from_serialized_byte_buffer(By
 ByteBuffer Bitmap::serialize_to_byte_buffer() const
 {
     // FIXME: Somehow handle possible OOM situation here.
-    auto buffer = ByteBuffer::create_uninitialized(sizeof(size_t) + 4 * sizeof(unsigned) + sizeof(BitmapFormat) + sizeof(RGBA32) * palette_size(m_format) + size_in_bytes()).release_value();
+    auto buffer = ByteBuffer::create_uninitialized(sizeof(size_t) + 4 * sizeof(unsigned) + sizeof(BitmapFormat) + sizeof(ARGB32) * palette_size(m_format) + size_in_bytes()).release_value_but_fixme_should_propagate_errors();
     OutputMemoryStream stream { buffer };
 
     auto write = [&]<typename T>(T value) {
@@ -268,7 +268,7 @@ ByteBuffer Bitmap::serialize_to_byte_buffer() const
     return buffer;
 }
 
-Bitmap::Bitmap(BitmapFormat format, Core::AnonymousBuffer buffer, IntSize const& size, int scale_factor, Vector<RGBA32> const& palette)
+Bitmap::Bitmap(BitmapFormat format, Core::AnonymousBuffer buffer, IntSize const& size, int scale_factor, Vector<ARGB32> const& palette)
     : m_size(size)
     , m_scale(scale_factor)
     , m_data(buffer.data<void>())
@@ -561,25 +561,43 @@ ErrorOr<BackingStore> Bitmap::allocate_backing_store(BitmapFormat format, IntSiz
     return BackingStore { data, pitch, data_size_in_bytes };
 }
 
-void Bitmap::allocate_palette_from_format(BitmapFormat format, Vector<RGBA32> const& source_palette)
+void Bitmap::allocate_palette_from_format(BitmapFormat format, Vector<ARGB32> const& source_palette)
 {
     size_t size = palette_size(format);
     if (size == 0)
         return;
-    m_palette = new RGBA32[size];
+    m_palette = new ARGB32[size];
     if (!source_palette.is_empty()) {
         VERIFY(source_palette.size() == size);
-        memcpy(m_palette, source_palette.data(), size * sizeof(RGBA32));
+        memcpy(m_palette, source_palette.data(), size * sizeof(ARGB32));
     }
 }
 
-Vector<RGBA32> Bitmap::palette_to_vector() const
+Vector<ARGB32> Bitmap::palette_to_vector() const
 {
-    Vector<RGBA32> vector;
+    Vector<ARGB32> vector;
     auto size = palette_size(m_format);
     vector.ensure_capacity(size);
     for (size_t i = 0; i < size; ++i)
         vector.unchecked_append(palette_color(i).value());
     return vector;
 }
+
+bool Bitmap::visually_equals(Bitmap const& other) const
+{
+    auto own_width = width();
+    auto own_height = height();
+    if (other.width() != own_width || other.height() != own_height)
+        return false;
+
+    for (auto y = 0; y < own_height; ++y) {
+        for (auto x = 0; x < own_width; ++x) {
+            if (get_pixel(x, y) != other.get_pixel(x, y))
+                return false;
+        }
+    }
+
+    return true;
+}
+
 }

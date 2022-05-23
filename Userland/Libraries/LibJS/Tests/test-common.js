@@ -53,6 +53,9 @@ class ExpectationError extends Error {
 
     const valueToString = value => {
         try {
+            if (value === 0 && 1 / value < 0) {
+                return "-0";
+            }
             return String(value);
         } catch {
             // e.g for objects without a prototype, the above throws.
@@ -277,7 +280,13 @@ class ExpectationError extends Error {
 
         toEqual(value) {
             this.__doMatcher(() => {
-                this.__expect(deepEquals(this.target, value));
+                this.__expect(
+                    deepEquals(this.target, value),
+                    () =>
+                        `Expected _${valueToString(value)}_, but got _${valueToString(
+                            this.target
+                        )}_`
+                );
             });
         }
 
@@ -353,7 +362,12 @@ class ExpectationError extends Error {
         toEval() {
             this.__expect(typeof this.target === "string");
             const success = canParseSource(this.target);
-            this.__expect(this.inverted ? !success : success);
+            this.__expect(
+                this.inverted ? !success : success,
+                () =>
+                    `Expected _${valueToString(this.target)}_` +
+                    (this.inverted ? "not to eval but it did" : "to eval but it didn't")
+            );
         }
 
         // Must compile regardless of inverted-ness
@@ -365,11 +379,18 @@ class ExpectationError extends Error {
             try {
                 result = eval(this.target);
             } catch (e) {
-                throw new ExpectationError();
+                throw new ExpectationError(
+                    `Expected _${valueToString(this.target)}_ to eval but it failed with ${e}`
+                );
             }
 
             this.__doMatcher(() => {
-                this.__expect(deepEquals(value, result));
+                this.__expect(
+                    deepEquals(value, result),
+                    () =>
+                        `Expected _${valueToString(this.target)}_ to eval to ` +
+                        `_${valueToString(value)}_ but got _${valueToString(result)}_`
+                );
             });
         }
 
@@ -434,6 +455,46 @@ class ExpectationError extends Error {
             });
         }
 
+        toBeIteratorResultWithValue(value) {
+            this.__expect(this.target !== undefined && this.target !== null);
+            this.__doMatcher(() => {
+                this.__expect(
+                    this.target.done === false,
+                    () =>
+                        `toGiveIteratorResultWithValue: expected 'done' to be _false_ got ${valueToString(
+                            this.target.done
+                        )}`
+                );
+                this.__expect(
+                    deepEquals(value, this.target.value),
+                    () =>
+                        `toGiveIteratorResultWithValue: expected 'value' to be _${valueToString(
+                            value
+                        )}_ got ${valueToString(this.target.value)}`
+                );
+            });
+        }
+
+        toBeIteratorResultDone() {
+            this.__expect(this.target !== undefined && this.target !== null);
+            this.__doMatcher(() => {
+                this.__expect(
+                    this.target.done === true,
+                    () =>
+                        `toGiveIteratorResultDone: expected 'done' to be _true_ got ${valueToString(
+                            this.target.done
+                        )}`
+                );
+                this.__expect(
+                    this.target.value === undefined,
+                    () =>
+                        `toGiveIteratorResultDone: expected 'value' to be _undefined_ got ${valueToString(
+                            this.target.value
+                        )}`
+                );
+            });
+        }
+
         __doMatcher(matcher) {
             if (!this.inverted) {
                 matcher();
@@ -451,7 +512,8 @@ class ExpectationError extends Error {
         __expect(value, details) {
             if (value !== true) {
                 if (details !== undefined) {
-                    throw new ExpectationError(details());
+                    if (details instanceof Function) throw new ExpectationError(details());
+                    else throw new ExpectationError(details);
                 } else {
                     throw new ExpectationError();
                 }
@@ -475,6 +537,7 @@ class ExpectationError extends Error {
             __TestResults__[suiteMessage][defaultSuiteMessage] = {
                 result: "fail",
                 details: String(e),
+                duration: 0,
             };
         }
         suiteMessage = defaultSuiteMessage;
@@ -488,19 +551,25 @@ class ExpectationError extends Error {
             suite[message] = {
                 result: "fail",
                 details: "Another test with the same message did already run",
+                duration: 0,
             };
             return;
         }
 
+        const now = () => Temporal.Now.instant().epochNanoseconds;
+        const start = now();
+        const time_us = () => Number(BigInt.asIntN(53, (now() - start) / 1000n));
         try {
             callback();
             suite[message] = {
                 result: "pass",
+                duration: time_us(),
             };
         } catch (e) {
             suite[message] = {
                 result: "fail",
                 details: String(e),
+                duration: time_us(),
             };
         }
     };
@@ -516,12 +585,14 @@ class ExpectationError extends Error {
             suite[message] = {
                 result: "fail",
                 details: "Another test with the same message did already run",
+                duration: 0,
             };
             return;
         }
 
         suite[message] = {
             result: "skip",
+            duration: 0,
         };
     };
 })();

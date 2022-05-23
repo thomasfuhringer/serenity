@@ -23,22 +23,22 @@ NonnullRefPtr<Action> Action::create(String text, RefPtr<Gfx::Bitmap> icon, Func
     return adopt_ref(*new Action(move(text), move(icon), move(callback), parent));
 }
 
-NonnullRefPtr<Action> Action::create(String text, const Shortcut& shortcut, Function<void(Action&)> callback, Core::Object* parent)
+NonnullRefPtr<Action> Action::create(String text, Shortcut const& shortcut, Function<void(Action&)> callback, Core::Object* parent)
 {
     return adopt_ref(*new Action(move(text), shortcut, move(callback), parent));
 }
 
-NonnullRefPtr<Action> Action::create(String text, const Shortcut& shortcut, const Shortcut& alternate_shortcut, Function<void(Action&)> callback, Core::Object* parent)
+NonnullRefPtr<Action> Action::create(String text, Shortcut const& shortcut, Shortcut const& alternate_shortcut, Function<void(Action&)> callback, Core::Object* parent)
 {
     return adopt_ref(*new Action(move(text), shortcut, alternate_shortcut, move(callback), parent));
 }
 
-NonnullRefPtr<Action> Action::create(String text, const Shortcut& shortcut, RefPtr<Gfx::Bitmap> icon, Function<void(Action&)> callback, Core::Object* parent)
+NonnullRefPtr<Action> Action::create(String text, Shortcut const& shortcut, RefPtr<Gfx::Bitmap> icon, Function<void(Action&)> callback, Core::Object* parent)
 {
     return adopt_ref(*new Action(move(text), shortcut, Shortcut {}, move(icon), move(callback), parent));
 }
 
-NonnullRefPtr<Action> Action::create(String text, const Shortcut& shortcut, const Shortcut& alternate_shortcut, RefPtr<Gfx::Bitmap> icon, Function<void(Action&)> callback, Core::Object* parent)
+NonnullRefPtr<Action> Action::create(String text, Shortcut const& shortcut, Shortcut const& alternate_shortcut, RefPtr<Gfx::Bitmap> icon, Function<void(Action&)> callback, Core::Object* parent)
 {
     return adopt_ref(*new Action(move(text), shortcut, alternate_shortcut, move(icon), move(callback), parent));
 }
@@ -53,12 +53,12 @@ NonnullRefPtr<Action> Action::create_checkable(String text, RefPtr<Gfx::Bitmap> 
     return adopt_ref(*new Action(move(text), move(icon), move(callback), parent, true));
 }
 
-NonnullRefPtr<Action> Action::create_checkable(String text, const Shortcut& shortcut, Function<void(Action&)> callback, Core::Object* parent)
+NonnullRefPtr<Action> Action::create_checkable(String text, Shortcut const& shortcut, Function<void(Action&)> callback, Core::Object* parent)
 {
     return adopt_ref(*new Action(move(text), shortcut, move(callback), parent, true));
 }
 
-NonnullRefPtr<Action> Action::create_checkable(String text, const Shortcut& shortcut, RefPtr<Gfx::Bitmap> icon, Function<void(Action&)> callback, Core::Object* parent)
+NonnullRefPtr<Action> Action::create_checkable(String text, Shortcut const& shortcut, RefPtr<Gfx::Bitmap> icon, Function<void(Action&)> callback, Core::Object* parent)
 {
     return adopt_ref(*new Action(move(text), shortcut, Shortcut {}, move(icon), move(callback), parent, true));
 }
@@ -73,17 +73,17 @@ Action::Action(String text, RefPtr<Gfx::Bitmap> icon, Function<void(Action&)> on
 {
 }
 
-Action::Action(String text, const Shortcut& shortcut, Function<void(Action&)> on_activation_callback, Core::Object* parent, bool checkable)
+Action::Action(String text, Shortcut const& shortcut, Function<void(Action&)> on_activation_callback, Core::Object* parent, bool checkable)
     : Action(move(text), shortcut, Shortcut {}, nullptr, move(on_activation_callback), parent, checkable)
 {
 }
 
-Action::Action(String text, const Shortcut& shortcut, const Shortcut& alternate_shortcut, Function<void(Action&)> on_activation_callback, Core::Object* parent, bool checkable)
+Action::Action(String text, Shortcut const& shortcut, Shortcut const& alternate_shortcut, Function<void(Action&)> on_activation_callback, Core::Object* parent, bool checkable)
     : Action(move(text), shortcut, alternate_shortcut, nullptr, move(on_activation_callback), parent, checkable)
 {
 }
 
-Action::Action(String text, const Shortcut& shortcut, const Shortcut& alternate_shortcut, RefPtr<Gfx::Bitmap> icon, Function<void(Action&)> on_activation_callback, Core::Object* parent, bool checkable)
+Action::Action(String text, Shortcut const& shortcut, Shortcut const& alternate_shortcut, RefPtr<Gfx::Bitmap> icon, Function<void(Action&)> on_activation_callback, Core::Object* parent, bool checkable)
     : Core::Object(parent)
     , on_activation(move(on_activation_callback))
     , m_text(move(text))
@@ -131,8 +131,20 @@ void Action::activate(Core::Object* activator)
         }
     }
 
+    if (activator == nullptr) {
+        for_each_toolbar_button([](auto& button) {
+            button.set_mimic_pressed(true);
+        });
+    }
+
     on_activation(*this);
     m_activator = nullptr;
+}
+
+void Action::flash_menubar_menu(GUI::Window& window)
+{
+    for (auto& menu_item : m_menu_items)
+        window.flash_menubar_menu_for(*menu_item);
 }
 
 void Action::register_button(Badge<Button>, Button& button)
@@ -208,10 +220,10 @@ void Action::set_checked(bool checked)
 
 void Action::set_group(Badge<ActionGroup>, ActionGroup* group)
 {
-    m_action_group = AK::try_make_weak_ptr(group);
+    m_action_group = AK::make_weak_ptr_if_nonnull(group);
 }
 
-void Action::set_icon(const Gfx::Bitmap* icon)
+void Action::set_icon(Gfx::Bitmap const* icon)
 {
     m_icon = icon;
 }

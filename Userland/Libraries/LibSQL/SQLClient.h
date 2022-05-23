@@ -1,22 +1,23 @@
 /*
  * Copyright (c) 2021, Jan de Visser <jan@de-visser.net>
+ * Copyright (c) 2022, the SerenityOS developers.
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #pragma once
 
-#include <LibIPC/ServerConnection.h>
+#include <LibIPC/ConnectionToServer.h>
 #include <SQLServer/SQLClientEndpoint.h>
 #include <SQLServer/SQLServerEndpoint.h>
 
 namespace SQL {
 
 class SQLClient
-    : public IPC::ServerConnection<SQLClientEndpoint, SQLServerEndpoint>
+    : public IPC::ConnectionToServer<SQLClientEndpoint, SQLServerEndpoint>
     , public SQLClientEndpoint {
-    C_OBJECT(SQLClient);
-    virtual ~SQLClient();
+    IPC_CLIENT_CONNECTION(SQLClient, "/tmp/portal/sql")
+    virtual ~SQLClient() = default;
 
     Function<void(int, String const&)> on_connected;
     Function<void(int)> on_disconnected;
@@ -27,8 +28,8 @@ class SQLClient
     Function<void(int, int)> on_results_exhausted;
 
 private:
-    SQLClient()
-        : IPC::ServerConnection<SQLClientEndpoint, SQLServerEndpoint>(*this, "/tmp/portal/sql")
+    SQLClient(NonnullOwnPtr<Core::Stream::LocalSocket> socket)
+        : IPC::ConnectionToServer<SQLClientEndpoint, SQLServerEndpoint>(*this, move(socket))
     {
     }
 

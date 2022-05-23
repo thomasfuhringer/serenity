@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2018-2020, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2022, the SerenityOS developers.
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -21,10 +22,6 @@ namespace PixelPaint {
 BucketTool::BucketTool()
 {
     m_cursor = Gfx::Bitmap::try_load_from_file("/res/icons/pixelpaint/bucket.png").release_value_but_fixme_should_propagate_errors();
-}
-
-BucketTool::~BucketTool()
-{
 }
 
 static float color_distance_squared(Gfx::Color const& lhs, Gfx::Color const& rhs)
@@ -85,10 +82,10 @@ void BucketTool::on_mousedown(Layer* layer, MouseEvent& event)
     if (!layer->rect().contains(layer_event.position()))
         return;
 
-    GUI::Painter painter(layer->bitmap());
-    auto target_color = layer->bitmap().get_pixel(layer_event.x(), layer_event.y());
+    GUI::Painter painter(layer->currently_edited_bitmap());
+    auto target_color = layer->currently_edited_bitmap().get_pixel(layer_event.x(), layer_event.y());
 
-    flood_fill(layer->bitmap(), layer_event.position(), target_color, m_editor->color_for(layer_event), m_threshold);
+    flood_fill(layer->currently_edited_bitmap(), layer_event.position(), target_color, m_editor->color_for(layer_event), m_threshold);
 
     layer->did_modify_bitmap();
     m_editor->did_complete_action();

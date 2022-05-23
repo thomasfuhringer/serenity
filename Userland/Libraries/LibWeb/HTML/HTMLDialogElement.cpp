@@ -8,13 +8,10 @@
 
 namespace Web::HTML {
 
-HTMLDialogElement::HTMLDialogElement(DOM::Document& document, QualifiedName qualified_name)
+HTMLDialogElement::HTMLDialogElement(DOM::Document& document, DOM::QualifiedName qualified_name)
     : HTMLElement(document, move(qualified_name))
 {
 }
 
-HTMLDialogElement::~HTMLDialogElement()
-{
-}
-
+HTMLDialogElement::~HTMLDialogElement() = default;
 }

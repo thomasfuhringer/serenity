@@ -178,6 +178,23 @@ URL URL::create_with_file_scheme(String const& path, String const& fragment, Str
     return url;
 }
 
+URL URL::create_with_help_scheme(String const& path, String const& fragment, String const& hostname)
+{
+    LexicalPath lexical_path(path);
+
+    URL url;
+    url.set_scheme("help");
+    // NOTE: If the hostname is localhost (or null, which implies localhost), it should be set to the empty string.
+    //       This is because a file URL always needs a non-null hostname.
+    url.set_host(hostname.is_null() || hostname == "localhost" ? String::empty() : hostname);
+    url.set_paths(lexical_path.parts());
+    // NOTE: To indicate that we want to end the path with a slash, we have to append an empty path segment.
+    if (path.ends_with('/'))
+        url.append_path("");
+    url.set_fragment(fragment);
+    return url;
+}
+
 URL URL::create_with_url_or_path(String const& url_or_path)
 {
     URL url = url_or_path;
@@ -367,7 +384,7 @@ void URL::append_percent_encoded(StringBuilder& builder, u32 code_point)
 }
 
 // https://url.spec.whatwg.org/#c0-control-percent-encode-set
-constexpr bool code_point_is_in_percent_encode_set(u32 code_point, URL::PercentEncodeSet set)
+bool URL::code_point_is_in_percent_encode_set(u32 code_point, URL::PercentEncodeSet set)
 {
     switch (set) {
     case URL::PercentEncodeSet::C0Control:
@@ -403,11 +420,14 @@ void URL::append_percent_encoded_if_necessary(StringBuilder& builder, u32 code_p
         builder.append_code_point(code_point);
 }
 
-String URL::percent_encode(StringView input, URL::PercentEncodeSet set)
+String URL::percent_encode(StringView input, URL::PercentEncodeSet set, SpaceAsPlus space_as_plus)
 {
     StringBuilder builder;
     for (auto code_point : Utf8View(input)) {
-        append_percent_encoded_if_necessary(builder, code_point, set);
+        if (space_as_plus == SpaceAsPlus::Yes && code_point == ' ')
+            builder.append('+');
+        else
+            append_percent_encoded_if_necessary(builder, code_point, set);
     }
     return builder.to_string();
 }

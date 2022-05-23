@@ -31,13 +31,15 @@ public:
 
     virtual bool can_have_children() const override { return false; }
 
-protected:
-    virtual void split_into_lines(InlineFormattingContext&, LayoutMode) override;
-
 private:
+    virtual bool is_replaced_box() const final { return true; }
+
     Optional<float> m_intrinsic_width;
     Optional<float> m_intrinsic_height;
     Optional<float> m_intrinsic_aspect_ratio;
 };
+
+template<>
+inline bool Node::fast_is<ReplacedBox>() const { return is_replaced_box(); }
 
 }

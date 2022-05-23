@@ -23,7 +23,7 @@ namespace Kernel::SMBIOS {
 struct [[gnu::packed]] LegacyEntryPoint32bit {
     char legacy_sig[5];
     u8 checksum2;
-    u16 smboios_table_length;
+    u16 smbios_table_length;
     u32 smbios_table_ptr;
     u16 smbios_tables_count;
     u8 smbios_bcd_revision;
@@ -57,8 +57,8 @@ struct [[gnu::packed]] EntryPoint64bit {
 
 namespace Kernel {
 
-Memory::MappedROM map_bios();
-Memory::MappedROM map_ebda();
+ErrorOr<Memory::MappedROM> map_bios();
+ErrorOr<Memory::MappedROM> map_ebda();
 
 class BIOSSysFSComponent : public SysFSComponent {
 public:
@@ -66,35 +66,43 @@ public:
 
 protected:
     virtual ErrorOr<NonnullOwnPtr<KBuffer>> try_to_generate_buffer() const = 0;
-    explicit BIOSSysFSComponent(StringView name);
+    BIOSSysFSComponent();
 };
 
-class DMIEntryPointExposedBlob : public BIOSSysFSComponent {
+class DMIEntryPointExposedBlob final : public BIOSSysFSComponent {
 public:
-    static NonnullRefPtr<DMIEntryPointExposedBlob> create(PhysicalAddress dmi_entry_point, size_t blob_size);
+    virtual StringView name() const override { return "smbios_entry_point"sv; }
+    static NonnullRefPtr<DMIEntryPointExposedBlob> must_create(PhysicalAddress dmi_entry_point, size_t blob_size);
 
 private:
     DMIEntryPointExposedBlob(PhysicalAddress dmi_entry_point, size_t blob_size);
     virtual ErrorOr<NonnullOwnPtr<KBuffer>> try_to_generate_buffer() const override;
+
+    virtual size_t size() const override { return m_dmi_entry_point_length; }
+
     PhysicalAddress m_dmi_entry_point;
-    size_t m_dmi_entry_point_length;
+    size_t const m_dmi_entry_point_length { 0 };
 };
 
-class SMBIOSExposedTable : public BIOSSysFSComponent {
+class SMBIOSExposedTable final : public BIOSSysFSComponent {
 public:
-    static NonnullRefPtr<SMBIOSExposedTable> create(PhysicalAddress, size_t blob_size);
+    virtual StringView name() const override { return "DMI"sv; }
+    static NonnullRefPtr<SMBIOSExposedTable> must_create(PhysicalAddress, size_t blob_size);
 
 private:
     SMBIOSExposedTable(PhysicalAddress dmi_entry_point, size_t blob_size);
     virtual ErrorOr<NonnullOwnPtr<KBuffer>> try_to_generate_buffer() const override;
 
+    virtual size_t size() const override { return m_smbios_structure_table_length; }
+
     PhysicalAddress m_smbios_structure_table;
-    size_t m_smbios_structure_table_length;
+    size_t const m_smbios_structure_table_length { 0 };
 };
 
 class BIOSSysFSDirectory : public SysFSDirectory {
 public:
-    static ErrorOr<NonnullRefPtr<BIOSSysFSDirectory>> try_create(FirmwareSysFSDirectory&);
+    virtual StringView name() const override { return "bios"sv; }
+    static NonnullRefPtr<BIOSSysFSDirectory> must_create(FirmwareSysFSDirectory&);
 
     void create_components();
 

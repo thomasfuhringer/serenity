@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2020, Andreas Kling <kling@serenityos.org>
- * Copyright (c) 2021, Linus Groh <linusg@serenityos.org>
+ * Copyright (c) 2021-2022, Linus Groh <linusg@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -9,13 +9,58 @@
 #include <LibJS/Runtime/FunctionEnvironment.h>
 #include <LibJS/Runtime/GlobalObject.h>
 #include <LibJS/Runtime/NativeFunction.h>
+#include <LibJS/Runtime/Realm.h>
 #include <LibJS/Runtime/Value.h>
 
 namespace JS {
 
-NativeFunction* NativeFunction::create(GlobalObject& global_object, const FlyString& name, Function<ThrowCompletionOr<Value>(VM&, GlobalObject&)> function)
+// 10.3.3 CreateBuiltinFunction ( behaviour, length, name, additionalInternalSlotsList [ , realm [ , prototype [ , prefix ] ] ] ), https://tc39.es/ecma262/#sec-createbuiltinfunction
+// NOTE: This doesn't consider additionalInternalSlotsList, which is rarely used, and can either be implemented using only the `function` lambda, or needs a NativeFunction subclass.
+NativeFunction* NativeFunction::create(GlobalObject& global_object, Function<ThrowCompletionOr<Value>(VM&, GlobalObject&)> behaviour, i32 length, PropertyKey const& name, Optional<Realm*> realm, Optional<Object*> prototype, Optional<StringView> const& prefix)
+{
+    auto& vm = global_object.vm();
+
+    // 1. If realm is not present, set realm to the current Realm Record.
+    if (!realm.has_value())
+        realm = vm.current_realm();
+
+    // 2. If prototype is not present, set prototype to realm.[[Intrinsics]].[[%Function.prototype%]].
+    if (!prototype.has_value())
+        prototype = realm.value()->global_object().function_prototype();
+
+    // 3. Let internalSlotsList be a List containing the names of all the internal slots that 10.3 requires for the built-in function object that is about to be created.
+    // 4. Append to internalSlotsList the elements of additionalInternalSlotsList.
+
+    // 5. Let func be a new built-in function object that, when called, performs the action described by behaviour using the provided arguments as the values of the corresponding parameters specified by behaviour. The new function object has internal slots whose names are the elements of internalSlotsList, and an [[InitialName]] internal slot.
+    // 6. Set func.[[Prototype]] to prototype.
+    // 7. Set func.[[Extensible]] to true.
+    // 8. Set func.[[Realm]] to realm.
+    // 9. Set func.[[InitialName]] to null.
+    auto* function = global_object.heap().allocate<NativeFunction>(global_object, global_object, move(behaviour), prototype.value(), *realm.value());
+
+    // 10. Perform SetFunctionLength(func, length).
+    function->set_function_length(length);
+
+    // 11. If prefix is not present, then
+    //     a. Perform SetFunctionName(func, name).
+    // 12. Else,
+    //     a. Perform SetFunctionName(func, name, prefix).
+    function->set_function_name(name, prefix);
+
+    // 13. Return func.
+    return function;
+}
+
+NativeFunction* NativeFunction::create(GlobalObject& global_object, FlyString const& name, Function<ThrowCompletionOr<Value>(VM&, GlobalObject&)> function)
 {
     return global_object.heap().allocate<NativeFunction>(global_object, name, move(function), *global_object.function_prototype());
+}
+
+NativeFunction::NativeFunction(GlobalObject& global_object, Function<ThrowCompletionOr<Value>(VM&, GlobalObject&)> native_function, Object* prototype, Realm& realm)
+    : FunctionObject(global_object, prototype)
+    , m_native_function(move(native_function))
+    , m_realm(&realm)
+{
 }
 
 // FIXME: m_realm is supposed to be the realm argument of CreateBuiltinFunction, or the current
@@ -43,16 +88,12 @@ NativeFunction::NativeFunction(FlyString name, Object& prototype)
 {
 }
 
-NativeFunction::~NativeFunction()
-{
-}
-
 // NOTE: Do not attempt to DRY these, it's not worth it. The difference in return types (Value vs Object*),
 // called functions (call() vs construct(FunctionObject&)), and this value (passed vs uninitialized) make
 // these good candidates for a bit of code duplication :^)
 
 // 10.3.1 [[Call]] ( thisArgument, argumentsList ), https://tc39.es/ecma262/#sec-built-in-function-objects-call-thisargument-argumentslist
-ThrowCompletionOr<Value> NativeFunction::internal_call(Value this_argument, MarkedValueList arguments_list)
+ThrowCompletionOr<Value> NativeFunction::internal_call(Value this_argument, MarkedVector<Value> arguments_list)
 {
     auto& vm = this->vm();
     auto& global_object = this->global_object();
@@ -85,7 +126,7 @@ ThrowCompletionOr<Value> NativeFunction::internal_call(Value this_argument, Mark
     callee_context.realm = callee_realm;
 
     // 7. Set the ScriptOrModule of calleeContext to null.
-    // FIXME: Our execution context struct currently does not track this item.
+    // Note: This is already the default value.
 
     // 8. Perform any necessary implementation-defined initialization of calleeContext.
 
@@ -94,6 +135,9 @@ ThrowCompletionOr<Value> NativeFunction::internal_call(Value this_argument, Mark
 
     callee_context.lexical_environment = caller_context.lexical_environment;
     callee_context.variable_environment = caller_context.variable_environment;
+    // Note: Keeping the private environment is probably only needed because of async methods in classes
+    //       calling async_block_start which goes through a NativeFunction here.
+    callee_context.private_environment = caller_context.private_environment;
 
     // NOTE: This is a LibJS specific hack for NativeFunction to inherit the strictness of its caller.
     callee_context.is_strict_mode = vm.in_strict_mode();
@@ -112,12 +156,12 @@ ThrowCompletionOr<Value> NativeFunction::internal_call(Value this_argument, Mark
     // 11. Remove calleeContext from the execution context stack and restore callerContext as the running execution context.
     vm.pop_execution_context();
 
-    // 12. Return result.
+    // 12. Return ? result.
     return result;
 }
 
 // 10.3.2 [[Construct]] ( argumentsList, newTarget ), https://tc39.es/ecma262/#sec-built-in-function-objects-construct-argumentslist-newtarget
-ThrowCompletionOr<Object*> NativeFunction::internal_construct(MarkedValueList arguments_list, FunctionObject& new_target)
+ThrowCompletionOr<Object*> NativeFunction::internal_construct(MarkedVector<Value> arguments_list, FunctionObject& new_target)
 {
     auto& vm = this->vm();
     auto& global_object = this->global_object();
@@ -150,7 +194,7 @@ ThrowCompletionOr<Object*> NativeFunction::internal_construct(MarkedValueList ar
     callee_context.realm = callee_realm;
 
     // 7. Set the ScriptOrModule of calleeContext to null.
-    // FIXME: Our execution context struct currently does not track this item.
+    // Note: This is already the default value.
 
     // 8. Perform any necessary implementation-defined initialization of calleeContext.
 
@@ -176,7 +220,7 @@ ThrowCompletionOr<Object*> NativeFunction::internal_construct(MarkedValueList ar
     // 11. Remove calleeContext from the execution context stack and restore callerContext as the running execution context.
     vm.pop_execution_context();
 
-    // 12. Return result.
+    // 12. Return ? result.
     return result;
 }
 

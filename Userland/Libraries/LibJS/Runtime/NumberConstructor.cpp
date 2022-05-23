@@ -16,9 +16,9 @@
 #    define MAX_SAFE_INTEGER_VALUE AK::exp2(53.) - 1
 #    define MIN_SAFE_INTEGER_VALUE -(AK::exp2(53.) - 1)
 #else
-constexpr const double EPSILON_VALUE { __builtin_exp2(-52) };
-constexpr const double MAX_SAFE_INTEGER_VALUE { __builtin_exp2(53) - 1 };
-constexpr const double MIN_SAFE_INTEGER_VALUE { -(__builtin_exp2(53) - 1) };
+constexpr double const EPSILON_VALUE { __builtin_exp2(-52) };
+constexpr double const MAX_SAFE_INTEGER_VALUE { __builtin_exp2(53) - 1 };
+constexpr double const MIN_SAFE_INTEGER_VALUE { -(__builtin_exp2(53) - 1) };
 #endif
 
 namespace JS {
@@ -53,10 +53,6 @@ void NumberConstructor::initialize(GlobalObject& global_object)
     define_direct_property(vm.names.NaN, js_nan(), 0);
 
     define_direct_property(vm.names.length, Value(1), Attribute::Configurable);
-}
-
-NumberConstructor::~NumberConstructor()
-{
 }
 
 // Most of 21.1.1.1 Number ( value ) factored into a separate function for sharing between call() and construct().

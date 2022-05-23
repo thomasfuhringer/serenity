@@ -10,8 +10,8 @@
 #include <AK/Weakable.h>
 #include <LibWeb/Bindings/Wrappable.h>
 #include <LibWeb/DOM/EventTarget.h>
-#include <LibWeb/DOM/Window.h>
 #include <LibWeb/Forward.h>
+#include <LibWeb/HTML/Window.h>
 
 namespace Web::DOM {
 
@@ -27,27 +27,35 @@ public:
     using RefCounted::ref;
     using RefCounted::unref;
 
-    static NonnullRefPtr<AbortSignal> create(Document& document)
+    static NonnullRefPtr<AbortSignal> create()
     {
-        return adopt_ref(*new AbortSignal(document));
+        return adopt_ref(*new AbortSignal());
     }
 
-    static NonnullRefPtr<AbortSignal> create_with_global_object(Bindings::WindowObject& window_object)
+    static NonnullRefPtr<AbortSignal> create_with_global_object(Bindings::WindowObject&)
     {
-        return AbortSignal::create(window_object.impl().associated_document());
+        return AbortSignal::create();
     }
 
-    virtual ~AbortSignal() override;
+    virtual ~AbortSignal() override = default;
 
     void add_abort_algorithm(Function<void()>);
 
     // https://dom.spec.whatwg.org/#dom-abortsignal-aborted
-    bool aborted() const { return m_aborted; }
+    // An AbortSignal object is aborted when its abort reason is not undefined.
+    bool aborted() const { return !m_abort_reason.is_undefined(); }
 
-    void signal_abort();
+    void signal_abort(JS::Value reason);
 
-    void set_onabort(HTML::EventHandler);
-    HTML::EventHandler onabort();
+    void set_onabort(Optional<Bindings::CallbackType>);
+    Bindings::CallbackType* onabort();
+
+    // https://dom.spec.whatwg.org/#dom-abortsignal-reason
+    JS::Value reason() const { return m_abort_reason; }
+
+    JS::ThrowCompletionOr<void> throw_if_aborted() const;
+
+    void visit_edges(JS::Cell::Visitor&);
 
     // ^EventTarget
     virtual void ref_event_target() override { ref(); }
@@ -55,10 +63,11 @@ public:
     virtual JS::Object* create_wrapper(JS::GlobalObject&) override;
 
 private:
-    AbortSignal(Document& document);
+    AbortSignal();
 
-    // https://dom.spec.whatwg.org/#abortsignal-aborted-flag
-    bool m_aborted { false };
+    // https://dom.spec.whatwg.org/#abortsignal-abort-reason
+    // An AbortSignal object has an associated abort reason, which is a JavaScript value. It is undefined unless specified otherwise.
+    JS::Value m_abort_reason { JS::js_undefined() };
 
     // https://dom.spec.whatwg.org/#abortsignal-abort-algorithms
     // FIXME: This should be a set.

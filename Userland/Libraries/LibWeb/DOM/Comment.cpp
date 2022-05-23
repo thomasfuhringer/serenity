@@ -5,17 +5,13 @@
  */
 
 #include <LibWeb/DOM/Comment.h>
-#include <LibWeb/DOM/Window.h>
+#include <LibWeb/HTML/Window.h>
 #include <LibWeb/Layout/TextNode.h>
 
 namespace Web::DOM {
 
-Comment::Comment(Document& document, const String& data)
+Comment::Comment(Document& document, String const& data)
     : CharacterData(document, NodeType::COMMENT_NODE, data)
-{
-}
-
-Comment::~Comment()
 {
 }
 

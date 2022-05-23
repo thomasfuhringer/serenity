@@ -14,7 +14,7 @@
 #include <LibWeb/CSS/Parser/Token.h>
 #include <LibWeb/Forward.h>
 
-namespace Web::CSS {
+namespace Web::CSS::Parser {
 
 class U32Twin {
 public:
@@ -57,17 +57,10 @@ public:
     u32 third {};
 };
 
-class CSSNumber {
-public:
-    String string;
-    double value { 0 };
-    Token::NumberType type {};
-};
-
 class Tokenizer {
 
 public:
-    explicit Tokenizer(StringView input, const String& encoding);
+    explicit Tokenizer(StringView input, String const& encoding);
 
     [[nodiscard]] Vector<Token> parse();
 
@@ -79,6 +72,9 @@ private:
     [[nodiscard]] U32Twin peek_twin() const;
     [[nodiscard]] U32Triplet peek_triplet() const;
 
+    [[nodiscard]] U32Twin start_of_input_stream_twin();
+    [[nodiscard]] U32Triplet start_of_input_stream_triplet();
+
     [[nodiscard]] static Token create_new_token(Token::Type);
     [[nodiscard]] static Token create_value_token(Token::Type, String value);
     [[nodiscard]] static Token create_value_token(Token::Type, u32 value);
@@ -86,8 +82,8 @@ private:
     [[nodiscard]] Token consume_string_token(u32 ending_code_point);
     [[nodiscard]] Token consume_a_numeric_token();
     [[nodiscard]] Token consume_an_ident_like_token();
-    [[nodiscard]] CSSNumber consume_a_number();
-    [[nodiscard]] double convert_a_string_to_a_number(StringView);
+    [[nodiscard]] Number consume_a_number();
+    [[nodiscard]] float convert_a_string_to_a_number(StringView);
     [[nodiscard]] String consume_a_name();
     [[nodiscard]] u32 consume_escaped_code_point();
     [[nodiscard]] Token consume_a_url_token();
@@ -96,9 +92,7 @@ private:
     void consume_as_much_whitespace_as_possible();
     void reconsume_current_input_code_point();
     [[nodiscard]] static bool is_valid_escape_sequence(U32Twin);
-    [[nodiscard]] bool would_start_an_identifier();
-    [[nodiscard]] bool would_start_an_identifier(U32Triplet);
-    [[nodiscard]] bool would_start_a_number() const;
+    [[nodiscard]] static bool would_start_an_identifier(U32Triplet);
     [[nodiscard]] static bool would_start_a_number(U32Triplet);
 
     String m_decoded_input;

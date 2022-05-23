@@ -11,29 +11,28 @@
 #include <LibWeb/HTML/HTMLTableColElement.h>
 #include <LibWeb/HTML/HTMLTableElement.h>
 #include <LibWeb/HTML/HTMLTableRowElement.h>
+#include <LibWeb/HTML/Parser/HTMLParser.h>
 #include <LibWeb/Namespace.h>
 
 namespace Web::HTML {
 
-HTMLTableElement::HTMLTableElement(DOM::Document& document, QualifiedName qualified_name)
+HTMLTableElement::HTMLTableElement(DOM::Document& document, DOM::QualifiedName qualified_name)
     : HTMLElement(document, move(qualified_name))
 {
 }
 
-HTMLTableElement::~HTMLTableElement()
-{
-}
+HTMLTableElement::~HTMLTableElement() = default;
 
 void HTMLTableElement::apply_presentational_hints(CSS::StyleProperties& style) const
 {
     for_each_attribute([&](auto& name, auto& value) {
         if (name == HTML::AttributeNames::width) {
-            if (auto parsed_value = parse_html_length(document(), value))
+            if (auto parsed_value = parse_nonzero_dimension_value(value))
                 style.set_property(CSS::PropertyID::Width, parsed_value.release_nonnull());
             return;
         }
         if (name == HTML::AttributeNames::height) {
-            if (auto parsed_value = parse_html_length(document(), value))
+            if (auto parsed_value = parse_nonzero_dimension_value(value))
                 style.set_property(CSS::PropertyID::Height, parsed_value.release_nonnull());
             return;
         }
@@ -284,7 +283,7 @@ DOM::ExceptionOr<NonnullRefPtr<HTMLTableRowElement>> HTMLTableElement::insert_ro
     auto rows = this->rows();
     auto rows_length = rows->length();
 
-    if (index < -1 || index >= (long)rows_length) {
+    if (index < -1 || index > (long)rows_length) {
         return DOM::IndexSizeError::create("Index is negative or greater than the number of rows");
     }
     auto tr = static_ptr_cast<HTMLTableRowElement>(DOM::create_element(document(), TagNames::tr, Namespace::HTML));
@@ -304,22 +303,29 @@ DOM::ExceptionOr<NonnullRefPtr<HTMLTableRowElement>> HTMLTableElement::insert_ro
     return tr;
 }
 
+// https://html.spec.whatwg.org/multipage/tables.html#dom-table-deleterow
 DOM::ExceptionOr<void> HTMLTableElement::delete_row(long index)
 {
     auto rows = this->rows();
     auto rows_length = rows->length();
 
-    if (index < -1 || index >= (long)rows_length) {
-        return DOM::IndexSizeError::create("Index is negative or greater than the number of rows");
-    }
-    if (index == -1 && rows_length > 0) {
+    // 1. If index is less than −1 or greater than or equal to the number of elements in the rows collection, then throw an "IndexSizeError" DOMException.
+    if (index < -1 || index >= (long)rows_length)
+        return DOM::IndexSizeError::create("Index is negative or greater than or equal to the number of rows");
+
+    // 2. If index is −1, then remove the last element in the rows collection from its parent, or do nothing if the rows collection is empty.
+    if (index == -1) {
+        if (rows_length == 0)
+            return {};
+
         auto row_to_remove = rows->item(rows_length - 1);
         row_to_remove->remove(false);
-    } else {
-        auto row_to_remove = rows->item(index);
-        row_to_remove->remove(false);
+        return {};
     }
 
+    // 3. Otherwise, remove the indexth element in the rows collection from its parent.
+    auto row_to_remove = rows->item(index);
+    row_to_remove->remove(false);
     return {};
 }
 

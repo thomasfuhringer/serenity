@@ -10,6 +10,7 @@
 #include <Kernel/Panic.h>
 #include <Kernel/Process.h>
 #include <Kernel/Random.h>
+#include <Kernel/Scheduler.h>
 #include <Kernel/Sections.h>
 #include <Kernel/Thread.h>
 
@@ -159,6 +160,7 @@ FlatPtr Processor::init_context(Thread& thread, bool leave_crit)
     regs.rip = FlatPtr(&thread_context_first_enter);
     regs.rsp0 = kernel_stack_top;
     regs.rsp = stack_top;
+    regs.cs = GDT_SELECTOR_CODE0;
     return stack_top;
 }
 

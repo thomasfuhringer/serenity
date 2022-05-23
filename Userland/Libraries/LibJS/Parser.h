@@ -1,18 +1,22 @@
 /*
  * Copyright (c) 2020, Stephan Unverwerth <s.unverwerth@serenityos.org>
- * Copyright (c) 2021, David Tuin <davidot@serenityos.org>
+ * Copyright (c) 2021-2022, David Tuin <davidot@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #pragma once
 
+#include <AK/Assertions.h>
 #include <AK/HashTable.h>
 #include <AK/NonnullRefPtr.h>
 #include <AK/StringBuilder.h>
 #include <LibJS/AST.h>
 #include <LibJS/Lexer.h>
+#include <LibJS/Runtime/FunctionConstructor.h>
 #include <LibJS/SourceRange.h>
+#include <LibJS/Token.h>
+#include <initializer_list>
 #include <stdio.h>
 
 namespace JS {
@@ -39,12 +43,19 @@ class ScopePusher;
 
 class Parser {
 public:
-    explicit Parser(Lexer lexer, Program::Type program_type = Program::Type::Script);
+    struct EvalInitialState {
+        bool in_eval_function_context { false };
+        bool allow_super_property_lookup { false };
+        bool allow_super_constructor_call { false };
+        bool in_class_field_initializer { false };
+    };
+
+    explicit Parser(Lexer lexer, Program::Type program_type = Program::Type::Script, Optional<EvalInitialState> initial_state_for_eval = {});
 
     NonnullRefPtr<Program> parse_program(bool starts_in_strict_mode = false);
 
     template<typename FunctionNodeType>
-    NonnullRefPtr<FunctionNodeType> parse_function_node(u8 parse_options = FunctionNodeParseOptions::CheckForFunctionAndName);
+    NonnullRefPtr<FunctionNodeType> parse_function_node(u8 parse_options = FunctionNodeParseOptions::CheckForFunctionAndName, Optional<Position> const& function_start = {});
     Vector<FunctionNode::Parameter> parse_formal_parameters(int& function_length, u8 parse_options = 0);
 
     enum class AllowDuplicates {
@@ -83,6 +94,33 @@ public:
         Yes
     };
 
+    struct ForbiddenTokens {
+        ForbiddenTokens(std::initializer_list<TokenType> const& forbidden);
+        ForbiddenTokens merge(ForbiddenTokens other) const;
+        bool allows(TokenType token) const;
+        ForbiddenTokens forbid(std::initializer_list<TokenType> const& forbidden) const;
+
+    private:
+        void forbid_tokens(std::initializer_list<TokenType> const& forbidden);
+        bool m_forbid_in_token : 1 { false };
+        bool m_forbid_logical_tokens : 1 { false };
+        bool m_forbid_coalesce_token : 1 { false };
+        bool m_forbid_paren_open : 1 { false };
+        bool m_forbid_question_mark_period : 1 { false };
+        bool m_forbid_equals : 1 { false };
+    };
+
+    struct ExpressionResult {
+        template<typename T>
+        ExpressionResult(NonnullRefPtr<T> expression, ForbiddenTokens forbidden = {})
+            : expression(expression)
+            , forbidden(forbidden)
+        {
+        }
+        NonnullRefPtr<Expression> expression;
+        ForbiddenTokens forbidden;
+    };
+
     NonnullRefPtr<Statement> parse_for_in_of_statement(NonnullRefPtr<ASTNode> lhs, IsForAwaitLoop is_await);
     NonnullRefPtr<IfStatement> parse_if_statement();
     NonnullRefPtr<ThrowStatement> parse_throw_statement();
@@ -96,17 +134,17 @@ public:
     NonnullRefPtr<WhileStatement> parse_while_statement();
     NonnullRefPtr<WithStatement> parse_with_statement();
     NonnullRefPtr<DebuggerStatement> parse_debugger_statement();
-    NonnullRefPtr<ConditionalExpression> parse_conditional_expression(NonnullRefPtr<Expression> test);
+    NonnullRefPtr<ConditionalExpression> parse_conditional_expression(NonnullRefPtr<Expression> test, ForbiddenTokens);
     NonnullRefPtr<OptionalChain> parse_optional_chain(NonnullRefPtr<Expression> base);
-    NonnullRefPtr<Expression> parse_expression(int min_precedence, Associativity associate = Associativity::Right, const Vector<TokenType>& forbidden = {});
+    NonnullRefPtr<Expression> parse_expression(int min_precedence, Associativity associate = Associativity::Right, ForbiddenTokens forbidden = {});
     PrimaryExpressionParseResult parse_primary_expression();
     NonnullRefPtr<Expression> parse_unary_prefixed_expression();
     NonnullRefPtr<RegExpLiteral> parse_regexp_literal();
     NonnullRefPtr<ObjectExpression> parse_object_expression();
     NonnullRefPtr<ArrayExpression> parse_array_expression();
-    NonnullRefPtr<StringLiteral> parse_string_literal(const Token& token, bool in_template_literal = false);
+    NonnullRefPtr<StringLiteral> parse_string_literal(Token const& token, bool in_template_literal = false);
     NonnullRefPtr<TemplateLiteral> parse_template_literal(bool is_tagged);
-    NonnullRefPtr<Expression> parse_secondary_expression(NonnullRefPtr<Expression>, int min_precedence, Associativity associate = Associativity::Right);
+    ExpressionResult parse_secondary_expression(NonnullRefPtr<Expression>, int min_precedence, Associativity associate = Associativity::Right, ForbiddenTokens forbidden = {});
     NonnullRefPtr<Expression> parse_call_expression(NonnullRefPtr<Expression>);
     NonnullRefPtr<NewExpression> parse_new_expression();
     NonnullRefPtr<ClassDeclaration> parse_class_declaration();
@@ -114,14 +152,16 @@ public:
     NonnullRefPtr<YieldExpression> parse_yield_expression();
     NonnullRefPtr<AwaitExpression> parse_await_expression();
     NonnullRefPtr<Expression> parse_property_key();
-    NonnullRefPtr<AssignmentExpression> parse_assignment_expression(AssignmentOp, NonnullRefPtr<Expression> lhs, int min_precedence, Associativity);
+    NonnullRefPtr<AssignmentExpression> parse_assignment_expression(AssignmentOp, NonnullRefPtr<Expression> lhs, int min_precedence, Associativity, ForbiddenTokens forbidden = {});
     NonnullRefPtr<Identifier> parse_identifier();
     NonnullRefPtr<ImportStatement> parse_import_statement(Program& program);
     NonnullRefPtr<ExportStatement> parse_export_statement(Program& program);
 
     RefPtr<FunctionExpression> try_parse_arrow_function_expression(bool expect_parens, bool is_async = false);
-    RefPtr<Statement> try_parse_labelled_statement(AllowLabelledFunction allow_function);
+    RefPtr<LabelledStatement> try_parse_labelled_statement(AllowLabelledFunction allow_function);
     RefPtr<MetaProperty> try_parse_new_target_expression();
+    RefPtr<MetaProperty> try_parse_import_meta_expression();
+    NonnullRefPtr<ImportCall> parse_import_call();
 
     Vector<CallExpression::Argument> parse_arguments();
 
@@ -136,7 +176,7 @@ public:
             return String::formatted("{} (line: {}, column: {})", message, position.value().line, position.value().column);
         }
 
-        String source_location_hint(StringView source, const char spacer = ' ', const char indicator = '^') const
+        String source_location_hint(StringView source, char const spacer = ' ', char const indicator = '^') const
         {
             if (!position.has_value())
                 return {};
@@ -154,7 +194,7 @@ public:
     };
 
     bool has_errors() const { return m_state.errors.size(); }
-    const Vector<Error>& errors() const { return m_state.errors; }
+    Vector<Error> const& errors() const { return m_state.errors; }
     void print_errors(bool print_hint = true) const
     {
         for (auto& error : m_state.errors) {
@@ -171,15 +211,22 @@ public:
         bool try_parse_arrow_function_expression_failed;
     };
 
+    // Needs to mess with m_state, and we're not going to expose a non-const getter for that :^)
+    friend ThrowCompletionOr<ECMAScriptFunctionObject*> FunctionConstructor::create_dynamic_function(GlobalObject&, FunctionObject&, FunctionObject*, FunctionKind, MarkedVector<Value> const&);
+
 private:
     friend class ScopePusher;
+
+    void parse_script(Program& program, bool starts_in_strict_mode);
+    void parse_module(Program& program);
 
     Associativity operator_associativity(TokenType) const;
     bool match_expression() const;
     bool match_unary_prefixed_expression() const;
-    bool match_secondary_expression(const Vector<TokenType>& forbidden = {}) const;
+    bool match_secondary_expression(ForbiddenTokens forbidden = {}) const;
     bool match_statement() const;
     bool match_export_or_import() const;
+    bool match_assert_clause() const;
     bool match_declaration() const;
     bool try_match_let_declaration() const;
     bool match_variable_declaration() const;
@@ -189,8 +236,8 @@ private:
     bool is_private_identifier_valid() const;
     bool match(TokenType type) const;
     bool done() const;
-    void expected(const char* what);
-    void syntax_error(const String& message, Optional<Position> = {});
+    void expected(char const* what);
+    void syntax_error(String const& message, Optional<Position> = {});
     Token consume();
     Token consume_identifier();
     Token consume_identifier_reference();
@@ -204,17 +251,20 @@ private:
 
     RefPtr<BindingPattern> synthesize_binding_pattern(Expression const& expression);
 
-    Token next_token() const;
+    Token next_token(size_t steps = 1) const;
 
-    void check_identifier_name_for_assignment_validity(StringView, bool force_strict = false);
+    void check_identifier_name_for_assignment_validity(FlyString const&, bool force_strict = false);
 
-    bool try_parse_arrow_function_expression_failed_at_position(const Position&) const;
-    void set_try_parse_arrow_function_expression_failed_at_position(const Position&, bool);
+    bool try_parse_arrow_function_expression_failed_at_position(Position const&) const;
+    void set_try_parse_arrow_function_expression_failed_at_position(Position const&, bool);
 
     bool match_invalid_escaped_keyword() const;
 
     bool parse_directive(ScopeNode& body);
     void parse_statement_list(ScopeNode& output_node, AllowLabelledFunction allow_labelled_functions = AllowLabelledFunction::No);
+
+    FlyString consume_string_value();
+    ModuleRequest parse_module_request();
 
     struct RulePosition {
         AK_MAKE_NONCOPYABLE(RulePosition);
@@ -235,7 +285,7 @@ private:
             VERIFY(last.column == m_position.column);
         }
 
-        const Position& position() const { return m_position; }
+        Position const& position() const { return m_position; }
 
     private:
         Parser& m_parser;
@@ -257,9 +307,10 @@ private:
         bool allow_super_property_lookup { false };
         bool allow_super_constructor_call { false };
         bool in_function_context { false };
+        bool in_eval_function_context { false }; // This controls if we allow new.target or not. Note that eval("return") is not allowed, so we have to have a separate state variable for eval.
         bool in_formal_parameter_context { false };
         bool in_generator_function_context { false };
-        bool in_async_function_context { false };
+        bool await_expression_is_valid { false };
         bool in_arrow_function_context { false };
         bool in_break_context { false };
         bool in_continue_context { false };
@@ -273,12 +324,12 @@ private:
 
     class PositionKeyTraits {
     public:
-        static int hash(const Position& position)
+        static int hash(Position const& position)
         {
             return int_hash(position.line) ^ int_hash(position.column);
         }
 
-        static bool equals(const Position& a, const Position& b)
+        static bool equals(Position const& a, Position const& b)
         {
             return a.column == b.column && a.line == b.line;
         }

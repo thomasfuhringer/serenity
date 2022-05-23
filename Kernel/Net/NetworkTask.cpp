@@ -46,7 +46,7 @@ void NetworkTask::spawn()
     auto name = KString::try_create("NetworkTask");
     if (name.is_error())
         TODO();
-    Process::create_kernel_process(thread, name.release_value(), NetworkTask_main, nullptr);
+    (void)Process::create_kernel_process(thread, name.release_value(), NetworkTask_main, nullptr);
     network_task = thread;
 }
 
@@ -67,7 +67,6 @@ void NetworkTask_main(void*)
         if (adapter.class_name() == "LoopbackAdapter"sv) {
             adapter.set_ipv4_address({ 127, 0, 0, 1 });
             adapter.set_ipv4_netmask({ 255, 0, 0, 0 });
-            adapter.set_ipv4_gateway({ 0, 0, 0, 0 });
         }
 
         adapter.on_receive = [&]() {
@@ -158,7 +157,7 @@ void handle_arp(EthernetFrameHeader const& eth, size_t frame_size)
     if (!packet.sender_hardware_address().is_zero() && !packet.sender_protocol_address().is_zero()) {
         // Someone has this IPv4 address. I guess we can try to remember that.
         // FIXME: Protect against ARP spamming.
-        update_arp_table(packet.sender_protocol_address(), packet.sender_hardware_address(), UpdateArp::Set);
+        update_arp_table(packet.sender_protocol_address(), packet.sender_hardware_address(), UpdateTable::Set);
     }
 
     if (packet.operation() == ARPOperation::Request) {
@@ -206,7 +205,7 @@ void handle_ipv4(EthernetFrameHeader const& eth, size_t frame_size, Time const& 
             auto my_net = adapter.ipv4_address().to_u32() & adapter.ipv4_netmask().to_u32();
             auto their_net = packet.source().to_u32() & adapter.ipv4_netmask().to_u32();
             if (my_net == their_net)
-                update_arp_table(packet.source(), eth.source(), UpdateArp::Set);
+                update_arp_table(packet.source(), eth.source(), UpdateTable::Set);
         }
     });
 
@@ -319,7 +318,7 @@ void flush_delayed_tcp_acks()
     for (auto& socket : *delayed_ack_sockets) {
         MutexLocker locker(socket->mutex());
         if (socket->should_delay_next_ack()) {
-            remaining_sockets.append(socket);
+            MUST(remaining_sockets.try_append(socket));
             continue;
         }
         [[maybe_unused]] auto result = socket->send_ack();
@@ -435,11 +434,11 @@ void handle_tcp(IPv4Packet const& ipv4_packet, Time const& packet_timestamp)
 
     switch (socket->state()) {
     case TCPSocket::State::Closed:
-        dbgln("handle_tcp: unexpected flags in Closed state");
+        dbgln("handle_tcp: unexpected flags in Closed state ({:x})", tcp_packet.flags());
         // TODO: we may want to send an RST here, maybe as a configurable option
         return;
     case TCPSocket::State::TimeWait:
-        dbgln("handle_tcp: unexpected flags in TimeWait state");
+        dbgln("handle_tcp: unexpected flags in TimeWait state ({:x})", tcp_packet.flags());
         (void)socket->send_tcp_packet(TCPFlags::RST);
         socket->set_state(TCPSocket::State::Closed);
         return;
@@ -472,7 +471,7 @@ void handle_tcp(IPv4Packet const& ipv4_packet, Time const& packet_timestamp)
         switch (tcp_packet.flags()) {
         case TCPFlags::SYN:
             socket->set_ack_number(tcp_packet.sequence_number() + payload_size + 1);
-            (void)socket->send_ack(true);
+            (void)socket->send_tcp_packet(TCPFlags::SYN | TCPFlags::ACK);
             socket->set_state(TCPSocket::State::SynReceived);
             return;
         case TCPFlags::ACK | TCPFlags::SYN:
@@ -571,6 +570,12 @@ void handle_tcp(IPv4Packet const& ipv4_packet, Time const& packet_timestamp)
         case TCPFlags::FIN:
             socket->set_ack_number(tcp_packet.sequence_number() + payload_size + 1);
             socket->set_state(TCPSocket::State::Closing);
+            (void)socket->send_ack(true);
+            return;
+        case TCPFlags::FIN | TCPFlags::ACK:
+            socket->set_ack_number(tcp_packet.sequence_number() + payload_size + 1);
+            socket->set_state(TCPSocket::State::TimeWait);
+            (void)socket->send_ack(true);
             return;
         default:
             dbgln("handle_tcp: unexpected flags in FinWait1 state ({:x})", tcp_packet.flags());
@@ -583,8 +588,10 @@ void handle_tcp(IPv4Packet const& ipv4_packet, Time const& packet_timestamp)
         case TCPFlags::FIN:
             socket->set_ack_number(tcp_packet.sequence_number() + payload_size + 1);
             socket->set_state(TCPSocket::State::TimeWait);
+            (void)socket->send_ack(true);
             return;
         case TCPFlags::ACK | TCPFlags::RST:
+            // FIXME: Verify that this transition is legitimate.
             socket->set_state(TCPSocket::State::Closed);
             return;
         default:
@@ -650,8 +657,10 @@ void retransmit_tcp_packets()
     // We must keep the sockets alive until after we've unlocked the hash table
     // in case retransmit_packets() realizes that it wants to close the socket.
     NonnullRefPtrVector<TCPSocket, 16> sockets;
-    TCPSocket::sockets_for_retransmit().for_each_shared([&](const auto& socket) {
-        sockets.append(socket);
+    TCPSocket::sockets_for_retransmit().for_each_shared([&](auto const& socket) {
+        // We ignore allocation failures above the first 16 guaranteed socket slots, as
+        // we will just retransmit their packets the next time around
+        (void)sockets.try_append(socket);
     });
 
     for (auto& socket : sockets) {

@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2018-2020, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2021-2022, Brian Gianforcaro <bgianf@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -20,20 +21,22 @@
 
 extern "C" {
 
-size_t strspn(const char* s, const char* accept)
+// https://pubs.opengroup.org/onlinepubs/9699919799/functions/strspn.html
+size_t strspn(char const* s, char const* accept)
 {
-    const char* p = s;
+    char const* p = s;
 cont:
     char ch = *p++;
     char ac;
-    for (const char* ap = accept; (ac = *ap++) != '\0';) {
+    for (char const* ap = accept; (ac = *ap++) != '\0';) {
         if (ac == ch)
             goto cont;
     }
     return p - 1 - s;
 }
 
-size_t strcspn(const char* s, const char* reject)
+// https://pubs.opengroup.org/onlinepubs/9699919799/functions/strcspn.html
+size_t strcspn(char const* s, char const* reject)
 {
     for (auto* p = s;;) {
         char c = *p++;
@@ -46,7 +49,8 @@ size_t strcspn(const char* s, const char* reject)
     }
 }
 
-size_t strlen(const char* str)
+// https://pubs.opengroup.org/onlinepubs/9699919799/functions/strlen.html
+size_t strlen(char const* str)
 {
     size_t len = 0;
     while (*(str++))
@@ -54,7 +58,8 @@ size_t strlen(const char* str)
     return len;
 }
 
-size_t strnlen(const char* str, size_t maxlen)
+// https://pubs.opengroup.org/onlinepubs/9699919799/functions/strnlen.html
+size_t strnlen(char const* str, size_t maxlen)
 {
     size_t len = 0;
     for (; len < maxlen && *str; str++)
@@ -62,7 +67,8 @@ size_t strnlen(const char* str, size_t maxlen)
     return len;
 }
 
-char* strdup(const char* str)
+// https://pubs.opengroup.org/onlinepubs/9699919799/functions/strdup.html
+char* strdup(char const* str)
 {
     size_t len = strlen(str);
     char* new_str = (char*)malloc(len + 1);
@@ -71,7 +77,8 @@ char* strdup(const char* str)
     return new_str;
 }
 
-char* strndup(const char* str, size_t maxlen)
+// https://pubs.opengroup.org/onlinepubs/9699919799/functions/strndup.html
+char* strndup(char const* str, size_t maxlen)
 {
     size_t len = strnlen(str, maxlen);
     char* new_str = (char*)malloc(len + 1);
@@ -80,31 +87,34 @@ char* strndup(const char* str, size_t maxlen)
     return new_str;
 }
 
-int strcmp(const char* s1, const char* s2)
+// https://pubs.opengroup.org/onlinepubs/9699919799/functions/strcmp.html
+int strcmp(char const* s1, char const* s2)
 {
     while (*s1 == *s2++)
         if (*s1++ == 0)
             return 0;
-    return *(const unsigned char*)s1 - *(const unsigned char*)--s2;
+    return *(unsigned char const*)s1 - *(unsigned char const*)--s2;
 }
 
-int strncmp(const char* s1, const char* s2, size_t n)
+// https://pubs.opengroup.org/onlinepubs/9699919799/functions/strncmp.html
+int strncmp(char const* s1, char const* s2, size_t n)
 {
     if (!n)
         return 0;
     do {
         if (*s1 != *s2++)
-            return *(const unsigned char*)s1 - *(const unsigned char*)--s2;
+            return *(unsigned char const*)s1 - *(unsigned char const*)--s2;
         if (*s1++ == 0)
             break;
     } while (--n);
     return 0;
 }
 
-int memcmp(const void* v1, const void* v2, size_t n)
+// https://pubs.opengroup.org/onlinepubs/9699919799/functions/memcmp.html
+int memcmp(void const* v1, void const* v2, size_t n)
 {
-    auto* s1 = (const uint8_t*)v1;
-    auto* s2 = (const uint8_t*)v2;
+    auto* s1 = (uint8_t const*)v1;
+    auto* s2 = (uint8_t const*)v2;
     while (n-- > 0) {
         if (*s1++ != *s2++)
             return s1[-1] < s2[-1] ? -1 : 1;
@@ -112,7 +122,13 @@ int memcmp(const void* v1, const void* v2, size_t n)
     return 0;
 }
 
-void* memcpy(void* dest_ptr, const void* src_ptr, size_t n)
+int timingsafe_memcmp(void const* b1, void const* b2, size_t len)
+{
+    return AK::timing_safe_compare(b1, b2, len) ? 1 : 0;
+}
+
+// https://pubs.opengroup.org/onlinepubs/9699919799/functions/memcpy.html
+void* memcpy(void* dest_ptr, void const* src_ptr, size_t n)
 {
     void* original_dest = dest_ptr;
     asm volatile(
@@ -121,6 +137,10 @@ void* memcpy(void* dest_ptr, const void* src_ptr, size_t n)
     return original_dest;
 }
 
+#if ARCH(I386)
+// https://pubs.opengroup.org/onlinepubs/9699919799/functions/memset.html
+//
+// For x86-64, an optimized ASM implementation is found in ./arch/x86_64/memset.S
 void* memset(void* dest_ptr, int c, size_t n)
 {
     size_t dest = (size_t)dest_ptr;
@@ -128,19 +148,11 @@ void* memset(void* dest_ptr, int c, size_t n)
     if (!(dest & 0x3) && n >= 12) {
         size_t size_ts = n / sizeof(size_t);
         size_t expanded_c = explode_byte((u8)c);
-#if ARCH(I386)
         asm volatile(
             "rep stosl\n"
             : "=D"(dest)
             : "D"(dest), "c"(size_ts), "a"(expanded_c)
             : "memory");
-#else
-        asm volatile(
-            "rep stosq\n"
-            : "=D"(dest)
-            : "D"(dest), "c"(size_ts), "a"(expanded_c)
-            : "memory");
-#endif
         n -= size_ts * sizeof(size_t);
         if (n == 0)
             return dest_ptr;
@@ -152,25 +164,28 @@ void* memset(void* dest_ptr, int c, size_t n)
         : "memory");
     return dest_ptr;
 }
+#endif
 
-void* memmove(void* dest, const void* src, size_t n)
+// https://pubs.opengroup.org/onlinepubs/9699919799/functions/memmove.html
+void* memmove(void* dest, void const* src, size_t n)
 {
     if (((FlatPtr)dest - (FlatPtr)src) >= n)
         return memcpy(dest, src, n);
 
     u8* pd = (u8*)dest;
-    const u8* ps = (const u8*)src;
+    u8 const* ps = (u8 const*)src;
     for (pd += n, ps += n; n--;)
         *--pd = *--ps;
     return dest;
 }
 
-const void* memmem(const void* haystack, size_t haystack_length, const void* needle, size_t needle_length)
+void const* memmem(void const* haystack, size_t haystack_length, void const* needle, size_t needle_length)
 {
     return AK::memmem(haystack, haystack_length, needle, needle_length);
 }
 
-char* strcpy(char* dest, const char* src)
+// https://pubs.opengroup.org/onlinepubs/9699919799/functions/strcpy.html
+char* strcpy(char* dest, char const* src)
 {
     char* original_dest = dest;
     while ((*dest++ = *src++) != '\0')
@@ -178,7 +193,8 @@ char* strcpy(char* dest, const char* src)
     return original_dest;
 }
 
-char* strncpy(char* dest, const char* src, size_t n)
+// https://pubs.opengroup.org/onlinepubs/9699919799/functions/strncpy.html
+char* strncpy(char* dest, char const* src, size_t n)
 {
     size_t i;
     for (i = 0; i < n && src[i] != '\0'; ++i)
@@ -188,7 +204,7 @@ char* strncpy(char* dest, const char* src, size_t n)
     return dest;
 }
 
-size_t strlcpy(char* dest, const char* src, size_t n)
+size_t strlcpy(char* dest, char const* src, size_t n)
 {
     size_t i;
     // Would like to test i < n - 1 here, but n might be 0.
@@ -201,7 +217,8 @@ size_t strlcpy(char* dest, const char* src, size_t n)
     return i;
 }
 
-char* strchr(const char* str, int c)
+// https://pubs.opengroup.org/onlinepubs/9699919799/functions/strchr.html
+char* strchr(char const* str, int c)
 {
     char ch = c;
     for (;; ++str) {
@@ -212,7 +229,13 @@ char* strchr(const char* str, int c)
     }
 }
 
-char* strchrnul(const char* str, int c)
+// https://pubs.opengroup.org/onlinepubs/9699959399/functions/index.html
+char* index(char const* str, int c)
+{
+    return strchr(str, c);
+}
+
+char* strchrnul(char const* str, int c)
 {
     char ch = c;
     for (;; ++str) {
@@ -221,10 +244,11 @@ char* strchrnul(const char* str, int c)
     }
 }
 
-void* memchr(const void* ptr, int c, size_t size)
+// https://pubs.opengroup.org/onlinepubs/9699919799/functions/memchr.html
+void* memchr(void const* ptr, int c, size_t size)
 {
     char ch = c;
-    auto* cptr = (const char*)ptr;
+    auto* cptr = (char const*)ptr;
     for (size_t i = 0; i < size; ++i) {
         if (cptr[i] == ch)
             return const_cast<char*>(cptr + i);
@@ -232,7 +256,8 @@ void* memchr(const void* ptr, int c, size_t size)
     return nullptr;
 }
 
-char* strrchr(const char* str, int ch)
+// https://pubs.opengroup.org/onlinepubs/9699919799/functions/strrchr.html
+char* strrchr(char const* str, int ch)
 {
     char* last = nullptr;
     char c;
@@ -243,7 +268,14 @@ char* strrchr(const char* str, int ch)
     return last;
 }
 
-char* strcat(char* dest, const char* src)
+// https://pubs.opengroup.org/onlinepubs/9699959399/functions/rindex.html
+char* rindex(char const* str, int ch)
+{
+    return strrchr(str, ch);
+}
+
+// https://pubs.opengroup.org/onlinepubs/9699919799/functions/strcat.html
+char* strcat(char* dest, char const* src)
 {
     size_t dest_length = strlen(dest);
     size_t i;
@@ -253,7 +285,8 @@ char* strcat(char* dest, const char* src)
     return dest;
 }
 
-char* strncat(char* dest, const char* src, size_t n)
+// https://pubs.opengroup.org/onlinepubs/9699919799/functions/strncat.html
+char* strncat(char* dest, char const* src, size_t n)
 {
     size_t dest_length = strlen(dest);
     size_t i;
@@ -263,88 +296,16 @@ char* strncat(char* dest, const char* src, size_t n)
     return dest;
 }
 
-const char* const sys_errlist[] = {
-    "Success (not an error)",
-    "Operation not permitted",
-    "No such file or directory",
-    "No such process",
-    "Interrupted syscall",
-    "I/O error",
-    "No such device or address",
-    "Argument list too long",
-    "Exec format error",
-    "Bad fd number",
-    "No child processes",
-    "Try again",
-    "Out of memory",
-    "Permission denied",
-    "Bad address",
-    "Block device required",
-    "Device or resource busy",
-    "File already exists",
-    "Cross-device link",
-    "No such device",
-    "Not a directory",
-    "Is a directory",
-    "Invalid argument",
-    "File table overflow",
-    "Too many open files",
-    "Not a TTY",
-    "Text file busy",
-    "File too large",
-    "No space left on device",
-    "Illegal seek",
-    "Read-only filesystem",
-    "Too many links",
-    "Broken pipe",
-    "Range error",
-    "Name too long",
-    "Too many symlinks",
-    "Overflow",
-    "Operation not supported",
-    "No such syscall",
-    "Not implemented",
-    "Address family not supported",
-    "Not a socket",
-    "Address in use",
-    "Failed without setting an error code (bug!)",
-    "Directory not empty",
-    "Math argument out of domain",
-    "Connection refused",
-    "Address not available",
-    "Already connected",
-    "Connection aborted",
-    "Connection already in progress",
-    "Connection reset",
-    "Destination address required",
-    "Host unreachable",
-    "Illegal byte sequence",
-    "Message size",
-    "Network down",
-    "Network unreachable",
-    "Network reset",
-    "No buffer space",
-    "No lock available",
-    "No message",
-    "No protocol option",
-    "Not connected",
-    "Protocol not supported",
-    "Resource deadlock would occur",
-    "Timed out",
-    "Wrong protocol type",
-    "Operation in progress",
-    "No such thread",
-    "Protocol error",
-    "Not supported",
-    "Protocol family not supported",
-    "Cannot make directory a subdirectory of itself",
-    "Quota exceeded",
-    "State not recoverable",
-    "The highest errno +1 :^)",
+char const* const sys_errlist[] = {
+#define __ENUMERATE_ERRNO_CODE(c, s) s,
+    ENUMERATE_ERRNO_CODES(__ENUMERATE_ERRNO_CODE)
+#undef __ENUMERATE_ERRNO_CODE
 };
+static_assert(array_size(sys_errlist) == (EMAXERRNO + 1));
 
 int sys_nerr = EMAXERRNO;
 
+// https://pubs.opengroup.org/onlinepubs/9699919799/functions/strerror_r.html
 int strerror_r(int errnum, char* buf, size_t buflen)
 {
     auto saved_errno = errno;
@@ -365,6 +326,7 @@ int strerror_r(int errnum, char* buf, size_t buflen)
     return 0;
 }
 
+// https://pubs.opengroup.org/onlinepubs/9699919799/functions/strerror.html
 char* strerror(int errnum)
 {
     if (errnum < 0 || errnum >= EMAXERRNO) {
@@ -373,6 +335,7 @@ char* strerror(int errnum)
     return const_cast<char*>(sys_errlist[errnum]);
 }
 
+// https://pubs.opengroup.org/onlinepubs/9699919799/functions/strsignal.html
 char* strsignal(int signum)
 {
     if (signum >= NSIG) {
@@ -382,7 +345,8 @@ char* strsignal(int signum)
     return const_cast<char*>(sys_siglist[signum]);
 }
 
-char* strstr(const char* haystack, const char* needle)
+// https://pubs.opengroup.org/onlinepubs/9699919799/functions/strstr.html
+char* strstr(char const* haystack, char const* needle)
 {
     char nch;
     char hch;
@@ -400,7 +364,8 @@ char* strstr(const char* haystack, const char* needle)
     return const_cast<char*>(haystack);
 }
 
-char* strpbrk(const char* s, const char* accept)
+// https://pubs.opengroup.org/onlinepubs/9699919799/functions/strpbrk.html
+char* strpbrk(char const* s, char const* accept)
 {
     while (*s)
         if (strchr(accept, *s++))
@@ -408,10 +373,11 @@ char* strpbrk(const char* s, const char* accept)
     return nullptr;
 }
 
-char* strtok_r(char* str, const char* delim, char** saved_str)
+// https://pubs.opengroup.org/onlinepubs/9699919799/functions/strtok_r.html
+char* strtok_r(char* str, char const* delim, char** saved_str)
 {
     if (!str) {
-        if (!saved_str)
+        if (!saved_str || *saved_str == nullptr)
             return nullptr;
         str = *saved_str;
     }
@@ -443,8 +409,10 @@ char* strtok_r(char* str, const char* delim, char** saved_str)
         }
     }
 
-    if (str[token_start] == '\0')
+    if (str[token_start] == '\0') {
+        *saved_str = nullptr;
         return nullptr;
+    }
 
     if (token_end == 0) {
         *saved_str = nullptr;
@@ -460,18 +428,21 @@ char* strtok_r(char* str, const char* delim, char** saved_str)
     return &str[token_start];
 }
 
-char* strtok(char* str, const char* delim)
+// https://pubs.opengroup.org/onlinepubs/9699919799/functions/strtok.html
+char* strtok(char* str, char const* delim)
 {
     static char* saved_str;
     return strtok_r(str, delim, &saved_str);
 }
 
-int strcoll(const char* s1, const char* s2)
+// https://pubs.opengroup.org/onlinepubs/9699919799/functions/strcoll.html
+int strcoll(char const* s1, char const* s2)
 {
     return strcmp(s1, s2);
 }
 
-size_t strxfrm(char* dest, const char* src, size_t n)
+// https://pubs.opengroup.org/onlinepubs/9699919799/functions/strxfrm.html
+size_t strxfrm(char* dest, char const* src, size_t n)
 {
     size_t i;
     for (i = 0; i < n && src[i] != '\0'; ++i)
@@ -479,6 +450,23 @@ size_t strxfrm(char* dest, const char* src, size_t n)
     for (; i < n; ++i)
         dest[i] = '\0';
     return i;
+}
+
+// Not in POSIX, originated in BSD but also supported on Linux.
+// https://man.openbsd.org/strsep.3
+char* strsep(char** str, char const* delim)
+{
+    if (*str == nullptr)
+        return nullptr;
+    auto* begin = *str;
+    auto* end = begin + strcspn(begin, delim);
+    if (*end) {
+        *end = '\0';
+        *str = ++end;
+    } else {
+        *str = nullptr;
+    }
+    return begin;
 }
 
 void explicit_bzero(void* ptr, size_t size)

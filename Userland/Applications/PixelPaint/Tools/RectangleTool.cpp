@@ -1,6 +1,7 @@
 /*
  * Copyright (c) 2018-2020, Andreas Kling <kling@serenityos.org>
  * Copyright (c) 2021, Mustafa Quraish <mustafa@serenityos.org>
+ * Copyright (c) 2022, the SerenityOS developers.
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -19,14 +20,6 @@
 #include <LibGfx/Rect.h>
 
 namespace PixelPaint {
-
-RectangleTool::RectangleTool()
-{
-}
-
-RectangleTool::~RectangleTool()
-{
-}
 
 void RectangleTool::draw_using(GUI::Painter& painter, Gfx::IntPoint const& start_position, Gfx::IntPoint const& end_position, int thickness)
 {
@@ -77,7 +70,7 @@ void RectangleTool::on_mouseup(Layer* layer, MouseEvent& event)
         return;
 
     if (event.layer_event().button() == m_drawing_button) {
-        GUI::Painter painter(layer->bitmap());
+        GUI::Painter painter(layer->currently_edited_bitmap());
         draw_using(painter, m_rectangle_start_position, m_rectangle_end_position, m_thickness);
         m_drawing_button = GUI::MouseButton::None;
         layer->did_modify_bitmap();

@@ -22,11 +22,12 @@ namespace Kernel {
 
 class PowerStateSwitchNode final : public SysFSComponent {
 public:
+    virtual StringView name() const override { return "power_state"sv; }
     static NonnullRefPtr<PowerStateSwitchNode> must_create(FirmwareSysFSDirectory&);
     virtual mode_t permissions() const override;
     virtual ErrorOr<size_t> write_bytes(off_t, size_t, UserOrKernelBuffer const&, OpenFileDescription*) override;
     virtual ErrorOr<void> truncate(u64) override;
-    virtual ErrorOr<void> set_mtime(time_t) { return {}; }
+    virtual ErrorOr<void> set_mtime(time_t) override { return {}; }
 
 private:
     PowerStateSwitchNode(FirmwareSysFSDirectory&);

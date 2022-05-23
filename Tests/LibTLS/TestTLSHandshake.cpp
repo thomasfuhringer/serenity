@@ -4,6 +4,7 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <AK/Base64.h>
 #include <LibCore/ConfigFile.h>
 #include <LibCore/EventLoop.h>
 #include <LibCore/File.h>
@@ -11,12 +12,12 @@
 #include <LibTLS/TLSv12.h>
 #include <LibTest/TestCase.h>
 
-static const char* ca_certs_file = "./ca_certs.ini";
+static char const* ca_certs_file = "./ca_certs.ini";
 static int port = 443;
 
-constexpr const char* DEFAULT_SERVER { "www.google.com" };
+constexpr char const* DEFAULT_SERVER { "www.google.com" };
 
-static ByteBuffer operator""_b(const char* string, size_t length)
+static ByteBuffer operator""_b(char const* string, size_t length)
 {
     return ByteBuffer::copy(string, length).release_value();
 }
@@ -45,18 +46,26 @@ Vector<Certificate> load_certificates()
         return certificates;
     }
 
-    auto config = Core::ConfigFile::open(ca_certs_filepath);
-    auto now = Core::DateTime::now();
-    auto last_year = Core::DateTime::create(now.year() - 1);
-    auto next_year = Core::DateTime::create(now.year() + 1);
+    auto config = Core::ConfigFile::open(ca_certs_filepath).release_value_but_fixme_should_propagate_errors();
     for (auto& entity : config->groups()) {
-        Certificate cert;
-        cert.subject.subject = entity;
-        cert.issuer.subject = config->read_entry(entity, "issuer_subject", entity);
-        cert.subject.country = config->read_entry(entity, "country");
-        cert.not_before = Crypto::ASN1::parse_generalized_time(config->read_entry(entity, "not_before", "")).value_or(last_year);
-        cert.not_after = Crypto::ASN1::parse_generalized_time(config->read_entry(entity, "not_after", "")).value_or(next_year);
-        certificates.append(move(cert));
+        for (auto& subject : config->keys(entity)) {
+            auto certificate_base64 = config->read_entry(entity, subject);
+            auto certificate_data_result = decode_base64(certificate_base64);
+            if (certificate_data_result.is_error()) {
+                dbgln("Skipping CA Certificate {} {}: out of memory", entity, subject);
+                continue;
+            }
+            auto certificate_data = certificate_data_result.release_value();
+            auto certificate_result = Certificate::parse_asn1(certificate_data.bytes());
+            // If the certificate does not parse it is likely using elliptic curve keys/signatures, which are not
+            // supported right now. Currently, ca_certs.ini should only contain certificates with RSA keys/signatures.
+            if (!certificate_result.has_value()) {
+                dbgln("Skipping CA Certificate {} {}: unable to parse", entity, subject);
+                continue;
+            }
+            auto certificate = certificate_result.release_value();
+            certificates.append(move(certificate));
+        }
     }
     return certificates;
 }
@@ -66,52 +75,41 @@ static Vector<Certificate> s_root_ca_certificates = load_certificates();
 TEST_CASE(test_TLS_hello_handshake)
 {
     Core::EventLoop loop;
-    RefPtr<TLS::TLSv12> tls = TLS::TLSv12::construct(nullptr);
-    tls->set_root_certificates(s_root_ca_certificates);
-    bool sent_request = false;
-    ByteBuffer contents;
-    tls->set_on_tls_ready_to_write([&](TLS::TLSv12& tls) {
-        if (sent_request)
-            return;
-        sent_request = true;
-        Core::deferred_invoke([&tls] { tls.set_on_tls_ready_to_write(nullptr); });
-        if (!tls.write("GET / HTTP/1.1\r\nHost: "_b)) {
-            FAIL("write(0) failed");
-            loop.quit(0);
-        }
-        auto* the_server = DEFAULT_SERVER;
-        if (!tls.write(StringView(the_server).bytes())) {
-            FAIL("write(1) failed");
-            loop.quit(0);
-        }
-        if (!tls.write("\r\nConnection : close\r\n\r\n"_b)) {
-            FAIL("write(2) failed");
-            loop.quit(0);
-        }
-    });
-    tls->on_tls_ready_to_read = [&](TLS::TLSv12& tls) {
-        auto data = tls.read();
-        if (!data.has_value()) {
-            FAIL("No data received");
-            loop.quit(1);
-        } else {
-            //            print_buffer(data.value(), 16);
-            if (contents.try_append(data.value().data(), data.value().size()).is_error()) {
-                FAIL("Allocation failure");
-                loop.quit(1);
-            }
-        }
-    };
-    tls->on_tls_finished = [&] {
-        loop.quit(0);
-    };
-    tls->on_tls_error = [&](TLS::AlertDescription) {
+    TLS::Options options;
+    options.set_root_certificates(s_root_ca_certificates);
+    options.set_alert_handler([&](TLS::AlertDescription) {
         FAIL("Connection failure");
         loop.quit(1);
+    });
+    options.set_finish_callback([&] {
+        loop.quit(0);
+    });
+
+    auto tls = MUST(TLS::TLSv12::connect(DEFAULT_SERVER, port, move(options)));
+    ByteBuffer contents;
+    tls->on_ready_to_read = [&] {
+        auto read_bytes = MUST(tls->read(contents.must_get_bytes_for_writing(4 * KiB)));
+        if (read_bytes.is_empty()) {
+            FAIL("No data received");
+            loop.quit(1);
+        }
+        loop.quit(0);
     };
-    if (!tls->connect(DEFAULT_SERVER, port)) {
-        FAIL("connect() failed");
+
+    if (!tls->write_or_error("GET / HTTP/1.1\r\nHost: "_b)) {
+        FAIL("write(0) failed");
         return;
     }
+
+    auto* the_server = DEFAULT_SERVER;
+    if (!tls->write_or_error(StringView(the_server).bytes())) {
+        FAIL("write(1) failed");
+        return;
+    }
+    if (!tls->write_or_error("\r\nConnection : close\r\n\r\n"_b)) {
+        FAIL("write(2) failed");
+        return;
+    }
+
     loop.exec();
 }

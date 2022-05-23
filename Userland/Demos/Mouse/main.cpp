@@ -10,6 +10,7 @@
 #include <LibGUI/Action.h>
 #include <LibGUI/Application.h>
 #include <LibGUI/BoxLayout.h>
+#include <LibGUI/ConnectionToWindowServer.h>
 #include <LibGUI/Frame.h>
 #include <LibGUI/Icon.h>
 #include <LibGUI/Menu.h>
@@ -17,7 +18,6 @@
 #include <LibGUI/Painter.h>
 #include <LibGUI/Widget.h>
 #include <LibGUI/Window.h>
-#include <LibGUI/WindowServerConnection.h>
 #include <LibGfx/Bitmap.h>
 #include <LibGfx/Path.h>
 #include <LibMain/Main.h>
@@ -74,7 +74,7 @@ public:
 
         painter.stroke_path(path, Color::Black, 1);
 
-        auto primary_secondary_switched = GUI::WindowServerConnection::the().get_buttons_switched();
+        auto primary_secondary_switched = GUI::ConnectionToWindowServer::the().get_buttons_switched();
         auto primary_pressed = m_buttons & GUI::MouseButton::Primary;
         auto secondary_pressed = m_buttons & GUI::MouseButton::Secondary;
 
@@ -138,7 +138,7 @@ public:
 
     void mousewheel_event(GUI::MouseEvent& event) override
     {
-        m_wheel_delta_acc = (m_wheel_delta_acc + event.wheel_delta() + 36) % 36;
+        m_wheel_delta_acc = (m_wheel_delta_acc + event.wheel_delta_y() + 36) % 36;
         m_show_scroll_wheel = true;
         update();
         if (!has_timer())
@@ -160,7 +160,7 @@ private:
 ErrorOr<int> serenity_main(Main::Arguments arguments)
 {
     auto app = TRY(GUI::Application::try_create(arguments));
-    auto app_icon = GUI::Icon::default_icon("app-mouse");
+    auto app_icon = TRY(GUI::Icon::try_create_default_icon("app-mouse"));
 
     TRY(Core::System::pledge("stdio recvfd sendfd rpath"));
     TRY(Core::System::unveil("/res", "r"));

@@ -18,6 +18,11 @@ describe("correct behavior", () => {
         expect(Temporal.Instant.from("1975-02-02T14:25:36.123456789Z").epochNanoseconds).toBe(
             160583136123456789n
         );
+        // Time zone is not validated
+        expect(
+            Temporal.Instant.from("1975-02-02T14:25:36.123456789Z[Custom/TimeZone]")
+                .epochNanoseconds
+        ).toBe(160583136123456789n);
     });
 });
 
@@ -26,5 +31,21 @@ describe("errors", () => {
         expect(() => {
             Temporal.Instant.from("foo");
         }).toThrowWithMessage(RangeError, "Invalid instant string 'foo'");
+    });
+
+    test("invalid epoch nanoseconds", () => {
+        // Test cases from https://github.com/tc39/proposal-temporal/commit/baead4d85bc3e9ecab1e9824c3d3fe4fdd77fc3a
+        expect(() => {
+            Temporal.Instant.from("-271821-04-20T00:00:00+00:01");
+        }).toThrowWithMessage(
+            RangeError,
+            "Invalid epoch nanoseconds value, must be in range -86400 * 10^17 to 86400 * 10^17"
+        );
+        expect(() => {
+            Temporal.Instant.from("+275760-09-13T00:00:00-00:01");
+        }).toThrowWithMessage(
+            RangeError,
+            "Invalid epoch nanoseconds value, must be in range -86400 * 10^17 to 86400 * 10^17"
+        );
     });
 });

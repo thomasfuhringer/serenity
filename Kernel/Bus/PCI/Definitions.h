@@ -6,15 +6,15 @@
 
 #pragma once
 
+#include <AK/Badge.h>
+#include <AK/DistinctNumeric.h>
 #include <AK/Function.h>
-#include <AK/String.h>
 #include <AK/Types.h>
 #include <AK/Vector.h>
 #include <Kernel/Debug.h>
+#include <Kernel/PhysicalAddress.h>
 
-namespace Kernel {
-
-namespace PCI {
+namespace Kernel::PCI {
 
 enum class HeaderType {
     Device = 0,
@@ -73,6 +73,7 @@ namespace MassStorage {
 enum class SubclassID {
     IDEController = 0x1,
     SATAController = 0x6,
+    NVMeController = 0x8,
 };
 enum class SATAProgIF {
     AHCI = 0x1,
@@ -112,11 +113,11 @@ struct HardwareID {
 
     bool is_null() const { return !vendor_id && !device_id; }
 
-    bool operator==(const HardwareID& other) const
+    bool operator==(HardwareID const& other) const
     {
         return vendor_id == other.vendor_id && device_id == other.device_id;
     }
-    bool operator!=(const HardwareID& other) const
+    bool operator!=(HardwareID const& other) const
     {
         return vendor_id != other.vendor_id || device_id != other.device_id;
     }
@@ -125,18 +126,18 @@ struct HardwareID {
 class Domain {
 public:
     Domain() = delete;
-    Domain(PhysicalAddress base_address, u8 start_bus, u8 end_bus)
-        : m_base_addr(base_address)
+    Domain(u32 domain_number, u8 start_bus, u8 end_bus)
+        : m_domain_number(domain_number)
         , m_start_bus(start_bus)
         , m_end_bus(end_bus)
     {
     }
     u8 start_bus() const { return m_start_bus; }
     u8 end_bus() const { return m_end_bus; }
-    PhysicalAddress paddr() const { return m_base_addr; }
+    u32 domain_number() const { return m_domain_number; }
 
 private:
-    PhysicalAddress m_base_addr;
+    u32 m_domain_number;
     u8 m_start_bus;
     u8 m_end_bus;
 };
@@ -159,43 +160,32 @@ public:
     {
     }
 
-    Address(const Address& address)
-        : m_domain(address.domain())
-        , m_bus(address.bus())
-        , m_device(address.device())
-        , m_function(address.function())
-    {
-    }
+    Address(Address const& address) = default;
 
     bool is_null() const { return !m_bus && !m_device && !m_function; }
     operator bool() const { return !is_null(); }
 
     // Disable default implementations that would use surprising integer promotion.
-    bool operator<=(const Address&) const = delete;
-    bool operator>=(const Address&) const = delete;
-    bool operator<(const Address&) const = delete;
-    bool operator>(const Address&) const = delete;
+    bool operator<=(Address const&) const = delete;
+    bool operator>=(Address const&) const = delete;
+    bool operator<(Address const&) const = delete;
+    bool operator>(Address const&) const = delete;
 
-    bool operator==(const Address& other) const
+    bool operator==(Address const& other) const
     {
         if (this == &other)
             return true;
         return m_domain == other.m_domain && m_bus == other.m_bus && m_device == other.m_device && m_function == other.m_function;
     }
-    bool operator!=(const Address& other) const
+    bool operator!=(Address const& other) const
     {
         return !(*this == other);
     }
 
-    u16 domain() const { return m_domain; }
+    u32 domain() const { return m_domain; }
     u8 bus() const { return m_bus; }
     u8 device() const { return m_device; }
     u8 function() const { return m_function; }
-
-    u32 io_address_for_field(u8 field) const
-    {
-        return 0x80000000u | (m_bus << 16u) | (m_device << 11u) | (m_function << 8u) | (field & 0xfc);
-    }
 
 private:
     u32 m_domain { 0 };
@@ -206,7 +196,7 @@ private:
 
 class Capability {
 public:
-    Capability(const Address& address, u8 id, u8 ptr)
+    Capability(Address const& address, u8 id, u8 ptr)
         : m_address(address)
         , m_id(id)
         , m_ptr(ptr)
@@ -240,7 +230,7 @@ TYPEDEF_DISTINCT_ORDERED_ID(u8, InterruptPin);
 class Access;
 class DeviceIdentifier {
 public:
-    DeviceIdentifier(Address address, HardwareID hardware_id, RevisionID revision_id, ClassCode class_code, SubclassCode subclass_code, ProgrammingInterface prog_if, SubsystemID subsystem_id, SubsystemVendorID subsystem_vendor_id, InterruptLine interrupt_line, InterruptPin interrupt_pin, Vector<Capability> capabilities)
+    DeviceIdentifier(Address address, HardwareID hardware_id, RevisionID revision_id, ClassCode class_code, SubclassCode subclass_code, ProgrammingInterface prog_if, SubsystemID subsystem_id, SubsystemVendorID subsystem_vendor_id, InterruptLine interrupt_line, InterruptPin interrupt_pin, Vector<Capability> const& capabilities)
         : m_address(address)
         , m_hardware_id(hardware_id)
         , m_revision_id(revision_id)
@@ -254,14 +244,14 @@ public:
         , m_capabilities(capabilities)
     {
         if constexpr (PCI_DEBUG) {
-            for (const auto& capability : capabilities)
+            for (auto const& capability : capabilities)
                 dbgln("{} has capability {}", address, capability.id());
         }
     }
 
-    Vector<Capability> capabilities() const { return m_capabilities; }
-    const HardwareID& hardware_id() const { return m_hardware_id; }
-    const Address& address() const { return m_address; }
+    Vector<Capability> const& capabilities() const { return m_capabilities; }
+    HardwareID const& hardware_id() const { return m_hardware_id; }
+    Address const& address() const { return m_address; }
 
     RevisionID revision_id() const { return m_revision_id; }
     ClassCode class_code() const { return m_class_code; }
@@ -301,7 +291,6 @@ private:
 
 class Domain;
 class Device;
-}
 
 }
 

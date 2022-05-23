@@ -67,6 +67,11 @@ InodeIndex build_segmented_index_for_file_description(ProcessID pid, unsigned fd
     return build_segmented_index_with_unknown_property(pid, ProcessSubDirectory::OpenFileDescriptions, fd);
 }
 
+InodeIndex build_segmented_index_for_children(ProcessID pid, ProcessID child_pid)
+{
+    return build_segmented_index_with_unknown_property(pid, ProcessSubDirectory::Children, child_pid.value());
+}
+
 }
 
 static size_t s_allocate_global_inode_index()
@@ -79,9 +84,7 @@ static size_t s_allocate_global_inode_index()
     return s_next_inode_index.value();
 }
 
-ProcFSExposedComponent::ProcFSExposedComponent()
-{
-}
+ProcFSExposedComponent::ProcFSExposedComponent() = default;
 
 ProcFSExposedComponent::ProcFSExposedComponent(StringView name)
     : m_component_index(s_allocate_global_inode_index())
@@ -97,7 +100,7 @@ ProcFSExposedDirectory::ProcFSExposedDirectory(StringView name)
 {
 }
 
-ProcFSExposedDirectory::ProcFSExposedDirectory(StringView name, const ProcFSExposedDirectory& parent_directory)
+ProcFSExposedDirectory::ProcFSExposedDirectory(StringView name, ProcFSExposedDirectory const& parent_directory)
     : ProcFSExposedComponent(name)
     , m_parent_directory(parent_directory)
 {
@@ -158,7 +161,7 @@ ErrorOr<void> ProcFSSystemBoolean::try_generate(KBufferBuilder& builder)
     return builder.appendff("{}\n", static_cast<int>(value()));
 }
 
-ErrorOr<size_t> ProcFSSystemBoolean::write_bytes(off_t, size_t count, const UserOrKernelBuffer& buffer, OpenFileDescription*)
+ErrorOr<size_t> ProcFSSystemBoolean::write_bytes(off_t, size_t count, UserOrKernelBuffer const& buffer, OpenFileDescription*)
 {
     if (count != 1)
         return EINVAL;
@@ -202,22 +205,22 @@ ErrorOr<size_t> ProcFSExposedLink::read_bytes(off_t offset, size_t count, UserOr
     return nread;
 }
 
-ErrorOr<NonnullRefPtr<Inode>> ProcFSExposedLink::to_inode(const ProcFS& procfs_instance) const
+ErrorOr<NonnullRefPtr<Inode>> ProcFSExposedLink::to_inode(ProcFS const& procfs_instance) const
 {
     return TRY(ProcFSLinkInode::try_create(procfs_instance, *this));
 }
 
-ErrorOr<NonnullRefPtr<Inode>> ProcFSExposedComponent::to_inode(const ProcFS& procfs_instance) const
+ErrorOr<NonnullRefPtr<Inode>> ProcFSExposedComponent::to_inode(ProcFS const& procfs_instance) const
 {
     return TRY(ProcFSGlobalInode::try_create(procfs_instance, *this));
 }
 
-ErrorOr<NonnullRefPtr<Inode>> ProcFSExposedDirectory::to_inode(const ProcFS& procfs_instance) const
+ErrorOr<NonnullRefPtr<Inode>> ProcFSExposedDirectory::to_inode(ProcFS const& procfs_instance) const
 {
     return TRY(ProcFSDirectoryInode::try_create(procfs_instance, *this));
 }
 
-void ProcFSExposedDirectory::add_component(const ProcFSExposedComponent&)
+void ProcFSExposedDirectory::add_component(ProcFSExposedComponent const&)
 {
     TODO();
 }
@@ -241,7 +244,7 @@ ErrorOr<void> ProcFSExposedDirectory::traverse_as_directory(FileSystemID fsid, F
     TRY(callback({ ".", { fsid, component_index() }, DT_DIR }));
     TRY(callback({ "..", { fsid, parent_directory->component_index() }, DT_DIR }));
 
-    for (auto& component : m_components) {
+    for (auto const& component : m_components) {
         InodeIdentifier identifier = { fsid, component.component_index() };
         TRY(callback({ component.name(), identifier, 0 }));
     }

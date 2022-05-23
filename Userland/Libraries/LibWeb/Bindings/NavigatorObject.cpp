@@ -7,13 +7,14 @@
 #include <LibJS/Runtime/Array.h>
 #include <LibJS/Runtime/GlobalObject.h>
 #include <LibWeb/Bindings/NavigatorObject.h>
+#include <LibWeb/Bindings/NavigatorPrototype.h>
 #include <LibWeb/Loader/ResourceLoader.h>
 
 namespace Web {
 namespace Bindings {
 
 NavigatorObject::NavigatorObject(JS::GlobalObject& global_object)
-    : Object(*global_object.object_prototype())
+    : Object(static_cast<WindowObject&>(global_object).ensure_web_prototype<NavigatorPrototype>("Navigator"))
 {
 }
 
@@ -36,12 +37,10 @@ void NavigatorObject::initialize(JS::GlobalObject& global_object)
     define_native_accessor("userAgent", user_agent_getter, {}, JS::Attribute::Configurable | JS::Attribute::Enumerable);
     define_native_accessor("cookieEnabled", cookie_enabled_getter, {}, JS::Attribute::Configurable | JS::Attribute::Enumerable);
 
+    define_native_function("javaEnabled", java_enabled, 0, JS::Attribute::Configurable | JS::Attribute::Enumerable);
+
     // FIXME: Reflect actual connectivity status.
     define_direct_property("onLine", JS::Value(true), attr);
-}
-
-NavigatorObject::~NavigatorObject()
-{
 }
 
 JS_DEFINE_NATIVE_FUNCTION(NavigatorObject::user_agent_getter)
@@ -53,6 +52,13 @@ JS_DEFINE_NATIVE_FUNCTION(NavigatorObject::cookie_enabled_getter)
 {
     // No way of disabling cookies right now :^)
     return JS::Value(true);
+}
+
+// https://html.spec.whatwg.org/multipage/system-state.html#dom-navigator-javaenabled
+JS_DEFINE_NATIVE_FUNCTION(NavigatorObject::java_enabled)
+{
+    // The NavigatorPlugins mixin's javaEnabled() method steps are to return false.
+    return JS::Value(false);
 }
 
 }

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2020, the SerenityOS developers.
+ * Copyright (c) 2020-2022, the SerenityOS developers.
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -10,10 +10,14 @@
 
 namespace Cpp {
 
+class SemanticSyntaxHighlighter;
+
 class SyntaxHighlighter final : public Syntax::Highlighter {
+    friend SemanticSyntaxHighlighter;
+
 public:
-    SyntaxHighlighter() { }
-    virtual ~SyntaxHighlighter() override;
+    SyntaxHighlighter() = default;
+    virtual ~SyntaxHighlighter() override = default;
 
     virtual bool is_identifier(u64) const override;
     virtual bool is_navigatable(u64) const override;

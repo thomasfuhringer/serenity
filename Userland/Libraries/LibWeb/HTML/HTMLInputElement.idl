@@ -1,3 +1,6 @@
+#import <HTML/HTMLElement.idl>
+#import <HTML/HTMLFormElement.idl>
+
 interface HTMLInputElement : HTMLElement {
 
     readonly attribute HTMLFormElement? form;
@@ -14,9 +17,11 @@ interface HTMLInputElement : HTMLElement {
     [Reflect=dirname] attribute DOMString dirName;
     [Reflect=value] attribute DOMString defaultValue;
 
+    attribute DOMString type;
+
     [LegacyNullToEmptyString] attribute DOMString value;
 
-    attribute boolean checked;
+    [ImplementedAs=checked_binding] attribute boolean checked;
 
     [Reflect] attribute boolean disabled;
     [Reflect=checked] attribute boolean defaultChecked;

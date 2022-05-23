@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2018-2020, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2022, the SerenityOS developers.
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -9,10 +10,12 @@
 #include <LibCore/Timer.h>
 #include <LibGUI/LazyWidget.h>
 
+namespace SystemMonitor {
+
 class NetworkStatisticsWidget final : public GUI::LazyWidget {
     C_OBJECT(NetworkStatisticsWidget)
 public:
-    virtual ~NetworkStatisticsWidget() override;
+    virtual ~NetworkStatisticsWidget() override = default;
 
 private:
     NetworkStatisticsWidget();
@@ -29,3 +32,5 @@ private:
     RefPtr<Gfx::Bitmap> m_network_disconnected_bitmap;
     RefPtr<Gfx::Bitmap> m_network_link_down_bitmap;
 };
+
+}

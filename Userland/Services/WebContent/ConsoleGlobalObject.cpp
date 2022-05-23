@@ -10,16 +10,12 @@
 #include <LibWeb/Bindings/NodeWrapperFactory.h>
 #include <LibWeb/Bindings/WindowObject.h>
 #include <LibWeb/DOM/Document.h>
-#include <LibWeb/DOM/Window.h>
+#include <LibWeb/HTML/Window.h>
 
 namespace WebContent {
 
 ConsoleGlobalObject::ConsoleGlobalObject(Web::Bindings::WindowObject& parent_object)
     : m_window_object(&parent_object)
-{
-}
-
-ConsoleGlobalObject::~ConsoleGlobalObject()
 {
 }
 
@@ -93,7 +89,7 @@ JS::ThrowCompletionOr<bool> ConsoleGlobalObject::internal_delete(JS::PropertyKey
     return m_window_object->internal_delete(property_name);
 }
 
-JS::ThrowCompletionOr<JS::MarkedValueList> ConsoleGlobalObject::internal_own_property_keys() const
+JS::ThrowCompletionOr<JS::MarkedVector<JS::Value>> ConsoleGlobalObject::internal_own_property_keys() const
 {
     return m_window_object->internal_own_property_keys();
 }

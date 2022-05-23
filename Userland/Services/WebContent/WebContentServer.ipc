@@ -2,6 +2,7 @@
 #include <LibCore/AnonymousBuffer.h>
 #include <LibGfx/ShareableBitmap.h>
 #include <LibWeb/CSS/PreferredColorScheme.h>
+#include <LibWeb/CSS/Selector.h>
 
 endpoint WebContentServer
 {
@@ -21,7 +22,7 @@ endpoint WebContentServer
     mouse_down(Gfx::IntPoint position, unsigned button, unsigned buttons, unsigned modifiers) =|
     mouse_move(Gfx::IntPoint position, unsigned button, unsigned buttons, unsigned modifiers) =|
     mouse_up(Gfx::IntPoint position, unsigned button, unsigned buttons, unsigned modifiers) =|
-    mouse_wheel(Gfx::IntPoint position, unsigned button, unsigned buttons, unsigned modifiers, i32 wheel_delta) =|
+    mouse_wheel(Gfx::IntPoint position, unsigned button, unsigned buttons, unsigned modifiers, i32 wheel_delta_x, i32 wheel_delta_y) =|
 
     key_down(i32 key, unsigned modifiers, u32 code_point) =|
     key_up(i32 key, unsigned modifiers, u32 code_point) =|
@@ -29,7 +30,7 @@ endpoint WebContentServer
     debug_request(String request, String argument) =|
     get_source() =|
     inspect_dom_tree() =|
-    inspect_dom_node(i32 node_id) => (bool has_style, String specified_style, String computed_style)
+    inspect_dom_node(i32 node_id, Optional<Web::CSS::Selector::PseudoElement> pseudo_element) => (bool has_style, String specified_style, String computed_style, String custom_properties, String node_box_sizing)
     get_hovered_node_id() => (i32 node_id)
     js_console_input(String js_source) =|
     js_console_request_messages(i32 start_index) =|
@@ -42,6 +43,11 @@ endpoint WebContentServer
     select_all() =|
 
     set_content_filters(Vector<String> filters) =|
+    set_proxy_mappings(Vector<String> proxies, HashMap<String,size_t> mappings) =|
     set_preferred_color_scheme(Web::CSS::PreferredColorScheme color_scheme) =|
+    set_has_focus(bool has_focus) =|
+    set_is_scripting_enabled(bool is_scripting_enabled) =|
+
+    get_local_storage_entries() => (OrderedHashMap<String,String> entries)
 
 }

@@ -7,6 +7,7 @@
 
 #pragma once
 
+#include <AK/StringView.h>
 #include <LibJS/Runtime/FunctionObject.h>
 #include <LibJS/Runtime/VM.h>
 
@@ -31,21 +32,6 @@ public:
     FunctionObject* setter() const { return m_setter; }
     void set_setter(FunctionObject* setter) { m_setter = setter; }
 
-    Value call_getter(Value this_value)
-    {
-        if (!m_getter)
-            return js_undefined();
-        return TRY_OR_DISCARD(vm().call(*m_getter, this_value));
-    }
-
-    void call_setter(Value this_value, Value setter_value)
-    {
-        if (!m_setter)
-            return;
-        // FIXME: It might be nice if we had a way to communicate to our caller if an exception happened after this.
-        [[maybe_unused]] auto rc = vm().call(*m_setter, this_value, setter_value);
-    }
-
     void visit_edges(Cell::Visitor& visitor) override
     {
         visitor.visit(m_getter);
@@ -53,7 +39,7 @@ public:
     }
 
 private:
-    const char* class_name() const override { return "Accessor"; };
+    StringView class_name() const override { return "Accessor"sv; };
 
     FunctionObject* m_getter { nullptr };
     FunctionObject* m_setter { nullptr };

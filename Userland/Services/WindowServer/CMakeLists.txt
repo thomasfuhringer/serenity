@@ -13,7 +13,7 @@ set(SOURCES
     Animation.cpp
     AppletManager.cpp
     Button.cpp
-    ClientConnection.cpp
+    ConnectionFromClient.cpp
     Compositor.cpp
     Cursor.cpp
     EventLoop.cpp
@@ -25,6 +25,8 @@ set(SOURCES
     MultiScaleBitmaps.cpp
     Overlays.cpp
     Screen.cpp
+    HardwareScreenBackend.cpp
+    VirtualScreenBackend.cpp
     ScreenLayout.cpp
     Window.cpp
     WindowFrame.cpp
@@ -35,7 +37,8 @@ set(SOURCES
     WindowClientEndpoint.h
     WindowManagerServerEndpoint.h
     WindowManagerClientEndpoint.h
-    WMClientConnection.cpp
+    WMConnectionFromClient.cpp
+    KeymapSwitcher.cpp
 )
 
 serenity_bin(WindowServer)

@@ -30,13 +30,13 @@ public:
 
     class ViewportClient {
     public:
-        virtual ~ViewportClient() { }
+        virtual ~ViewportClient() = default;
         virtual void browsing_context_did_set_viewport_rect(Gfx::IntRect const&) = 0;
     };
     void register_viewport_client(ViewportClient&);
     void unregister_viewport_client(ViewportClient&);
 
-    bool is_top_level() const { return !container(); }
+    bool is_top_level() const;
     bool is_focused_context() const;
 
     DOM::Document const* active_document() const { return m_active_document; }
@@ -50,10 +50,10 @@ public:
     Gfx::IntSize const& size() const { return m_size; }
     void set_size(Gfx::IntSize const&);
 
+    void set_needs_display();
     void set_needs_display(Gfx::IntRect const&);
 
     Gfx::IntPoint const& viewport_scroll_offset() const { return m_viewport_scroll_offset; }
-    void set_viewport_scroll_offset(Gfx::IntPoint const&);
     Gfx::IntRect viewport_rect() const { return { m_viewport_scroll_offset, m_size }; }
     void set_viewport_rect(Gfx::IntRect const&);
 
@@ -63,6 +63,7 @@ public:
     Web::EventHandler& event_handler() { return m_event_handler; }
     Web::EventHandler const& event_handler() const { return m_event_handler; }
 
+    void scroll_to(Gfx::IntPoint const&);
     void scroll_to_anchor(String const&);
 
     BrowsingContext& top_level_browsing_context()
@@ -74,6 +75,8 @@ public:
     }
 
     BrowsingContext const& top_level_browsing_context() const { return const_cast<BrowsingContext*>(this)->top_level_browsing_context(); }
+
+    BrowsingContext* choose_a_browsing_context(StringView name, bool noopener);
 
     HTML::BrowsingContextContainer* container() { return m_container; }
     HTML::BrowsingContextContainer const* container() const { return m_container; }
@@ -104,6 +107,11 @@ public:
 
     bool has_a_rendering_opportunity() const;
 
+    RefPtr<DOM::Node> currently_focused_area();
+
+    String const& name() const { return m_name; }
+    void set_name(String const& name) { m_name = name; }
+
 private:
     explicit BrowsingContext(Page&, HTML::BrowsingContextContainer*);
 
@@ -126,6 +134,7 @@ private:
     HashTable<ViewportClient*> m_viewport_clients;
 
     HashMap<AK::URL, size_t> m_frame_nesting_levels;
+    String m_name;
 };
 
 }

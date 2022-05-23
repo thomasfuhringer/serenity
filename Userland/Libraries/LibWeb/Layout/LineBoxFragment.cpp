@@ -5,24 +5,13 @@
  */
 
 #include <AK/Utf8View.h>
-#include <LibGfx/Painter.h>
+#include <LibWeb/Layout/FormattingState.h>
 #include <LibWeb/Layout/InitialContainingBlock.h>
 #include <LibWeb/Layout/LineBoxFragment.h>
 #include <LibWeb/Layout/TextNode.h>
-#include <LibWeb/Painting/PaintContext.h>
 #include <ctype.h>
 
 namespace Web::Layout {
-
-void LineBoxFragment::paint(PaintContext& context, PaintPhase phase)
-{
-    for (auto* ancestor = layout_node().parent(); ancestor; ancestor = ancestor->parent()) {
-        if (!ancestor->is_visible())
-            return;
-    }
-
-    layout_node().paint_fragment(context, *this, phase);
-}
 
 bool LineBoxFragment::ends_in_whitespace() const
 {
@@ -47,7 +36,7 @@ StringView LineBoxFragment::text() const
 const Gfx::FloatRect LineBoxFragment::absolute_rect() const
 {
     Gfx::FloatRect rect { {}, size() };
-    rect.set_location(m_layout_node.containing_block()->absolute_position());
+    rect.set_location(m_layout_node.containing_block()->paint_box()->absolute_position());
     rect.translate_by(offset());
     return rect;
 }
@@ -76,7 +65,7 @@ int LineBoxFragment::text_index_at(float x) const
     return m_start + m_length;
 }
 
-Gfx::FloatRect LineBoxFragment::selection_rect(const Gfx::Font& font) const
+Gfx::FloatRect LineBoxFragment::selection_rect(Gfx::Font const& font) const
 {
     if (layout_node().selection_state() == Node::SelectionState::None)
         return {};
@@ -90,8 +79,8 @@ Gfx::FloatRect LineBoxFragment::selection_rect(const Gfx::Font& font) const
     if (!is<TextNode>(layout_node()))
         return {};
 
-    const auto start_index = m_start;
-    const auto end_index = m_start + m_length;
+    auto const start_index = m_start;
+    auto const end_index = m_start + m_length;
     auto text = this->text();
 
     if (layout_node().selection_state() == Node::SelectionState::StartAndEnd) {

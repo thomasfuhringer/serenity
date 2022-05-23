@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2018-2020, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2018-2022, Andreas Kling <kling@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -50,7 +50,7 @@ public:
     using TreeNode<Node>::unref;
 
     ParentNode* parent_or_shadow_host();
-    const ParentNode* parent_or_shadow_host() const { return const_cast<Node*>(this)->parent_or_shadow_host(); }
+    ParentNode const* parent_or_shadow_host() const { return const_cast<Node*>(this)->parent_or_shadow_host(); }
 
     // ^EventTarget
     virtual void ref_event_target() final { ref(); }
@@ -71,9 +71,12 @@ public:
     bool is_document_fragment() const { return type() == NodeType::DOCUMENT_FRAGMENT_NODE; }
     bool is_parent_node() const { return is_element() || is_document() || is_document_fragment(); }
     bool is_slottable() const { return is_element() || is_text(); }
+    bool is_attribute() const { return type() == NodeType::ATTRIBUTE_NODE; }
+    virtual bool is_shadow_root() const { return false; }
 
     virtual bool requires_svg_container() const { return false; }
     virtual bool is_svg_container() const { return false; }
+    virtual bool is_svg_svg_element() const { return false; }
 
     bool in_a_document_tree() const;
 
@@ -83,6 +86,7 @@ public:
     virtual bool is_editable() const;
 
     virtual bool is_html_html_element() const { return false; }
+    virtual bool is_html_anchor_element() const { return false; }
     virtual bool is_html_template_element() const { return false; }
     virtual bool is_browsing_context_container() const { return false; }
 
@@ -90,6 +94,8 @@ public:
     ExceptionOr<NonnullRefPtr<Node>> pre_remove(NonnullRefPtr<Node>);
 
     ExceptionOr<NonnullRefPtr<Node>> append_child(NonnullRefPtr<Node>);
+    ExceptionOr<NonnullRefPtr<Node>> remove_child(NonnullRefPtr<Node>);
+
     void insert_before(NonnullRefPtr<Node> node, RefPtr<Node> child, bool suppress_observers = false);
     void remove(bool suppress_observers = false);
     void remove_all_children(bool suppress_observers = false);
@@ -105,33 +111,36 @@ public:
     NonnullRefPtr<NodeList> child_nodes();
     NonnullRefPtrVector<Node> children_as_vector() const;
 
-    virtual RefPtr<Layout::Node> create_layout_node();
-
     virtual FlyString node_name() const = 0;
+
+    String base_uri() const;
 
     String descendant_text_content() const;
     String text_content() const;
     void set_text_content(String const&);
 
+    String node_value() const;
+    void set_node_value(String const&);
+
     Document& document() { return *m_document; }
-    const Document& document() const { return *m_document; }
+    Document const& document() const { return *m_document; }
 
     RefPtr<Document> owner_document() const;
 
     const HTML::HTMLAnchorElement* enclosing_link_element() const;
     const HTML::HTMLElement* enclosing_html_element() const;
-    const HTML::HTMLElement* enclosing_html_element_with_attribute(const FlyString&) const;
+    const HTML::HTMLElement* enclosing_html_element_with_attribute(FlyString const&) const;
 
     String child_text_content() const;
 
     Node& root();
-    const Node& root() const
+    Node const& root() const
     {
         return const_cast<Node*>(this)->root();
     }
 
     Node& shadow_including_root();
-    const Node& shadow_including_root() const
+    Node const& shadow_including_root() const
     {
         return const_cast<Node*>(this)->shadow_including_root();
     }
@@ -139,10 +148,10 @@ public:
     bool is_connected() const;
 
     Node* parent_node() { return parent(); }
-    const Node* parent_node() const { return parent(); }
+    Node const* parent_node() const { return parent(); }
 
     Element* parent_element();
-    const Element* parent_element() const;
+    Element const* parent_element() const;
 
     virtual void inserted();
     virtual void removed_from(Node*) { }
@@ -150,12 +159,15 @@ public:
     virtual void adopted_from(Document&) { }
     virtual void cloned(Node&, bool) {};
 
-    const Layout::Node* layout_node() const { return m_layout_node; }
+    Layout::Node const* layout_node() const { return m_layout_node; }
     Layout::Node* layout_node() { return m_layout_node; }
+
+    Painting::PaintableBox const* paint_box() const;
+    Painting::Paintable const* paintable() const;
 
     void set_layout_node(Badge<Layout::Node>, Layout::Node*) const;
 
-    virtual bool is_child_allowed(const Node&) const { return true; }
+    virtual bool is_child_allowed(Node const&) const { return true; }
 
     bool needs_style_update() const { return m_needs_style_update; }
     void set_needs_style_update(bool);
@@ -169,15 +181,16 @@ public:
 
     void set_document(Badge<Document>, Document&);
 
-    virtual EventTarget* get_parent(const Event&) override;
+    virtual EventTarget* get_parent(Event const&) override;
 
     template<typename T>
     bool fast_is() const = delete;
 
     ExceptionOr<void> ensure_pre_insertion_validity(NonnullRefPtr<Node> node, RefPtr<Node> child) const;
 
-    bool is_host_including_inclusive_ancestor_of(const Node&) const;
+    bool is_host_including_inclusive_ancestor_of(Node const&) const;
 
+    bool is_scripting_enabled() const;
     bool is_scripting_disabled() const;
 
     bool contains(RefPtr<Node>) const;
@@ -204,6 +217,10 @@ public:
     NonnullRefPtr<Node> get_root_node(GetRootNodeOptions const& options = {});
 
     bool is_uninteresting_whitespace_node() const;
+
+    String debug_description() const;
+
+    size_t length() const;
 
 protected:
     Node(Document&, NodeType);

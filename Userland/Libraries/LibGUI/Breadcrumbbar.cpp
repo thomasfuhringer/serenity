@@ -1,6 +1,7 @@
 /*
  * Copyright (c) 2020, Andreas Kling <kling@serenityos.org>
  * Copyright (c) 2021, Sam Atkins <atkinssj@serenityos.org>
+ * Copyright (c) 2022, the SerenityOS developers.
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -9,7 +10,7 @@
 #include <LibGUI/Breadcrumbbar.h>
 #include <LibGUI/Button.h>
 #include <LibGUI/Painter.h>
-#include <LibGfx/Font.h>
+#include <LibGfx/Font/Font.h>
 #include <LibGfx/Palette.h>
 
 REGISTER_WIDGET(GUI, Breadcrumbbar)
@@ -20,7 +21,7 @@ class BreadcrumbButton : public Button {
     C_OBJECT(BreadcrumbButton);
 
 public:
-    virtual ~BreadcrumbButton() override { }
+    virtual ~BreadcrumbButton() override = default;
 
     virtual bool is_uncheckable() const override { return false; }
     virtual void drop_event(DropEvent& event) override
@@ -54,17 +55,13 @@ public:
     Function<void(DragEvent&)> on_drag_enter;
 
 private:
-    BreadcrumbButton() { }
+    BreadcrumbButton() = default;
 };
 
 Breadcrumbbar::Breadcrumbbar()
 {
     auto& layout = set_layout<HorizontalBoxLayout>();
     layout.set_spacing(0);
-}
-
-Breadcrumbbar::~Breadcrumbbar()
-{
 }
 
 void Breadcrumbbar::clear_segments()
@@ -87,6 +84,10 @@ void Breadcrumbbar::append_segment(String text, Gfx::Bitmap const* icon, String 
         if (on_segment_click)
             on_segment_click(index);
     };
+    button.on_focus_change = [this, index = m_segments.size()](auto has_focus, auto) {
+        if (has_focus && on_segment_click)
+            on_segment_click(index);
+    };
     button.on_drop = [this, index = m_segments.size()](auto& drop_event) {
         if (on_segment_drop)
             on_segment_drop(index, drop_event);
@@ -100,7 +101,7 @@ void Breadcrumbbar::append_segment(String text, Gfx::Bitmap const* icon, String 
     auto icon_width = icon ? icon->width() : 0;
     auto icon_padding = icon ? 4 : 0;
 
-    const int max_button_width = 100;
+    int const max_button_width = 100;
 
     auto button_width = min(button_text_width + icon_width + icon_padding + 16, max_button_width);
     auto shrunken_width = icon_width + icon_padding + (icon ? 4 : 16);

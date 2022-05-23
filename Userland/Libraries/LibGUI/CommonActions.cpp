@@ -15,9 +15,9 @@ namespace GUI {
 
 namespace CommonActions {
 
-NonnullRefPtr<Action> make_about_action(const String& app_name, const Icon& app_icon, Window* parent)
+NonnullRefPtr<Action> make_about_action(String const& app_name, Icon const& app_icon, Window* parent)
 {
-    auto weak_parent = AK::try_make_weak_ptr<Window>(parent);
+    auto weak_parent = AK::make_weak_ptr_if_nonnull<Window>(parent);
     auto action = Action::create(String::formatted("&About {}", app_name), app_icon.bitmap_for_size(16), [=](auto&) {
         AboutDialog::show(app_name, app_icon.bitmap_for_size(32), weak_parent.ptr());
     });
@@ -41,7 +41,7 @@ NonnullRefPtr<Action> make_save_action(Function<void(Action&)> callback, Core::O
 
 NonnullRefPtr<Action> make_save_as_action(Function<void(Action&)> callback, Core::Object* parent)
 {
-    auto action = Action::create("Save &As...", { Mod_Ctrl | Mod_Shift, Key_S }, Gfx::Bitmap::try_load_from_file("/res/icons/16x16/save.png").release_value_but_fixme_should_propagate_errors(), move(callback), parent);
+    auto action = Action::create("Save &As...", { Mod_Ctrl | Mod_Shift, Key_S }, Gfx::Bitmap::try_load_from_file("/res/icons/16x16/save-as.png").release_value_but_fixme_should_propagate_errors(), move(callback), parent);
     action->set_status_tip("Save the current file with a new name");
     return action;
 }
@@ -67,7 +67,7 @@ NonnullRefPtr<Action> make_undo_action(Function<void(Action&)> callback, Core::O
 
 NonnullRefPtr<Action> make_redo_action(Function<void(Action&)> callback, Core::Object* parent)
 {
-    return Action::create("&Redo", { Mod_Ctrl, Key_Y }, Gfx::Bitmap::try_load_from_file("/res/icons/16x16/redo.png").release_value_but_fixme_should_propagate_errors(), move(callback), parent);
+    return Action::create("&Redo", { Mod_Ctrl | Mod_Shift, Key_Z }, { Mod_Ctrl, Key_Y }, Gfx::Bitmap::try_load_from_file("/res/icons/16x16/redo.png").release_value_but_fixme_should_propagate_errors(), move(callback), parent);
 }
 
 NonnullRefPtr<Action> make_delete_action(Function<void(Action&)> callback, Core::Object* parent)
@@ -100,6 +100,7 @@ NonnullRefPtr<Action> make_fullscreen_action(Function<void(Action&)> callback, C
 {
     auto action = Action::create("&Fullscreen", { Mod_None, Key_F11 }, move(callback), parent);
     action->set_status_tip("Enter fullscreen mode");
+    action->set_icon(Gfx::Bitmap::try_load_from_file("/res/icons/16x16/fullscreen.png").release_value_but_fixme_should_propagate_errors());
     return action;
 }
 
@@ -112,7 +113,7 @@ NonnullRefPtr<Action> make_quit_action(Function<void(Action&)> callback)
 
 NonnullRefPtr<Action> make_help_action(Function<void(Action&)> callback, Core::Object* parent)
 {
-    auto action = Action::create("&Contents", { Mod_None, Key_F1 }, Gfx::Bitmap::try_load_from_file("/res/icons/16x16/app-help.png").release_value_but_fixme_should_propagate_errors(), move(callback), parent);
+    auto action = Action::create("&Manual", { Mod_None, Key_F1 }, Gfx::Bitmap::try_load_from_file("/res/icons/16x16/app-help.png").release_value_but_fixme_should_propagate_errors(), move(callback), parent);
     action->set_status_tip("Show help contents");
     return action;
 }
@@ -176,6 +177,16 @@ NonnullRefPtr<Action> make_reset_zoom_action(Function<void(Action&)> callback, C
 NonnullRefPtr<Action> make_zoom_out_action(Function<void(Action&)> callback, Core::Object* parent)
 {
     return GUI::Action::create("Zoom &Out", { Mod_Ctrl, Key_Minus }, Gfx::Bitmap::try_load_from_file("/res/icons/16x16/zoom-out.png").release_value_but_fixme_should_propagate_errors(), move(callback), parent);
+}
+
+NonnullRefPtr<Action> make_rotate_clockwise_action(Function<void(Action&)> callback, Core::Object* parent)
+{
+    return GUI::Action::create("Rotate Clock&wise", { Mod_Ctrl | Mod_Shift, Key_GreaterThan }, Gfx::Bitmap::try_load_from_file("/res/icons/16x16/edit-rotate-cw.png").release_value_but_fixme_should_propagate_errors(), move(callback), parent);
+}
+
+NonnullRefPtr<Action> make_rotate_counterclockwise_action(Function<void(Action&)> callback, Core::Object* parent)
+{
+    return GUI::Action::create("Rotate &Counterclockwise", { Mod_Ctrl | Mod_Shift, Key_LessThan }, Gfx::Bitmap::try_load_from_file("/res/icons/16x16/edit-rotate-ccw.png").release_value_but_fixme_should_propagate_errors(), move(callback), parent);
 }
 
 }

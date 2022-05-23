@@ -38,10 +38,6 @@ void StringConstructor::initialize(GlobalObject& global_object)
     define_direct_property(vm.names.length, Value(1), Attribute::Configurable);
 }
 
-StringConstructor::~StringConstructor()
-{
-}
-
 // 22.1.1.1 String ( value ), https://tc39.es/ecma262/#sec-string-constructor-string-value
 ThrowCompletionOr<Value> StringConstructor::call()
 {
@@ -77,7 +73,7 @@ JS_DEFINE_NATIVE_FUNCTION(StringConstructor::raw)
     if (literal_segments == 0)
         return js_string(vm, "");
 
-    const auto number_of_substituions = vm.argument_count() - 1;
+    auto const number_of_substituions = vm.argument_count() - 1;
 
     StringBuilder builder;
     for (size_t i = 0; i < literal_segments; ++i) {

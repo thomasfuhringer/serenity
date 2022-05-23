@@ -10,8 +10,8 @@
 
 namespace Protocol {
 
-RequestClient::RequestClient()
-    : IPC::ServerConnection<RequestClientEndpoint, RequestServerEndpoint>(*this, "/tmp/portal/request")
+RequestClient::RequestClient(NonnullOwnPtr<Core::Stream::LocalSocket> socket)
+    : IPC::ConnectionToServer<RequestClientEndpoint, RequestServerEndpoint>(*this, move(socket))
 {
 }
 
@@ -21,17 +21,17 @@ void RequestClient::ensure_connection(URL const& url, ::RequestServer::CacheLeve
 }
 
 template<typename RequestHashMapTraits>
-RefPtr<Request> RequestClient::start_request(String const& method, URL const& url, HashMap<String, String, RequestHashMapTraits> const& request_headers, ReadonlyBytes request_body)
+RefPtr<Request> RequestClient::start_request(String const& method, URL const& url, HashMap<String, String, RequestHashMapTraits> const& request_headers, ReadonlyBytes request_body, Core::ProxyData const& proxy_data)
 {
     IPC::Dictionary header_dictionary;
     for (auto& it : request_headers)
         header_dictionary.add(it.key, it.value);
 
     auto body_result = ByteBuffer::copy(request_body);
-    if (!body_result.has_value())
+    if (body_result.is_error())
         return nullptr;
 
-    auto response = IPCProxy::start_request(method, url, header_dictionary, body_result.release_value());
+    auto response = IPCProxy::start_request(method, url, header_dictionary, body_result.release_value(), proxy_data);
     auto request_id = response.request_id();
     if (request_id < 0 || !response.response_fd().has_value())
         return nullptr;
@@ -91,5 +91,5 @@ void RequestClient::certificate_requested(i32 request_id)
 
 }
 
-template RefPtr<Protocol::Request> Protocol::RequestClient::start_request(String const& method, URL const&, HashMap<String, String> const& request_headers, ReadonlyBytes request_body);
-template RefPtr<Protocol::Request> Protocol::RequestClient::start_request(String const& method, URL const&, HashMap<String, String, CaseInsensitiveStringTraits> const& request_headers, ReadonlyBytes request_body);
+template RefPtr<Protocol::Request> Protocol::RequestClient::start_request(String const& method, URL const&, HashMap<String, String> const& request_headers, ReadonlyBytes request_body, Core::ProxyData const&);
+template RefPtr<Protocol::Request> Protocol::RequestClient::start_request(String const& method, URL const&, HashMap<String, String, CaseInsensitiveStringTraits> const& request_headers, ReadonlyBytes request_body, Core::ProxyData const&);

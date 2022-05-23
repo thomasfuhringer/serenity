@@ -11,44 +11,36 @@
 #include <LibWeb/DOM/Event.h>
 #include <LibWeb/DOM/ShadowRoot.h>
 #include <LibWeb/DOM/Text.h>
-#include <LibWeb/DOM/Window.h>
 #include <LibWeb/HTML/EventNames.h>
 #include <LibWeb/HTML/HTMLScriptElement.h>
 #include <LibWeb/HTML/Scripting/ClassicScript.h>
+#include <LibWeb/HTML/Window.h>
 #include <LibWeb/Loader/ResourceLoader.h>
 
 namespace Web::HTML {
 
-HTMLScriptElement::HTMLScriptElement(DOM::Document& document, QualifiedName qualified_name)
+HTMLScriptElement::HTMLScriptElement(DOM::Document& document, DOM::QualifiedName qualified_name)
     : HTMLElement(document, move(qualified_name))
 {
 }
 
-HTMLScriptElement::~HTMLScriptElement()
-{
-}
+HTMLScriptElement::~HTMLScriptElement() = default;
 
-void HTMLScriptElement::set_parser_document(Badge<HTMLParser>, DOM::Document& document)
+void HTMLScriptElement::begin_delaying_document_load_event(DOM::Document& document)
 {
-    m_parser_document = document;
-
     // https://html.spec.whatwg.org/multipage/scripting.html#concept-script-script
     // The user agent must delay the load event of the element's node document until the script is ready.
     m_document_load_event_delayer.emplace(document);
 }
 
-void HTMLScriptElement::set_non_blocking(Badge<HTMLParser>, bool non_blocking)
-{
-    m_non_blocking = non_blocking;
-}
-
 // https://html.spec.whatwg.org/multipage/scripting.html#execute-the-script-block
 void HTMLScriptElement::execute_script()
 {
-    // 1. Let document be scriptElement's node document. (NOTE: This is not necessary)
+    // 1. Let document be scriptElement's node document.
+    NonnullRefPtr<DOM::Document> node_document = document();
 
     // 2. If scriptElement's preparation-time document is not equal to document, then return.
-    if (m_preparation_time_document.ptr() != &document()) {
+    if (m_preparation_time_document.ptr() != node_document.ptr()) {
         dbgln("HTMLScriptElement: Refusing to run script because the preparation time document is not the same as the node document.");
         return;
     }
@@ -63,7 +55,7 @@ void HTMLScriptElement::execute_script()
     // 4. If scriptElement is from an external file, or the script's type for scriptElement is "module", then increment document's ignore-destructive-writes counter.
     bool incremented_destructive_writes_counter = false;
     if (m_from_an_external_file || m_script_type == ScriptType::Module) {
-        document().increment_ignore_destructive_writes_counter();
+        node_document->increment_ignore_destructive_writes_counter();
         incremented_destructive_writes_counter = true;
     }
 
@@ -74,9 +66,9 @@ void HTMLScriptElement::execute_script()
         auto old_current_script = document().current_script();
         // 2. If scriptElement's root is not a shadow root, then set document's currentScript attribute to scriptElement. Otherwise, set it to null.
         if (!is<DOM::ShadowRoot>(root()))
-            document().set_current_script({}, this);
+            node_document->set_current_script({}, this);
         else
-            document().set_current_script({}, nullptr);
+            node_document->set_current_script({}, nullptr);
 
         if (m_from_an_external_file)
             dbgln_if(HTML_SCRIPT_DEBUG, "HTMLScriptElement: Running script {}", attribute(HTML::AttributeNames::src));
@@ -84,10 +76,10 @@ void HTMLScriptElement::execute_script()
             dbgln_if(HTML_SCRIPT_DEBUG, "HTMLScriptElement: Running inline script");
 
         // 3. Run the classic script given by the script's script for scriptElement.
-        verify_cast<ClassicScript>(*m_script).run();
+        (void)verify_cast<ClassicScript>(*m_script).run();
 
-        // Set document's currentScript attribute to oldCurrentScript.
-        document().set_current_script({}, old_current_script);
+        // 4. Set document's currentScript attribute to oldCurrentScript.
+        node_document->set_current_script({}, old_current_script);
     } else {
         // -> "module"
         // 1. Assert: document's currentScript attribute is null.
@@ -99,7 +91,7 @@ void HTMLScriptElement::execute_script()
 
     // 6. Decrement the ignore-destructive-writes counter of document, if it was incremented in the earlier step.
     if (incremented_destructive_writes_counter)
-        document().decrement_ignore_destructive_writes_counter();
+        node_document->decrement_ignore_destructive_writes_counter();
 
     // 7. If scriptElement is from an external file, then fire an event named load at scriptElement.
     if (m_from_an_external_file)
@@ -107,7 +99,7 @@ void HTMLScriptElement::execute_script()
 }
 
 // https://mimesniff.spec.whatwg.org/#javascript-mime-type-essence-match
-static bool is_javascript_mime_type_essence_match(const String& string)
+static bool is_javascript_mime_type_essence_match(String const& string)
 {
     auto lowercase_string = string.to_lowercase();
     return lowercase_string.is_one_of("application/ecmascript", "application/javascript", "application/x-ecmascript", "application/x-javascript", "text/ecmascript", "text/javascript", "text/javascript1.0", "text/javascript1.1", "text/javascript1.2", "text/javascript1.3", "text/javascript1.4", "text/javascript1.5", "text/jscript", "text/livescript", "text/x-ecmascript", "text/x-javascript");
@@ -137,10 +129,8 @@ void HTMLScriptElement::prepare_script()
     auto source_text = child_text_content();
 
     // 6. If the element has no src attribute, and source text is the empty string, then return. The script is not executed.
-    if (!has_attribute(HTML::AttributeNames::src) && source_text.is_empty()) {
-        dbgln("HTMLScriptElement: Refusing to run empty script.");
+    if (!has_attribute(HTML::AttributeNames::src) && source_text.is_empty())
         return;
-    }
 
     // 7. If the element is not connected, then return. The script is not executed.
     if (!is_connected()) {
@@ -258,7 +248,8 @@ void HTMLScriptElement::prepare_script()
     // FIXME: 24. Let options be a script fetch options whose cryptographic nonce is cryptographic nonce, integrity metadata is integrity metadata, parser metadata is parser metadata,
     //            credentials mode is module script credentials mode, and referrer policy is referrer policy.
 
-    // FIXME: 25. Let settings object be the element's node document's relevant settings object.
+    // 25. Let settings object be the element's node document's relevant settings object.
+    // NOTE: This will be done manually when this is required, as two of the use cases are inside lambdas that get executed later and thus a reference cannot be taken.
 
     // 26. If the element has a src content attribute, then:
     if (has_attribute(HTML::AttributeNames::src)) {
@@ -292,6 +283,9 @@ void HTMLScriptElement::prepare_script()
             //    Fetch a classic script given url, settings object, options, classic script CORS setting, and encoding.
             auto request = LoadRequest::create_for_url_on_page(url, document().page());
 
+            if (parser_document)
+                begin_delaying_document_load_event(*parser_document);
+
             ResourceLoader::the().load(
                 request,
                 [this, url](auto data, auto&, auto) {
@@ -301,7 +295,7 @@ void HTMLScriptElement::prepare_script()
                     }
 
                     // FIXME: This is all ad-hoc and needs work.
-                    auto script = ClassicScript::create(url.to_string(), data, document().realm(), AK::URL());
+                    auto script = ClassicScript::create(url.to_string(), data, document().relevant_settings_object(), AK::URL());
 
                     // When the chosen algorithm asynchronously completes, set the script's script to the result. At that time, the script is ready.
                     m_script = script;
@@ -327,7 +321,7 @@ void HTMLScriptElement::prepare_script()
             // 1. Let script be the result of creating a classic script using source text, settings object, base URL, and options.
 
             // FIXME: Pass settings, base URL and options.
-            auto script = ClassicScript::create(m_document->url().to_string(), source_text, document().realm(), AK::URL());
+            auto script = ClassicScript::create(m_document->url().to_string(), source_text, document().relevant_settings_object(), AK::URL(), m_source_line_number);
 
             // 2. Set the script's script to script.
             m_script = script;
@@ -390,7 +384,7 @@ void HTMLScriptElement::prepare_script()
 
                 // 3. Remove the first element from this list of scripts that will execute in order
                 //    as soon as possible.
-                m_preparation_time_document->scripts_to_execute_as_soon_as_possible().take_first();
+                (void)m_preparation_time_document->scripts_to_execute_as_soon_as_possible().take_first();
 
                 // 4. If this list of scripts that will execute in order as soon as possible is still
                 //    not empty and the first entry has already been marked as ready, then jump back

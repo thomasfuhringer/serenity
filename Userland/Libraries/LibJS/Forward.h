@@ -6,6 +6,8 @@
 
 #pragma once
 
+#include <AK/Types.h>
+
 #define JS_DECLARE_NATIVE_FUNCTION(name) \
     static JS::ThrowCompletionOr<JS::Value> name(JS::VM&, JS::GlobalObject&)
 
@@ -67,12 +69,16 @@
     __JS_ENUMERATE(Float32Array, float32_array, Float32ArrayPrototype, Float32ArrayConstructor, float)                          \
     __JS_ENUMERATE(Float64Array, float64_array, Float64ArrayPrototype, Float64ArrayConstructor, double)
 
-#define JS_ENUMERATE_INTL_OBJECTS                                                                        \
-    __JS_ENUMERATE(DateTimeFormat, date_time_format, DateTimeFormatPrototype, DateTimeFormatConstructor) \
-    __JS_ENUMERATE(DisplayNames, display_names, DisplayNamesPrototype, DisplayNamesConstructor)          \
-    __JS_ENUMERATE(ListFormat, list_format, ListFormatPrototype, ListFormatConstructor)                  \
-    __JS_ENUMERATE(Locale, locale, LocalePrototype, LocaleConstructor)                                   \
-    __JS_ENUMERATE(NumberFormat, number_format, NumberFormatPrototype, NumberFormatConstructor)
+#define JS_ENUMERATE_INTL_OBJECTS                                                                                        \
+    __JS_ENUMERATE(Collator, collator, CollatorPrototype, CollatorConstructor)                                           \
+    __JS_ENUMERATE(DateTimeFormat, date_time_format, DateTimeFormatPrototype, DateTimeFormatConstructor)                 \
+    __JS_ENUMERATE(DisplayNames, display_names, DisplayNamesPrototype, DisplayNamesConstructor)                          \
+    __JS_ENUMERATE(ListFormat, list_format, ListFormatPrototype, ListFormatConstructor)                                  \
+    __JS_ENUMERATE(Locale, locale, LocalePrototype, LocaleConstructor)                                                   \
+    __JS_ENUMERATE(NumberFormat, number_format, NumberFormatPrototype, NumberFormatConstructor)                          \
+    __JS_ENUMERATE(PluralRules, plural_rules, PluralRulesPrototype, PluralRulesConstructor)                              \
+    __JS_ENUMERATE(RelativeTimeFormat, relative_time_format, RelativeTimeFormatPrototype, RelativeTimeFormatConstructor) \
+    __JS_ENUMERATE(Segmenter, segmenter, SegmenterPrototype, SegmenterConstructor)
 
 #define JS_ENUMERATE_TEMPORAL_OBJECTS                                                                    \
     __JS_ENUMERATE(Calendar, calendar, CalendarPrototype, CalendarConstructor)                           \
@@ -90,6 +96,7 @@
     __JS_ENUMERATE(Iterator, iterator)                           \
     __JS_ENUMERATE(ArrayIterator, array_iterator)                \
     __JS_ENUMERATE(AsyncIterator, async_iterator)                \
+    __JS_ENUMERATE(Intl::SegmentIterator, intl_segment_iterator) \
     __JS_ENUMERATE(MapIterator, map_iterator)                    \
     __JS_ENUMERATE(RegExpStringIterator, regexp_string_iterator) \
     __JS_ENUMERATE(SetIterator, set_iterator)                    \
@@ -134,6 +141,7 @@ class BoundFunction;
 class Cell;
 class CellAllocator;
 class ClassExpression;
+struct ClassFieldDefinition;
 class Completion;
 class Console;
 class DeclarativeEnvironment;
@@ -142,7 +150,7 @@ class ECMAScriptFunctionObject;
 class Environment;
 class Error;
 class ErrorType;
-class Exception;
+struct ExecutionContext;
 class Expression;
 class FunctionEnvironment;
 class FunctionNode;
@@ -152,7 +160,7 @@ class HandleImpl;
 class Heap;
 class HeapBlock;
 class Interpreter;
-class MarkedValueList;
+class Module;
 class NativeFunction;
 class ObjectEnvironment;
 class PrimitiveString;
@@ -165,9 +173,11 @@ class PropertyKey;
 class Realm;
 class Reference;
 class ScopeNode;
+class Script;
 class Shape;
 class Statement;
 class StringOrSymbol;
+class SourceTextModule;
 class Symbol;
 class Token;
 class Utf16String;
@@ -178,6 +188,7 @@ class WrappedFunction;
 enum class DeclarationKind;
 struct AlreadyResolved;
 struct JobCallback;
+struct ModuleRequest;
 struct PromiseCapability;
 
 // Not included in JS_ENUMERATE_NATIVE_OBJECTS due to missing distinct prototype
@@ -185,8 +196,10 @@ class ProxyObject;
 class ProxyConstructor;
 
 // Not included in JS_ENUMERATE_NATIVE_OBJECTS due to missing distinct constructor
-class GeneratorObjectPrototype;
 class AsyncFromSyncIteratorPrototype;
+class AsyncGenerator;
+class AsyncGeneratorPrototype;
+class GeneratorPrototype;
 
 class TypedArrayConstructor;
 class TypedArrayPrototype;
@@ -210,6 +223,10 @@ namespace Intl {
     class PrototypeName;
 JS_ENUMERATE_INTL_OBJECTS
 #undef __JS_ENUMERATE
+
+// Not included in JS_ENUMERATE_INTL_OBJECTS due to missing distinct constructor
+class Segments;
+class SegmentsPrototype;
 };
 
 namespace Temporal {
@@ -219,7 +236,10 @@ namespace Temporal {
     class PrototypeName;
 JS_ENUMERATE_TEMPORAL_OBJECTS
 #undef __JS_ENUMERATE
-struct TemporalDuration;
+struct DurationRecord;
+struct DateDurationRecord;
+struct TimeDurationRecord;
+struct PartialDurationRecord;
 };
 
 template<typename T>
@@ -227,6 +247,9 @@ class ThrowCompletionOr;
 
 template<class T>
 class Handle;
+
+template<class T, size_t inline_capacity = 32>
+class MarkedVector;
 
 namespace Bytecode {
 class BasicBlock;

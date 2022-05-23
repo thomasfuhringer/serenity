@@ -16,7 +16,7 @@ String List::render_to_html(bool) const
 {
     StringBuilder builder;
 
-    const char* tag = m_is_ordered ? "ol" : "ul";
+    char const* tag = m_is_ordered ? "ol" : "ul";
     builder.appendff("<{}", tag);
 
     if (m_start_number != 1)
@@ -45,12 +45,11 @@ String List::render_for_terminal(size_t) const
     for (auto& item : m_items) {
         builder.append("  ");
         if (m_is_ordered)
-            builder.appendff("{}. ", ++i);
+            builder.appendff("{}.", ++i);
         else
-            builder.append("* ");
+            builder.append("*");
         builder.append(item->render_for_terminal());
     }
-    builder.append("\n");
 
     return builder.build();
 }

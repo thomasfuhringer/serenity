@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2021, Tobias Christiansen <tobyase@serenityos.org>
+ * Copyright (c) 2022, the SerenityOS developers.
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -15,15 +16,7 @@
 
 namespace PixelPaint {
 
-GuideTool::GuideTool()
-{
-}
-
-GuideTool::~GuideTool()
-{
-}
-
-RefPtr<Guide> GuideTool::closest_guide(const Gfx::IntPoint& point)
+RefPtr<Guide> GuideTool::closest_guide(Gfx::IntPoint const& point)
 {
     auto guides = editor()->guides();
     Guide* closest_guide = nullptr;
@@ -149,7 +142,7 @@ void GuideTool::on_context_menu(Layer*, GUI::ContextMenuEvent& event)
                     editor()->window(),
                     String::formatted("{}", m_context_menu_guide->offset()),
                     m_context_menu_guide->orientation());
-                if (dialog->exec() != GUI::Dialog::ExecOK)
+                if (dialog->exec() != GUI::Dialog::ExecResult::OK)
                     return;
                 auto offset = dialog->offset_as_pixel(*editor());
                 if (!offset.has_value())
@@ -171,7 +164,7 @@ void GuideTool::on_context_menu(Layer*, GUI::ContextMenuEvent& event)
             editor()));
     }
 
-    auto image_position = editor()->editor_position_to_image_position(event.position());
+    auto image_position = editor()->frame_to_content_position(event.position());
     m_context_menu_guide = closest_guide({ (int)image_position.x(), (int)image_position.y() });
     if (m_context_menu_guide)
         m_context_menu->popup(event.screen_position());

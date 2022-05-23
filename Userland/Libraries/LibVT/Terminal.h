@@ -1,6 +1,7 @@
 /*
  * Copyright (c) 2018-2020, Andreas Kling <kling@serenityos.org>
  * Copyright (c) 2021, Daniel Bertalan <dani@danielbertalan.dev>
+ * Copyright (c) 2022, the SerenityOS developers.
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -9,7 +10,6 @@
 
 #include <AK/Noncopyable.h>
 #include <AK/NonnullOwnPtrVector.h>
-#include <AK/String.h>
 #include <AK/Vector.h>
 #include <Kernel/API/KeyCode.h>
 #include <LibVT/CharacterSet.h>
@@ -17,6 +17,7 @@
 #include <LibVT/Position.h>
 
 #ifndef KERNEL
+#    include <AK/String.h>
 #    include <LibVT/Attribute.h>
 #    include <LibVT/Line.h>
 #else
@@ -45,14 +46,14 @@ enum CursorKeysMode {
 
 class TerminalClient {
 public:
-    virtual ~TerminalClient() { }
+    virtual ~TerminalClient() = default;
 
     virtual void beep() = 0;
     virtual void set_window_title(StringView) = 0;
     virtual void set_window_progress(int value, int max) = 0;
     virtual void terminal_did_resize(u16 columns, u16 rows) = 0;
     virtual void terminal_history_changed(int delta) = 0;
-    virtual void emit(const u8*, size_t) = 0;
+    virtual void emit(u8 const*, size_t) = 0;
     virtual void set_cursor_style(CursorStyle) = 0;
 };
 
@@ -128,7 +129,7 @@ public:
             return m_normal_screen_buffer[index - m_history.size()];
         }
     }
-    const Line& line(size_t index) const
+    Line const& line(size_t index) const
     {
         return const_cast<Terminal*>(this)->line(index);
     }
@@ -138,7 +139,7 @@ public:
         return active_buffer()[index];
     }
 
-    const Line& visible_line(size_t index) const
+    Line const& visible_line(size_t index) const
     {
         return active_buffer()[index];
     }
@@ -176,7 +177,7 @@ public:
     void handle_key_press(KeyCode, u32, u8 flags);
 
 #ifndef KERNEL
-    Attribute attribute_at(const Position&) const;
+    Attribute attribute_at(Position const&) const;
 #endif
 
     bool needs_bracketed_paste() const
@@ -388,9 +389,14 @@ protected:
         if (max_history_size() == 0)
             return;
 
+        // If m_history can expand, add the new line to the end of the list.
+        // If there is an overflow wrap, the end is at the index before the start.
         if (m_history.size() < max_history_size()) {
-            VERIFY(m_history_start == 0);
-            m_history.append(move(line));
+            if (m_history_start == 0)
+                m_history.append(move(line));
+            else
+                m_history.insert(m_history_start - 1, move(line));
+
             return;
         }
         m_history.ptr_at(m_history_start) = move(line);
@@ -398,7 +404,7 @@ protected:
     }
 
     NonnullOwnPtrVector<Line>& active_buffer() { return m_use_alternate_screen_buffer ? m_alternate_screen_buffer : m_normal_screen_buffer; };
-    const NonnullOwnPtrVector<Line>& active_buffer() const { return m_use_alternate_screen_buffer ? m_alternate_screen_buffer : m_normal_screen_buffer; };
+    NonnullOwnPtrVector<Line> const& active_buffer() const { return m_use_alternate_screen_buffer ? m_alternate_screen_buffer : m_normal_screen_buffer; };
     NonnullOwnPtrVector<Line> m_normal_screen_buffer;
     NonnullOwnPtrVector<Line> m_alternate_screen_buffer;
 #endif
@@ -430,8 +436,13 @@ protected:
     Attribute m_current_attribute;
     Attribute m_saved_attribute;
 
+#ifdef KERNEL
+    OwnPtr<Kernel::KString> m_current_window_title;
+    NonnullOwnPtrVector<Kernel::KString> m_title_stack;
+#else
     String m_current_window_title;
     Vector<String> m_title_stack;
+#endif
 
 #ifndef KERNEL
     u32 m_next_href_id { 0 };

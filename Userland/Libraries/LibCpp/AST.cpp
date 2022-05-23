@@ -23,7 +23,7 @@ void ASTNode::dump(FILE* output, size_t indent) const
 void TranslationUnit::dump(FILE* output, size_t indent) const
 {
     ASTNode::dump(output, indent);
-    for (const auto& child : m_declarations) {
+    for (auto const& child : m_declarations) {
         child.dump(output, indent + 1);
     }
 }
@@ -41,11 +41,11 @@ void FunctionDeclaration::dump(FILE* output, size_t indent) const
     m_return_type->dump(output, indent + 1);
     if (!m_name.is_null()) {
         print_indent(output, indent + 1);
-        outln(output, "{}", m_name);
+        outln(output, "{}", m_name->full_name());
     }
     print_indent(output, indent + 1);
     outln(output, "(");
-    for (const auto& arg : m_parameters) {
+    for (auto const& arg : m_parameters) {
         arg.dump(output, indent + 1);
     }
     print_indent(output, indent + 1);
@@ -124,10 +124,11 @@ String FunctionType::to_string() const
             first = false;
         else
             builder.append(", ");
-        builder.append(parameter.type()->to_string());
-        if (!parameter.name().is_empty()) {
+        if (parameter.type())
+            builder.append(parameter.type()->to_string());
+        if (parameter.name() && !parameter.full_name().is_empty()) {
             builder.append(" ");
-            builder.append(parameter.name());
+            builder.append(parameter.full_name());
         }
     }
     builder.append(")");
@@ -143,7 +144,7 @@ void Parameter::dump(FILE* output, size_t indent) const
     }
     if (!m_name.is_null()) {
         print_indent(output, indent);
-        outln(output, "{}", m_name);
+        outln(output, "{}", m_name->full_name());
     }
     if (m_type)
         m_type->dump(output, indent + 1);
@@ -154,7 +155,7 @@ void FunctionDefinition::dump(FILE* output, size_t indent) const
     ASTNode::dump(output, indent);
     print_indent(output, indent);
     outln(output, "{{");
-    for (const auto& statement : m_statements) {
+    for (auto const& statement : m_statements) {
         statement.dump(output, indent + 1);
     }
     print_indent(output, indent);
@@ -176,7 +177,7 @@ void VariableDeclaration::dump(FILE* output, size_t indent) const
     if (m_type)
         m_type->dump(output, indent + 1);
     print_indent(output, indent + 1);
-    outln(output, "{}", m_name);
+    outln(output, "{}", full_name());
     if (m_initial_value)
         m_initial_value->dump(output, indent + 1);
 }
@@ -199,7 +200,7 @@ void BinaryExpression::dump(FILE* output, size_t indent) const
 {
     ASTNode::dump(output, indent);
 
-    const char* op_string = nullptr;
+    char const* op_string = nullptr;
     switch (m_op) {
     case BinaryOp::Addition:
         op_string = "+";
@@ -271,7 +272,7 @@ void AssignmentExpression::dump(FILE* output, size_t indent) const
 {
     ASTNode::dump(output, indent);
 
-    const char* op_string = nullptr;
+    char const* op_string = nullptr;
     switch (m_op) {
     case AssignmentOp::Assignment:
         op_string = "=";
@@ -295,7 +296,7 @@ void FunctionCall::dump(FILE* output, size_t indent) const
 {
     ASTNode::dump(output, indent);
     m_callee->dump(output, indent + 1);
-    for (const auto& arg : m_arguments) {
+    for (auto const& arg : m_arguments) {
         arg.dump(output, indent + 1);
     }
 }
@@ -318,7 +319,7 @@ void EnumDeclaration::dump(FILE* output, size_t indent) const
 {
     ASTNode::dump(output, indent);
     print_indent(output, indent);
-    outln(output, "{}", m_name);
+    outln(output, "{}", full_name());
     for (auto& entry : m_entries) {
         print_indent(output, indent + 1);
         outln(output, "{}", entry.name);
@@ -331,7 +332,20 @@ void StructOrClassDeclaration::dump(FILE* output, size_t indent) const
 {
     ASTNode::dump(output, indent);
     print_indent(output, indent);
-    outln(output, "{}", m_name);
+    outln(output, "{}", full_name());
+    if (!m_baseclasses.is_empty()) {
+        print_indent(output, indent + 1);
+        outln(output, ":");
+        for (size_t i = 0; i < m_baseclasses.size(); ++i) {
+            auto& baseclass = m_baseclasses[i];
+            baseclass.dump(output, indent + 1);
+            if (i < m_baseclasses.size() - 1) {
+                print_indent(output, indent + 1);
+                outln(output, ",");
+            }
+        }
+    }
+    outln(output, "");
     for (auto& member : m_members) {
         member.dump(output, indent + 1);
     }
@@ -348,7 +362,7 @@ void UnaryExpression::dump(FILE* output, size_t indent) const
 {
     ASTNode::dump(output, indent);
 
-    const char* op_string = nullptr;
+    char const* op_string = nullptr;
     switch (m_op) {
     case UnaryOp::BitwiseNot:
         op_string = "~";
@@ -448,7 +462,7 @@ NonnullRefPtrVector<Declaration> Statement::declarations() const
 {
     if (is_declaration()) {
         NonnullRefPtrVector<Declaration> vec;
-        const auto& decl = static_cast<const Declaration&>(*this);
+        auto const& decl = static_cast<Declaration const&>(*this);
         vec.empend(const_cast<Declaration&>(decl));
         return vec;
     }
@@ -510,7 +524,7 @@ void NamespaceDeclaration::dump(FILE* output, size_t indent) const
 {
     ASTNode::dump(output, indent);
     print_indent(output, indent + 1);
-    outln(output, "{}", m_name);
+    outln(output, "{}", full_name());
     for (auto& decl : m_declarations)
         decl.dump(output, indent + 1);
 }
@@ -527,19 +541,26 @@ void Name::dump(FILE* output, size_t indent) const
     outln(output, "{}", full_name());
 }
 
-String Name::full_name() const
+StringView Name::full_name() const
 {
+    if (m_full_name.has_value())
+        return *m_full_name;
+
     StringBuilder builder;
     if (!m_scope.is_empty()) {
         for (auto& scope : m_scope) {
             builder.appendff("{}::", scope.name());
         }
     }
-    return String::formatted("{}{}", builder.to_string(), m_name.is_null() ? "" : m_name->name());
+    m_full_name = String::formatted("{}{}", builder.to_string(), m_name.is_null() ? "" : m_name->name());
+    return *m_full_name;
 }
 
-String TemplatizedName::full_name() const
+StringView TemplatizedName::full_name() const
 {
+    if (m_full_name.has_value())
+        return *m_full_name;
+
     StringBuilder name;
     name.append(Name::full_name());
     name.append('<');
@@ -547,7 +568,8 @@ String TemplatizedName::full_name() const
         name.append(type.to_string());
     }
     name.append('>');
-    return name.to_string();
+    m_full_name = name.to_string();
+    return *m_full_name;
 }
 
 void CppCastExpression::dump(FILE* output, size_t indent) const
@@ -598,7 +620,7 @@ void Constructor::dump(FILE* output, size_t indent) const
     outln(output, "C'tor");
     print_indent(output, indent + 1);
     outln(output, "(");
-    for (const auto& arg : parameters()) {
+    for (auto const& arg : parameters()) {
         arg.dump(output, indent + 1);
     }
     print_indent(output, indent + 1);
@@ -614,7 +636,7 @@ void Destructor::dump(FILE* output, size_t indent) const
     outln(output, "D'tor");
     print_indent(output, indent + 1);
     outln(output, "(");
-    for (const auto& arg : parameters()) {
+    for (auto const& arg : parameters()) {
         arg.dump(output, indent + 1);
     }
     print_indent(output, indent + 1);
@@ -622,6 +644,18 @@ void Destructor::dump(FILE* output, size_t indent) const
     if (definition()) {
         definition()->dump(output, indent + 1);
     }
+}
+
+StringView Declaration::full_name() const
+{
+    if (!m_full_name.has_value()) {
+        if (m_name)
+            m_full_name = m_name->full_name();
+        else
+            m_full_name = String::empty();
+    }
+
+    return *m_full_name;
 }
 
 }

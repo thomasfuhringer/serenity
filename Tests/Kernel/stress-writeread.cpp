@@ -60,7 +60,7 @@ bool write_block(int fd, int seed, off_t block, AK::ByteBuffer& buffer)
 
 int main(int argc, char** argv)
 {
-    const char* target = nullptr;
+    char const* target = nullptr;
     int min_block_offset = 0;
     int block_length = 2048;
     int block_size = 512;
@@ -85,7 +85,7 @@ int main(int argc, char** argv)
     args_parser.parse(argc, argv);
 
     auto buffer_result = AK::ByteBuffer::create_zeroed(block_size);
-    if (!buffer_result.has_value()) {
+    if (buffer_result.is_error()) {
         warnln("Failed to allocate a buffer of {} bytes", block_size);
         return EXIT_FAILURE;
     }

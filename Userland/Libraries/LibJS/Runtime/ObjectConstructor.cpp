@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2020, Andreas Kling <kling@serenityos.org>
- * Copyright (c) 2020-2021, Linus Groh <linusg@serenityos.org>
+ * Copyright (c) 2020-2022, Linus Groh <linusg@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -57,10 +57,6 @@ void ObjectConstructor::initialize(GlobalObject& global_object)
     define_direct_property(vm.names.length, Value(1), Attribute::Configurable);
 }
 
-ObjectConstructor::~ObjectConstructor()
-{
-}
-
 // 20.1.1.1 Object ( [ value ] ), https://tc39.es/ecma262/#sec-object-value
 ThrowCompletionOr<Value> ObjectConstructor::call()
 {
@@ -87,7 +83,7 @@ enum class GetOwnPropertyKeysType {
 };
 
 // 20.1.2.11.1 GetOwnPropertyKeys ( O, type ), https://tc39.es/ecma262/#sec-getownpropertykeys
-static ThrowCompletionOr<Array*> get_own_property_keys(GlobalObject& global_object, Value value, GetOwnPropertyKeysType type)
+static ThrowCompletionOr<MarkedVector<Value>> get_own_property_keys(GlobalObject& global_object, Value value, GetOwnPropertyKeysType type)
 {
     auto& vm = global_object.vm();
 
@@ -98,7 +94,7 @@ static ThrowCompletionOr<Array*> get_own_property_keys(GlobalObject& global_obje
     auto keys = TRY(object->internal_own_property_keys());
 
     // 3. Let nameList be a new empty List.
-    auto name_list = MarkedValueList { vm.heap() };
+    auto name_list = MarkedVector<Value> { vm.heap() };
 
     // 4. For each element nextKey of keys, do
     for (auto& next_key : keys) {
@@ -109,22 +105,22 @@ static ThrowCompletionOr<Array*> get_own_property_keys(GlobalObject& global_obje
         }
     }
 
-    // 5. Return CreateArrayFromList(nameList).
-    return Array::create_from(global_object, name_list);
+    // 5. Return nameList.
+    return { move(name_list) };
 }
 
 // 20.1.2.10 Object.getOwnPropertyNames ( O ), https://tc39.es/ecma262/#sec-object.getownpropertynames
 JS_DEFINE_NATIVE_FUNCTION(ObjectConstructor::get_own_property_names)
 {
-    // 1. Return ? GetOwnPropertyKeys(O, string).
-    return TRY(get_own_property_keys(global_object, vm.argument(0), GetOwnPropertyKeysType::String));
+    // 1. Return CreateArrayFromList(? GetOwnPropertyKeys(O, string)).
+    return Array::create_from(global_object, TRY(get_own_property_keys(global_object, vm.argument(0), GetOwnPropertyKeysType::String)));
 }
 
 // 20.1.2.11 Object.getOwnPropertySymbols ( O ), https://tc39.es/ecma262/#sec-object.getownpropertysymbols
 JS_DEFINE_NATIVE_FUNCTION(ObjectConstructor::get_own_property_symbols)
 {
-    // 1. Return ? GetOwnPropertyKeys(O, symbol).
-    return TRY(get_own_property_keys(global_object, vm.argument(0), GetOwnPropertyKeysType::Symbol));
+    // 1. Return CreateArrayFromList(? GetOwnPropertyKeys(O, symbol)).
+    return Array::create_from(global_object, TRY(get_own_property_keys(global_object, vm.argument(0), GetOwnPropertyKeysType::Symbol)));
 }
 
 // 20.1.2.12 Object.getPrototypeOf ( O ), https://tc39.es/ecma262/#sec-object.getprototypeof
@@ -226,7 +222,7 @@ JS_DEFINE_NATIVE_FUNCTION(ObjectConstructor::from_entries)
 
     auto* object = Object::create(global_object, global_object.object_prototype());
 
-    TRY(get_iterator_values(global_object, iterable, [&](Value iterator_value) -> Optional<Completion> {
+    (void)TRY(get_iterator_values(global_object, iterable, [&](Value iterator_value) -> Optional<Completion> {
         if (!iterator_value.is_object())
             return vm.throw_completion<TypeError>(global_object, ErrorType::NotAnObject, String::formatted("Iterator value {}", iterator_value.to_string_without_side_effects()));
 
@@ -272,22 +268,22 @@ JS_DEFINE_NATIVE_FUNCTION(ObjectConstructor::get_own_property_descriptors)
     // 2. Let ownKeys be ? obj.[[OwnPropertyKeys]]().
     auto own_keys = TRY(object->internal_own_property_keys());
 
-    // 3. Let descriptors be ! OrdinaryObjectCreate(%Object.prototype%).
+    // 3. Let descriptors be OrdinaryObjectCreate(%Object.prototype%).
     auto* descriptors = Object::create(global_object, global_object.object_prototype());
 
     // 4. For each element key of ownKeys, do
     for (auto& key : own_keys) {
-        auto property_name = PropertyKey::from_value(global_object, key);
+        auto property_key = MUST(PropertyKey::from_value(global_object, key));
 
         // a. Let desc be ? obj.[[GetOwnProperty]](key).
-        auto desc = TRY(object->internal_get_own_property(property_name));
+        auto desc = TRY(object->internal_get_own_property(property_key));
 
-        // b. Let descriptor be ! FromPropertyDescriptor(desc).
+        // b. Let descriptor be FromPropertyDescriptor(desc).
         auto descriptor = from_property_descriptor(global_object, desc);
 
         // c. If descriptor is not undefined, perform ! CreateDataPropertyOrThrow(descriptors, key, descriptor).
         if (!descriptor.is_undefined())
-            MUST(descriptors->create_data_property_or_throw(property_name, descriptor));
+            MUST(descriptors->create_data_property_or_throw(property_key, descriptor));
     }
 
     // 5. Return descriptors.
@@ -359,7 +355,7 @@ JS_DEFINE_NATIVE_FUNCTION(ObjectConstructor::create)
     if (!proto.is_object() && !proto.is_null())
         return vm.throw_completion<TypeError>(global_object, ErrorType::ObjectPrototypeWrongType);
 
-    // 2. Let obj be ! OrdinaryObjectCreate(O).
+    // 2. Let obj be OrdinaryObjectCreate(O).
     auto* object = Object::create(global_object, proto.is_null() ? nullptr : &proto.as_object());
 
     // 3. If Properties is not undefined, then
@@ -411,20 +407,20 @@ JS_DEFINE_NATIVE_FUNCTION(ObjectConstructor::assign)
 
         // iii. For each element nextKey of keys, do
         for (auto& next_key : keys) {
-            auto property_name = PropertyKey::from_value(global_object, next_key);
+            auto property_key = MUST(PropertyKey::from_value(global_object, next_key));
 
             // 1. Let desc be ? from.[[GetOwnProperty]](nextKey).
-            auto desc = TRY(from->internal_get_own_property(property_name));
+            auto desc = TRY(from->internal_get_own_property(property_key));
 
             // 2. If desc is not undefined and desc.[[Enumerable]] is true, then
             if (!desc.has_value() || !*desc->enumerable)
                 continue;
 
             // a. Let propValue be ? Get(from, nextKey).
-            auto prop_value = TRY(from->get(property_name));
+            auto prop_value = TRY(from->get(property_key));
 
             // b. Perform ? Set(to, nextKey, propValue, true).
-            TRY(to->set(property_name, prop_value, Object::ShouldThrowExceptions::Yes));
+            TRY(to->set(property_key, prop_value, Object::ShouldThrowExceptions::Yes));
         }
     }
 

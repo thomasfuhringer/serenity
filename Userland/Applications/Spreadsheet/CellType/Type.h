@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2020, the SerenityOS developers.
+ * Copyright (c) 2020-2022, the SerenityOS developers.
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -23,16 +23,24 @@ struct CellTypeMetadata {
     Format static_format;
 };
 
+enum class MetadataName {
+    Length,
+    Format,
+    Alignment,
+    StaticFormat,
+};
+
 class CellType {
 public:
-    static const CellType* get_by_name(StringView);
+    static CellType const* get_by_name(StringView);
     static Vector<StringView> names();
 
-    virtual String display(Cell&, const CellTypeMetadata&) const = 0;
-    virtual JS::Value js_value(Cell&, const CellTypeMetadata&) const = 0;
-    virtual ~CellType() { }
+    virtual JS::ThrowCompletionOr<String> display(Cell&, CellTypeMetadata const&) const = 0;
+    virtual JS::ThrowCompletionOr<JS::Value> js_value(Cell&, CellTypeMetadata const&) const = 0;
+    virtual String metadata_hint(MetadataName) const { return {}; }
+    virtual ~CellType() = default;
 
-    const String& name() const { return m_name; }
+    String const& name() const { return m_name; }
 
 protected:
     CellType(StringView name);

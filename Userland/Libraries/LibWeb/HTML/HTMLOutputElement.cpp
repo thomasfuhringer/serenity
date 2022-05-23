@@ -8,13 +8,11 @@
 
 namespace Web::HTML {
 
-HTMLOutputElement::HTMLOutputElement(DOM::Document& document, QualifiedName qualified_name)
+HTMLOutputElement::HTMLOutputElement(DOM::Document& document, DOM::QualifiedName qualified_name)
     : HTMLElement(document, move(qualified_name))
 {
 }
 
-HTMLOutputElement::~HTMLOutputElement()
-{
-}
+HTMLOutputElement::~HTMLOutputElement() = default;
 
 }

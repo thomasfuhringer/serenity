@@ -1,6 +1,7 @@
 /*
  * Copyright (c) 2020, Till Mayer <till.mayer@web.de>
  * Copyright (c) 2021, Sam Atkins <atkinssj@serenityos.org>
+ * Copyright (c) 2022, the SerenityOS developers.
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -34,10 +35,6 @@ Game::Game()
     m_stacks.append(adopt_ref(*new CardStack({ 10 + 4 * Card::width + 40, 10 + Card::height + 10 }, CardStack::Type::Normal)));
     m_stacks.append(adopt_ref(*new CardStack({ 10 + 5 * Card::width + 50, 10 + Card::height + 10 }, CardStack::Type::Normal)));
     m_stacks.append(adopt_ref(*new CardStack({ 10 + 6 * Card::width + 60, 10 + Card::height + 10 }, CardStack::Type::Normal)));
-}
-
-Game::~Game()
-{
 }
 
 static float rand_float()
@@ -93,7 +90,7 @@ void Game::timer_event(Core::TimerEvent&)
 
 void Game::create_new_animation_card()
 {
-    auto card = Card::construct(static_cast<Card::Type>(get_random_uniform(Card::Type::__Count)), get_random_uniform(Card::card_count));
+    auto card = Card::construct(static_cast<Card::Suit>(get_random_uniform(to_underlying(Card::Suit::__Count))), get_random_uniform(Card::card_count));
     card->set_position({ get_random_uniform(Game::width - Card::width), get_random_uniform(Game::height / 8) });
 
     int x_sgn = card->position().x() > (Game::width / 2) ? -1 : 1;
@@ -166,10 +163,10 @@ void Game::setup(Mode mode)
         on_undo_availability_change(false);
 
     for (int i = 0; i < Card::card_count; ++i) {
-        m_new_deck.append(Card::construct(Card::Type::Clubs, i));
-        m_new_deck.append(Card::construct(Card::Type::Spades, i));
-        m_new_deck.append(Card::construct(Card::Type::Hearts, i));
-        m_new_deck.append(Card::construct(Card::Type::Diamonds, i));
+        m_new_deck.append(Card::construct(Card::Suit::Clubs, i));
+        m_new_deck.append(Card::construct(Card::Suit::Spades, i));
+        m_new_deck.append(Card::construct(Card::Suit::Hearts, i));
+        m_new_deck.append(Card::construct(Card::Suit::Diamonds, i));
     }
 
     for (uint8_t i = 0; i < 200; ++i)
@@ -294,7 +291,7 @@ void Game::mouseup_event(GUI::MouseEvent& event)
                     for (auto& to_intersect : m_focused_cards) {
                         mark_intersecting_stacks_dirty(to_intersect);
                         stack.push(to_intersect);
-                        m_focused_stack->pop();
+                        (void)m_focused_stack->pop();
                     }
 
                     remember_move_for_undo(*m_focused_stack, stack, m_focused_cards);
@@ -629,7 +626,7 @@ void Game::perform_undo()
     for (auto& to_intersect : m_last_move.cards) {
         mark_intersecting_stacks_dirty(to_intersect);
         m_last_move.from->push(to_intersect);
-        m_last_move.to->pop();
+        (void)m_last_move.to->pop();
     }
 
     if (m_last_move.from->type() == CardStack::Type::Stock) {
@@ -663,7 +660,7 @@ void Game::dump_layout() const
 {
     if constexpr (SOLITAIRE_DEBUG) {
         dbgln("------------------------------");
-        for (const auto& stack : m_stacks)
+        for (auto const& stack : m_stacks)
             dbgln("{}", stack);
     }
 }

@@ -1,3 +1,15 @@
+#import <XHR/XMLHttpRequestEventTarget.idl>
+#import <DOM/EventHandler.idl>
+
+enum XMLHttpRequestResponseType {
+  "",
+  "arraybuffer",
+  "blob",
+  "document",
+  "json",
+  "text"
+};
+
 interface XMLHttpRequest : XMLHttpRequestEventTarget {
 
     constructor();
@@ -11,13 +23,17 @@ interface XMLHttpRequest : XMLHttpRequestEventTarget {
     readonly attribute unsigned short readyState;
     readonly attribute unsigned short status;
     readonly attribute DOMString responseText;
+    readonly attribute any response;
+    attribute XMLHttpRequestResponseType responseType;
 
     undefined open(DOMString method, DOMString url);
+    undefined open(ByteString method, USVString url, boolean async, optional USVString? username = {}, optional USVString? password = {});
     undefined setRequestHeader(DOMString name, DOMString value);
     undefined send(optional USVString body = {});
 
     ByteString? getResponseHeader(ByteString name);
     ByteString getAllResponseHeaders();
+    undefined overrideMimeType(DOMString mime);
 
     attribute EventHandler onreadystatechange;
 

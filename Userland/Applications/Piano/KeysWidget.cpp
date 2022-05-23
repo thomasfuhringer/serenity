@@ -1,6 +1,7 @@
 /*
  * Copyright (c) 2018-2020, Andreas Kling <kling@serenityos.org>
  * Copyright (c) 2019-2020, William McPherson <willmcpherson2@gmail.com>
+ * Copyright (c) 2022, the SerenityOS developers.
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -15,10 +16,6 @@ KeysWidget::KeysWidget(TrackManager& track_manager)
     : m_track_manager(track_manager)
 {
     set_fill_with_background_color(true);
-}
-
-KeysWidget::~KeysWidget()
-{
 }
 
 int KeysWidget::mouse_note() const
@@ -238,7 +235,7 @@ static inline int note_from_white_keys(int white_keys)
     return note;
 }
 
-int KeysWidget::note_for_event_position(const Gfx::IntPoint& a_point) const
+int KeysWidget::note_for_event_position(Gfx::IntPoint const& a_point) const
 {
     if (!frame_inner_rect().contains(a_point))
         return -1;

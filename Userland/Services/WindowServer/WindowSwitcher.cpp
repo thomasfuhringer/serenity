@@ -5,7 +5,7 @@
  */
 
 #include <LibGfx/Bitmap.h>
-#include <LibGfx/Font.h>
+#include <LibGfx/Font/Font.h>
 #include <LibGfx/StylePainter.h>
 #include <WindowServer/Compositor.h>
 #include <WindowServer/Event.h>
@@ -26,10 +26,6 @@ WindowSwitcher& WindowSwitcher::the()
 WindowSwitcher::WindowSwitcher()
 {
     s_the = this;
-}
-
-WindowSwitcher::~WindowSwitcher()
-{
 }
 
 void WindowSwitcher::set_visible(bool visible)
@@ -89,7 +85,7 @@ void WindowSwitcher::event(Core::Event& event)
     event.accept();
 }
 
-void WindowSwitcher::on_key_event(const KeyEvent& event)
+void WindowSwitcher::on_key_event(KeyEvent const& event)
 {
     if (event.type() == Event::KeyUp) {
         if (event.key() == (m_mode == Mode::ShowAllWindows ? Key_Super : Key_Alt)) {
@@ -183,6 +179,9 @@ void WindowSwitcher::draw()
     }
 
     for (size_t index = 0; index < m_windows.size(); ++index) {
+        // FIXME: Ideally we wouldn't be in draw() without having pruned destroyed windows from the list already.
+        if (m_windows.at(index) == nullptr)
+            continue;
         auto& window = *m_windows.at(index);
         auto item_rect = this->item_rect(index);
         Color text_color;
@@ -213,7 +212,7 @@ void WindowSwitcher::draw()
 void WindowSwitcher::refresh()
 {
     auto& wm = WindowManager::the();
-    const Window* selected_window = nullptr;
+    Window const* selected_window = nullptr;
     if (m_selected_index > 0 && m_windows[m_selected_index])
         selected_window = m_windows[m_selected_index].ptr();
     if (!selected_window)

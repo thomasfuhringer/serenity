@@ -20,8 +20,4 @@ BooleanObject::BooleanObject(bool value, Object& prototype)
 {
 }
 
-BooleanObject::~BooleanObject()
-{
-}
-
 }

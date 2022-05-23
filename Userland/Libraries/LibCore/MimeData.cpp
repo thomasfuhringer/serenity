@@ -4,6 +4,7 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <AK/LexicalPath.h>
 #include <AK/StringBuilder.h>
 #include <LibCore/MimeData.h>
 
@@ -30,7 +31,7 @@ Vector<URL> MimeData::urls() const
     return urls;
 }
 
-void MimeData::set_urls(const Vector<URL>& urls)
+void MimeData::set_urls(Vector<URL> const& urls)
 {
     StringBuilder builder;
     for (auto& url : urls) {
@@ -45,7 +46,7 @@ String MimeData::text() const
     return String::copy(m_data.get("text/plain").value_or({}));
 }
 
-void MimeData::set_text(const String& text)
+void MimeData::set_text(String const& text)
 {
     set_data("text/plain", text.to_byte_buffer());
 }
@@ -66,23 +67,45 @@ String guess_mime_type_based_on_filename(StringView path)
         return "image/bmp";
     if (path.ends_with(".jpg", CaseSensitivity::CaseInsensitive) || path.ends_with(".jpeg", CaseSensitivity::CaseInsensitive))
         return "image/jpeg";
+    if (path.ends_with(".qoi", CaseSensitivity::CaseInsensitive))
+        return "image/x-qoi";
     if (path.ends_with(".svg", CaseSensitivity::CaseInsensitive))
         return "image/svg+xml";
     if (path.ends_with(".md", CaseSensitivity::CaseInsensitive))
         return "text/markdown";
     if (path.ends_with(".html", CaseSensitivity::CaseInsensitive) || path.ends_with(".htm", CaseSensitivity::CaseInsensitive))
         return "text/html";
+    if (path.ends_with(".css", CaseSensitivity::CaseInsensitive))
+        return "text/css";
     if (path.ends_with(".js", CaseSensitivity::CaseInsensitive))
         return "application/javascript";
     if (path.ends_with(".json", CaseSensitivity::CaseInsensitive))
         return "application/json";
+    if (path.ends_with(".zip", CaseSensitivity::CaseInsensitive))
+        return "application/zip";
     if (path.ends_with(".md", CaseSensitivity::CaseInsensitive))
         return "text/markdown";
     if (path.ends_with("/", CaseSensitivity::CaseInsensitive))
         return "text/html";
     if (path.ends_with(".csv", CaseSensitivity::CaseInsensitive))
         return "text/csv";
-    return "text/plain";
+    if (path.ends_with(".sheets", CaseSensitivity::CaseInsensitive))
+        return "application/x-sheets+json";
+    // FIXME: Share this, TextEditor and HackStudio language detection somehow.
+    auto basename = LexicalPath::basename(path);
+    if (path.ends_with(".cpp", CaseSensitivity::CaseInsensitive)
+        || path.ends_with(".c", CaseSensitivity::CaseInsensitive)
+        || path.ends_with(".hpp", CaseSensitivity::CaseInsensitive)
+        || path.ends_with(".h", CaseSensitivity::CaseInsensitive)
+        || path.ends_with(".gml", CaseSensitivity::CaseInsensitive)
+        || path.ends_with(".ini", CaseSensitivity::CaseInsensitive)
+        || path.ends_with(".ipc", CaseSensitivity::CaseInsensitive)
+        || path.ends_with(".txt", CaseSensitivity::CaseInsensitive)
+        || basename == "CMakeLists.txt"
+        || basename == ".history"
+        || basename == ".shellrc")
+        return "text/plain";
+    return "application/octet-stream";
 }
 
 #define ENUMERATE_HEADER_CONTENTS                                                                                                                \
@@ -112,11 +135,13 @@ String guess_mime_type_based_on_filename(StringView path)
     __ENUMERATE_MIME_TYPE_HEADER(png, "image/png", 0, 8, 0x89, 'P', 'N', 'G', 0x0D, 0x0A, 0x1A, 0x0A)                                            \
     __ENUMERATE_MIME_TYPE_HEADER(ppm, "image/x-portable-pixmap", 0, 3, 0x50, 0x33, 0x0A)                                                         \
     __ENUMERATE_MIME_TYPE_HEADER(qcow, "extra/qcow", 0, 3, 'Q', 'F', 'I')                                                                        \
+    __ENUMERATE_MIME_TYPE_HEADER(qoi, "image/x-qoi", 0, 4, 'q', 'o', 'i', 'f')                                                                   \
     __ENUMERATE_MIME_TYPE_HEADER(rtf, "application/rtf", 0, 6, 0x7B, 0x5C, 0x72, 0x74, 0x66, 0x31)                                               \
     __ENUMERATE_MIME_TYPE_HEADER(sevenzip, "application/x-7z-compressed", 0, 6, 0x37, 0x7A, 0xBC, 0xAF, 0x27, 0x1C)                              \
     __ENUMERATE_MIME_TYPE_HEADER(shell, "text/x-shellscript", 0, 10, '#', '!', '/', 'b', 'i', 'n', '/', 's', 'h', '\n')                          \
     __ENUMERATE_MIME_TYPE_HEADER(sqlite, "extra/sqlite", 0, 16, 'S', 'Q', 'L', 'i', 't', 'e', ' ', 'f', 'o', 'r', 'm', 'a', 't', ' ', '3', 0x00) \
     __ENUMERATE_MIME_TYPE_HEADER(tar, "application/tar", 0x101, 5, 0x75, 0x73, 0x74, 0x61, 0x72)                                                 \
+    __ENUMERATE_MIME_TYPE_HEADER(zip, "application/zip", 0, 2, 0x50, 0x4B)                                                                       \
     __ENUMERATE_MIME_TYPE_HEADER(tiff, "image/tiff", 0, 4, 'I', 'I', '*', 0x00)                                                                  \
     __ENUMERATE_MIME_TYPE_HEADER(tiff_bigendian, "image/tiff", 0, 4, 'M', 'M', 0x00, '*')                                                        \
     __ENUMERATE_MIME_TYPE_HEADER(wasm, "application/wasm", 0, 4, 0x00, 'a', 's', 'm')                                                            \

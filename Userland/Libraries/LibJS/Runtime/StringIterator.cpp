@@ -22,8 +22,4 @@ StringIterator::StringIterator(String string, Object& prototype)
 {
 }
 
-StringIterator::~StringIterator()
-{
-}
-
 }

@@ -1,6 +1,7 @@
 /*
  * Copyright (c) 2019-2020, Sergey Bugaev <bugaevc@serenityos.org>
  * Copyright (c) 2021, Mustafa Quraish <mustafa@cs.toronto.edu>
+ * Copyright (c) 2022, the SerenityOS developers.
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -20,10 +21,6 @@ ClipboardHistoryModel::ClipboardHistoryModel()
 {
 }
 
-ClipboardHistoryModel::~ClipboardHistoryModel()
-{
-}
-
 String ClipboardHistoryModel::column_name(int column) const
 {
     switch (column) {
@@ -33,12 +30,14 @@ String ClipboardHistoryModel::column_name(int column) const
         return "Type";
     case Column::Size:
         return "Size";
+    case Column::Time:
+        return "Time";
     default:
         VERIFY_NOT_REACHED();
     }
 }
 
-static const char* bpp_for_format_resilient(String format)
+static char const* bpp_for_format_resilient(String format)
 {
     unsigned format_uint = format.to_uint().value_or(static_cast<unsigned>(Gfx::BitmapFormat::Invalid));
     // Cannot use Gfx::Bitmap::bpp_for_format here, as we have to accept invalid enum values.
@@ -65,7 +64,9 @@ GUI::Variant ClipboardHistoryModel::data(const GUI::ModelIndex& index, GUI::Mode
 {
     if (role != GUI::ModelRole::Display)
         return {};
-    auto& data_and_type = m_history_items[index.row()];
+    auto& item = m_history_items[index.row()];
+    auto& data_and_type = item.data_and_type;
+    auto& time = item.time;
     switch (index.column()) {
     case Column::Data:
         if (data_and_type.mime_type.starts_with("text/"))
@@ -84,14 +85,17 @@ GUI::Variant ClipboardHistoryModel::data(const GUI::ModelIndex& index, GUI::Mode
         }
         if (data_and_type.mime_type.starts_with("glyph/")) {
             StringBuilder builder;
-            builder.append("[");
-            builder.append(data_and_type.metadata.get("width").value_or("?"));
-            builder.append("x");
-            builder.append(data_and_type.metadata.get("height").value_or("?"));
-            builder.append("] ");
-            builder.append("(");
-            builder.append(data_and_type.metadata.get("char").value_or(""));
-            builder.append(")");
+            auto count = data_and_type.metadata.get("count").value().to_uint().value_or(0);
+            auto start = data_and_type.metadata.get("start").value().to_uint().value_or(0);
+            auto width = data_and_type.metadata.get("width").value().to_uint().value_or(0);
+            auto height = data_and_type.metadata.get("height").value().to_uint().value_or(0);
+            if (count > 1) {
+                builder.appendff("U+{:04X}..U+{:04X} ({} glyphs) [{}x{}]", start, start + count - 1, count, width, height);
+            } else {
+                builder.appendff("U+{:04X} (", start);
+                builder.append_code_point(start);
+                builder.appendff(") [{}x{}]", width, height);
+            }
             return builder.to_string();
         }
         return "<...>";
@@ -99,6 +103,8 @@ GUI::Variant ClipboardHistoryModel::data(const GUI::ModelIndex& index, GUI::Mode
         return data_and_type.mime_type;
     case Column::Size:
         return AK::human_readable_size(data_and_type.data.size());
+    case Column::Time:
+        return time.to_string();
     default:
         VERIFY_NOT_REACHED();
     }
@@ -106,14 +112,14 @@ GUI::Variant ClipboardHistoryModel::data(const GUI::ModelIndex& index, GUI::Mode
 
 void ClipboardHistoryModel::add_item(const GUI::Clipboard::DataAndType& item)
 {
-    m_history_items.remove_first_matching([&](GUI::Clipboard::DataAndType& existing) {
-        return existing.data == item.data && existing.mime_type == item.mime_type;
+    m_history_items.remove_first_matching([&](ClipboardItem& existing) {
+        return existing.data_and_type.data == item.data && existing.data_and_type.mime_type == item.mime_type;
     });
 
     if (m_history_items.size() == m_history_limit)
         m_history_items.take_last();
 
-    m_history_items.prepend(item);
+    m_history_items.prepend({ item, Core::DateTime::now() });
     invalidate();
 }
 

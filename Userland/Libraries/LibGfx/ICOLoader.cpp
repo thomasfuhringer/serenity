@@ -83,7 +83,7 @@ struct ICOLoadingContext {
         BitmapDecoded
     };
     State state { NotDecoded };
-    const u8* data { nullptr };
+    u8 const* data { nullptr };
     size_t data_size { 0 };
     Vector<ICOImageDescriptor> images;
     size_t largest_index;
@@ -117,13 +117,13 @@ static Optional<ICOImageDescriptor> decode_ico_direntry(InputMemoryStream& strea
     return { desc };
 }
 
-static size_t find_largest_image(const ICOLoadingContext& context)
+static size_t find_largest_image(ICOLoadingContext const& context)
 {
     size_t max_area = 0;
     size_t index = 0;
     size_t largest_index = 0;
-    for (const auto& desc : context.images) {
-        if (desc.width * desc.height > max_area) {
+    for (auto const& desc : context.images) {
+        if (static_cast<size_t>(desc.width) * static_cast<size_t>(desc.height) > max_area) {
             max_area = desc.width * desc.height;
             largest_index = index;
         }
@@ -227,11 +227,11 @@ static bool load_ico_bmp(ICOLoadingContext& context, ICOImageDescriptor& desc)
         return false;
     desc.bitmap = bitmap_or_error.release_value_but_fixme_should_propagate_errors();
     Bitmap& bitmap = *desc.bitmap;
-    const u8* image_base = context.data + desc.offset + sizeof(info);
+    u8 const* image_base = context.data + desc.offset + sizeof(info);
     const BMP_ARGB* data_base = (const BMP_ARGB*)image_base;
-    const u8* mask_base = image_base + desc.width * desc.height * sizeof(BMP_ARGB);
+    u8 const* mask_base = image_base + desc.width * desc.height * sizeof(BMP_ARGB);
     for (int y = 0; y < desc.height; y++) {
-        const u8* row_mask = mask_base + mask_row_len * y;
+        u8 const* row_mask = mask_base + mask_row_len * y;
         const BMP_ARGB* row_data = data_base + desc.width * y;
         for (int x = 0; x < desc.width; x++) {
             u8 mask = !!(row_mask[x / 8] & (0x80 >> (x % 8)));
@@ -264,7 +264,7 @@ static bool load_ico_bitmap(ICOLoadingContext& context, Optional<size_t> index)
     PNGImageDecoderPlugin png_decoder(context.data + desc.offset, desc.size);
     if (png_decoder.sniff()) {
         auto decoded_png_frame = png_decoder.frame(0);
-        if (!decoded_png_frame.is_error() || !decoded_png_frame.value().image) {
+        if (decoded_png_frame.is_error() || !decoded_png_frame.value().image) {
             dbgln_if(ICO_DEBUG, "load_ico_bitmap: failed to load PNG encoded image index: {}", real_index);
             return false;
         }
@@ -279,14 +279,14 @@ static bool load_ico_bitmap(ICOLoadingContext& context, Optional<size_t> index)
     }
 }
 
-ICOImageDecoderPlugin::ICOImageDecoderPlugin(const u8* data, size_t size)
+ICOImageDecoderPlugin::ICOImageDecoderPlugin(u8 const* data, size_t size)
 {
     m_context = make<ICOLoadingContext>();
     m_context->data = data;
     m_context->data_size = size;
 }
 
-ICOImageDecoderPlugin::~ICOImageDecoderPlugin() { }
+ICOImageDecoderPlugin::~ICOImageDecoderPlugin() = default;
 
 IntSize ICOImageDecoderPlugin::size()
 {

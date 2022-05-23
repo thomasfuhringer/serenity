@@ -26,6 +26,7 @@ public:
 
     bool init_bsp();
     void eoi();
+    void setup_ap_boot_environment();
     void boot_aps();
     void enable(u32 cpu);
     void init_finished(u32 cpu);
@@ -90,7 +91,9 @@ private:
 
     OwnPtr<Memory::Region> m_apic_base;
     Vector<OwnPtr<Processor>> m_ap_processor_info;
+    Vector<OwnPtr<Memory::Region>> m_ap_temporary_boot_stacks;
     Vector<Thread*> m_ap_idle_threads;
+    OwnPtr<Memory::Region> m_ap_boot_environment;
     Atomic<u8> m_apic_ap_count { 0 };
     Atomic<u8> m_apic_ap_continue { 0 };
     u32 m_processor_cnt { 0 };
@@ -99,13 +102,13 @@ private:
     bool m_is_x2 { false };
 
     static PhysicalAddress get_base();
-    void set_base(const PhysicalAddress& base);
+    void set_base(PhysicalAddress const& base);
     void write_register(u32 offset, u32 value);
     u32 read_register(u32 offset);
     void set_lvt(u32 offset, u8 interrupt);
     void set_siv(u32 offset, u8 interrupt);
     void wait_for_pending_icr();
-    void write_icr(const ICRReg& icr);
+    void write_icr(ICRReg const& icr);
     void do_boot_aps();
 };
 

@@ -17,9 +17,7 @@ public:
     static NumberObject* create(GlobalObject&, double);
 
     NumberObject(double, Object& prototype);
-    virtual ~NumberObject() override;
-
-    virtual Value value_of() const override { return Value(m_value); }
+    virtual ~NumberObject() override = default;
 
     double number() const { return m_value; }
 

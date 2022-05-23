@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2021, Linus Groh <linusg@serenityos.org>
+ * Copyright (c) 2021-2022, Linus Groh <linusg@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -48,10 +48,11 @@ void TimeZonePrototype::initialize(GlobalObject& global_object)
 JS_DEFINE_NATIVE_FUNCTION(TimeZonePrototype::id_getter)
 {
     // 1. Let timeZone be the this value.
-    auto time_zone = vm.this_value(global_object);
+    // 2. Perform ? RequireInternalSlot(timeZone, [[InitializedTemporalTimeZone]]).
+    auto* time_zone = TRY(typed_this_object(global_object));
 
-    // 2. Return ? ToString(timeZone).
-    return js_string(vm, TRY(time_zone.to_string(global_object)));
+    // 3. Return ? ToString(timeZone).
+    return js_string(vm, TRY(Value(time_zone).to_string(global_object)));
 }
 
 // 11.4.4 Temporal.TimeZone.prototype.getOffsetNanosecondsFor ( instant ), https://tc39.es/proposal-temporal/#sec-temporal.timezone.prototype.getoffsetnanosecondsfor
@@ -68,7 +69,7 @@ JS_DEFINE_NATIVE_FUNCTION(TimeZonePrototype::get_offset_nanoseconds_for)
     if (time_zone->offset_nanoseconds().has_value())
         return Value(*time_zone->offset_nanoseconds());
 
-    // 5. Return ! GetIANATimeZoneOffsetNanoseconds(instant.[[Nanoseconds]], timeZone.[[Identifier]]).
+    // 5. Return 𝔽(GetIANATimeZoneOffsetNanoseconds(instant.[[Nanoseconds]], timeZone.[[Identifier]])).
     return Value((double)get_iana_time_zone_offset_nanoseconds(instant->nanoseconds(), time_zone->identifier()));
 }
 
@@ -91,15 +92,16 @@ JS_DEFINE_NATIVE_FUNCTION(TimeZonePrototype::get_offset_string_for)
 JS_DEFINE_NATIVE_FUNCTION(TimeZonePrototype::get_plain_date_time_for)
 {
     // 1. Let timeZone be the this value.
-    auto time_zone = vm.this_value(global_object);
+    // 2. Perform ? RequireInternalSlot(timeZone, [[InitializedTemporalTimeZone]]).
+    auto* time_zone = TRY(typed_this_object(global_object));
 
-    // 2. Set instant to ? ToTemporalInstant(instant).
+    // 3. Set instant to ? ToTemporalInstant(instant).
     auto* instant = TRY(to_temporal_instant(global_object, vm.argument(0)));
 
-    // 3. Let calendar be ? ToTemporalCalendarWithISODefault(calendarLike).
+    // 4. Let calendar be ? ToTemporalCalendarWithISODefault(calendarLike).
     auto* calendar = TRY(to_temporal_calendar_with_iso_default(global_object, vm.argument(1)));
 
-    // 4. Return ? BuiltinTimeZoneGetPlainDateTimeFor(timeZone, instant, calendar).
+    // 5. Return ? BuiltinTimeZoneGetPlainDateTimeFor(timeZone, instant, calendar).
     return TRY(builtin_time_zone_get_plain_date_time_for(global_object, time_zone, *instant, *calendar));
 }
 
@@ -117,7 +119,7 @@ JS_DEFINE_NATIVE_FUNCTION(TimeZonePrototype::get_instant_for)
     auto* options = TRY(get_options_object(global_object, vm.argument(1)));
 
     // 5. Let disambiguation be ? ToTemporalDisambiguation(options).
-    auto disambiguation = TRY(to_temporal_disambiguation(global_object, *options));
+    auto disambiguation = TRY(to_temporal_disambiguation(global_object, options));
 
     // 6. Return ? BuiltinTimeZoneGetInstantFor(timeZone, dateTime, disambiguation).
     return TRY(builtin_time_zone_get_instant_for(global_object, time_zone, *date_time, disambiguation));
@@ -135,32 +137,32 @@ JS_DEFINE_NATIVE_FUNCTION(TimeZonePrototype::get_possible_instants_for)
 
     // 4. If timeZone.[[OffsetNanoseconds]] is not undefined, then
     if (time_zone->offset_nanoseconds().has_value()) {
-        // a. Let epochNanoseconds be ! GetEpochFromISOParts(dateTime.[[ISOYear]], dateTime.[[ISOMonth]], dateTime.[[ISODay]], dateTime.[[ISOHour]], dateTime.[[ISOMinute]], dateTime.[[ISOSecond]], dateTime.[[ISOMillisecond]], dateTime.[[ISOMicrosecond]], dateTime.[[ISONanosecond]]).
+        // a. Let epochNanoseconds be GetEpochFromISOParts(dateTime.[[ISOYear]], dateTime.[[ISOMonth]], dateTime.[[ISODay]], dateTime.[[ISOHour]], dateTime.[[ISOMinute]], dateTime.[[ISOSecond]], dateTime.[[ISOMillisecond]], dateTime.[[ISOMicrosecond]], dateTime.[[ISONanosecond]]).
         auto* epoch_nanoseconds = get_epoch_from_iso_parts(global_object, date_time->iso_year(), date_time->iso_month(), date_time->iso_day(), date_time->iso_hour(), date_time->iso_minute(), date_time->iso_second(), date_time->iso_millisecond(), date_time->iso_microsecond(), date_time->iso_nanosecond());
 
-        // b. Let instant be ! CreateTemporalInstant(ℤ(epochNanoseconds − timeZone.[[OffsetNanoseconds]])).
+        // b. Let instant be ! CreateTemporalInstant(epochNanoseconds - ℤ(timeZone.[[OffsetNanoseconds]])).
         auto* instant = MUST(create_temporal_instant(global_object, *js_bigint(vm, epoch_nanoseconds->big_integer().minus(Crypto::SignedBigInteger::create_from(*time_zone->offset_nanoseconds())))));
 
-        // c. Return ! CreateArrayFromList(« instant »).
+        // c. Return CreateArrayFromList(« instant »).
         return Array::create_from(global_object, { instant });
     }
 
-    // 5. Let possibleEpochNanoseconds be ? GetIANATimeZoneEpochValue(timeZone.[[Identifier]], dateTime.[[ISOYear]], dateTime.[[ISOMonth]], dateTime.[[ISODay]], dateTime.[[ISOHour]], dateTime.[[ISOMinute]], dateTime.[[ISOSecond]], dateTime.[[ISOMillisecond]], dateTime.[[ISOMicrosecond]], dateTime.[[ISONanosecond]]).
+    // 5. Let possibleEpochNanoseconds be GetIANATimeZoneEpochValue(timeZone.[[Identifier]], dateTime.[[ISOYear]], dateTime.[[ISOMonth]], dateTime.[[ISODay]], dateTime.[[ISOHour]], dateTime.[[ISOMinute]], dateTime.[[ISOSecond]], dateTime.[[ISOMillisecond]], dateTime.[[ISOMicrosecond]], dateTime.[[ISONanosecond]]).
     auto possible_epoch_nanoseconds = get_iana_time_zone_epoch_value(global_object, time_zone->identifier(), date_time->iso_year(), date_time->iso_month(), date_time->iso_day(), date_time->iso_hour(), date_time->iso_minute(), date_time->iso_second(), date_time->iso_millisecond(), date_time->iso_microsecond(), date_time->iso_nanosecond());
 
     // 6. Let possibleInstants be a new empty List.
-    auto possible_instants = MarkedValueList { vm.heap() };
+    auto possible_instants = MarkedVector<Value> { vm.heap() };
 
     // 7. For each value epochNanoseconds in possibleEpochNanoseconds, do
     for (auto& epoch_nanoseconds : possible_epoch_nanoseconds) {
         // a. Let instant be ! CreateTemporalInstant(epochNanoseconds).
-        auto* instant = MUST(create_temporal_instant(global_object, epoch_nanoseconds.as_bigint()));
+        auto* instant = MUST(create_temporal_instant(global_object, *epoch_nanoseconds));
 
         // b. Append instant to possibleInstants.
         possible_instants.append(instant);
     }
 
-    // 8. Return ! CreateArrayFromList(possibleInstants).
+    // 8. Return CreateArrayFromList(possibleInstants).
     return Array::create_from(global_object, possible_instants);
 }
 
@@ -178,7 +180,7 @@ JS_DEFINE_NATIVE_FUNCTION(TimeZonePrototype::get_next_transition)
     if (!time_zone->offset_nanoseconds().has_value())
         return js_null();
 
-    // 5. Let transition be ? GetIANATimeZoneNextTransition(startingPoint.[[Nanoseconds]], timeZone.[[Identifier]]).
+    // 5. Let transition be GetIANATimeZoneNextTransition(startingPoint.[[Nanoseconds]], timeZone.[[Identifier]]).
     auto* transition = get_iana_time_zone_next_transition(global_object, starting_point->nanoseconds(), time_zone->identifier());
 
     // 6. If transition is null, return null.
@@ -203,7 +205,7 @@ JS_DEFINE_NATIVE_FUNCTION(TimeZonePrototype::get_previous_transition)
     if (!time_zone->offset_nanoseconds().has_value())
         return js_null();
 
-    // 5. Let transition be ? GetIANATimeZonePreviousTransition(startingPoint.[[Nanoseconds]], timeZone.[[Identifier]]).
+    // 5. Let transition be GetIANATimeZonePreviousTransition(startingPoint.[[Nanoseconds]], timeZone.[[Identifier]]).
     auto* transition = get_iana_time_zone_previous_transition(global_object, starting_point->nanoseconds(), time_zone->identifier());
 
     // 6. If transition is null, return null.
@@ -229,10 +231,11 @@ JS_DEFINE_NATIVE_FUNCTION(TimeZonePrototype::to_string)
 JS_DEFINE_NATIVE_FUNCTION(TimeZonePrototype::to_json)
 {
     // 1. Let timeZone be the this value.
-    auto time_zone = vm.this_value(global_object);
+    // 2. Perform ? RequireInternalSlot(timeZone, [[InitializedTemporalTimeZone]]).
+    auto* time_zone = TRY(typed_this_object(global_object));
 
-    // 2. Return ? ToString(timeZone).
-    return js_string(vm, TRY(time_zone.to_string(global_object)));
+    // 3. Return ? ToString(timeZone).
+    return js_string(vm, TRY(Value(time_zone).to_string(global_object)));
 }
 
 }

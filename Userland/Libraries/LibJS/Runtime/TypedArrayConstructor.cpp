@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2020, Linus Groh <linusg@serenityos.org>
+ * Copyright (c) 2020-2022, Linus Groh <linusg@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -11,7 +11,7 @@
 
 namespace JS {
 
-TypedArrayConstructor::TypedArrayConstructor(const FlyString& name, Object& prototype)
+TypedArrayConstructor::TypedArrayConstructor(FlyString const& name, Object& prototype)
     : NativeFunction(name, prototype)
 {
 }
@@ -36,10 +36,6 @@ void TypedArrayConstructor::initialize(GlobalObject& global_object)
     define_native_accessor(*vm.well_known_symbol_species(), symbol_species_getter, {}, Attribute::Configurable);
 
     define_direct_property(vm.names.length, Value(0), Attribute::Configurable);
-}
-
-TypedArrayConstructor::~TypedArrayConstructor()
-{
 }
 
 // 23.2.1.1 %TypedArray% ( ), https://tc39.es/ecma262/#sec-%typedarray%
@@ -76,7 +72,7 @@ JS_DEFINE_NATIVE_FUNCTION(TypedArrayConstructor::from)
     if (using_iterator) {
         auto values = TRY(iterable_to_list(global_object, source, using_iterator));
 
-        MarkedValueList arguments(vm.heap());
+        MarkedVector<Value> arguments(vm.heap());
         arguments.empend(values.size());
         auto target_object = TRY(typed_array_create(global_object, constructor.as_function(), move(arguments)));
 
@@ -84,7 +80,7 @@ JS_DEFINE_NATIVE_FUNCTION(TypedArrayConstructor::from)
             auto k_value = values[k];
             Value mapped_value;
             if (map_fn)
-                mapped_value = TRY(vm.call(*map_fn, this_arg, k_value, Value(k)));
+                mapped_value = TRY(JS::call(global_object, *map_fn, this_arg, k_value, Value(k)));
             else
                 mapped_value = k_value;
             TRY(target_object->set(k, mapped_value, Object::ShouldThrowExceptions::Yes));
@@ -96,7 +92,7 @@ JS_DEFINE_NATIVE_FUNCTION(TypedArrayConstructor::from)
     auto array_like = MUST(source.to_object(global_object));
     auto length = TRY(length_of_array_like(global_object, *array_like));
 
-    MarkedValueList arguments(vm.heap());
+    MarkedVector<Value> arguments(vm.heap());
     arguments.empend(length);
     auto target_object = TRY(typed_array_create(global_object, constructor.as_function(), move(arguments)));
 
@@ -104,7 +100,7 @@ JS_DEFINE_NATIVE_FUNCTION(TypedArrayConstructor::from)
         auto k_value = TRY(array_like->get(k));
         Value mapped_value;
         if (map_fn)
-            mapped_value = TRY(vm.call(*map_fn, this_arg, k_value, Value(k)));
+            mapped_value = TRY(JS::call(global_object, *map_fn, this_arg, k_value, Value(k)));
         else
             mapped_value = k_value;
         TRY(target_object->set(k, mapped_value, Object::ShouldThrowExceptions::Yes));
@@ -120,14 +116,11 @@ JS_DEFINE_NATIVE_FUNCTION(TypedArrayConstructor::of)
     auto constructor = vm.this_value(global_object);
     if (!constructor.is_constructor())
         return vm.throw_completion<TypeError>(global_object, ErrorType::NotAConstructor, constructor.to_string_without_side_effects());
-    MarkedValueList arguments(vm.heap());
+    MarkedVector<Value> arguments(vm.heap());
     arguments.append(Value(length));
     auto new_object = TRY(typed_array_create(global_object, constructor.as_function(), move(arguments)));
-    for (size_t k = 0; k < length; ++k) {
-        auto success = TRY(new_object->set(k, vm.argument(k), Object::ShouldThrowExceptions::Yes));
-        if (!success)
-            return vm.throw_completion<TypeError>(global_object, ErrorType::TypedArrayFailedSettingIndex, k);
-    }
+    for (size_t k = 0; k < length; ++k)
+        TRY(new_object->set(k, vm.argument(k), Object::ShouldThrowExceptions::Yes));
     return new_object;
 }
 

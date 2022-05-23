@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2021, Pedro Pereira <pmh.pereira@gmail.com>
+ * Copyright (c) 2022, the SerenityOS developers.
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -8,7 +9,7 @@
 #include "Field.h"
 #include <Games/Minesweeper/MinesweeperCustomGameWindowGML.h>
 
-int CustomGameDialog::show(GUI::Window* parent_window, Field& field)
+GUI::Dialog::ExecResult CustomGameDialog::show(GUI::Window* parent_window, Field& field)
 {
     auto dialog = CustomGameDialog::construct(parent_window);
 
@@ -23,12 +24,12 @@ int CustomGameDialog::show(GUI::Window* parent_window, Field& field)
 
     auto result = dialog->exec();
 
-    if (result != GUI::Dialog::ExecOK)
+    if (result != ExecResult::OK)
         return result;
 
     field.set_field_size(Field::Difficulty::Custom, dialog->m_rows_spinbox->value(), dialog->m_columns_spinbox->value(), dialog->m_mines_spinbox->value());
 
-    return GUI::Dialog::ExecOK;
+    return ExecResult::OK;
 }
 
 void CustomGameDialog::set_max_mines()
@@ -65,16 +66,12 @@ CustomGameDialog::CustomGameDialog(Window* parent_window)
     };
 
     m_ok_button->on_click = [this](auto) {
-        done(ExecResult::ExecOK);
+        done(ExecResult::OK);
     };
 
     m_cancel_button->on_click = [this](auto) {
-        done(ExecResult::ExecCancel);
+        done(ExecResult::Cancel);
     };
 
     set_max_mines();
-}
-
-CustomGameDialog::~CustomGameDialog()
-{
 }

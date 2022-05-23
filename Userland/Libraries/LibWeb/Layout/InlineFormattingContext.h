@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2020, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2020-2022, Andreas Kling <kling@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -15,17 +15,24 @@ namespace Web::Layout {
 
 class InlineFormattingContext final : public FormattingContext {
 public:
-    InlineFormattingContext(BlockContainer& containing_block, FormattingContext* parent);
+    InlineFormattingContext(FormattingState&, BlockContainer const& containing_block, BlockFormattingContext& parent);
     ~InlineFormattingContext();
 
-    BlockContainer& containing_block() { return static_cast<BlockContainer&>(context_box()); }
+    BlockFormattingContext& parent();
+    BlockFormattingContext const& parent() const;
+
     BlockContainer const& containing_block() const { return static_cast<BlockContainer const&>(context_box()); }
 
-    virtual void run(Box&, LayoutMode) override;
+    virtual void run(Box const&, LayoutMode) override;
 
-    float available_width_at_line(size_t line_index) const;
+    void dimension_box_on_line(Box const&, LayoutMode);
 
-    void dimension_box_on_line(Box&, LayoutMode);
+    float leftmost_x_offset_at(float y) const;
+    float available_space_for_line(float y) const;
+
+private:
+    void generate_line_boxes(LayoutMode);
+    void apply_justification_to_fragments(FormattingState::NodeState const& containing_block_state, CSS::TextJustify, LineBox&, bool is_last_line);
 };
 
 }

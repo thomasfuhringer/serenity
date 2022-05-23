@@ -14,14 +14,14 @@ namespace Gfx {
 
 class ShareableBitmap {
 public:
-    ShareableBitmap() { }
+    ShareableBitmap() = default;
 
     enum Tag { ConstructWithKnownGoodBitmap };
     ShareableBitmap(NonnullRefPtr<Gfx::Bitmap>, Tag);
 
     bool is_valid() const { return m_bitmap; }
 
-    const Bitmap* bitmap() const { return m_bitmap; }
+    Bitmap const* bitmap() const { return m_bitmap; }
     Bitmap* bitmap() { return m_bitmap; }
 
 private:
@@ -34,7 +34,7 @@ private:
 
 namespace IPC {
 
-bool encode(Encoder&, const Gfx::ShareableBitmap&);
+bool encode(Encoder&, Gfx::ShareableBitmap const&);
 ErrorOr<void> decode(Decoder&, Gfx::ShareableBitmap&);
 
 }

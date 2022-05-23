@@ -20,6 +20,7 @@
 #include <Kernel/Memory/PageDirectory.h>
 #include <Kernel/Memory/TypedMapping.h>
 #include <Kernel/Panic.h>
+#include <Kernel/Scheduler.h>
 #include <Kernel/Sections.h>
 #include <Kernel/Thread.h>
 #include <Kernel/Time/APICTimer.h>
@@ -74,7 +75,7 @@ public:
         handler->register_interrupt_handler();
     }
 
-    virtual bool handle_interrupt(const RegisterState&) override;
+    virtual bool handle_interrupt(RegisterState const&) override;
 
     virtual bool eoi() override;
 
@@ -105,7 +106,7 @@ public:
         handler->register_interrupt_handler();
     }
 
-    virtual bool handle_interrupt(const RegisterState&) override;
+    virtual bool handle_interrupt(RegisterState const&) override;
 
     virtual bool eoi() override;
 
@@ -144,7 +145,7 @@ PhysicalAddress APIC::get_base()
     return PhysicalAddress(base & 0xfffff000);
 }
 
-void APIC::set_base(const PhysicalAddress& base)
+void APIC::set_base(PhysicalAddress const& base)
 {
     MSR msr(APIC_BASE_MSR);
     u64 flags = 1 << 11;
@@ -159,7 +160,7 @@ void APIC::write_register(u32 offset, u32 value)
         MSR msr(APIC_REGS_MSR_BASE + (offset >> 4));
         msr.set(value);
     } else {
-        *reinterpret_cast<volatile u32*>(m_apic_base->vaddr().offset(offset).as_ptr()) = value;
+        *reinterpret_cast<u32 volatile*>(m_apic_base->vaddr().offset(offset).as_ptr()) = value;
     }
 }
 
@@ -169,7 +170,7 @@ u32 APIC::read_register(u32 offset)
         MSR msr(APIC_REGS_MSR_BASE + (offset >> 4));
         return (u32)msr.get();
     }
-    return *reinterpret_cast<volatile u32*>(m_apic_base->vaddr().offset(offset).as_ptr());
+    return *reinterpret_cast<u32 volatile*>(m_apic_base->vaddr().offset(offset).as_ptr());
 }
 
 void APIC::set_lvt(u32 offset, u8 interrupt)
@@ -189,7 +190,7 @@ void APIC::wait_for_pending_icr()
     }
 }
 
-void APIC::write_icr(const ICRReg& icr)
+void APIC::write_icr(ICRReg const& icr)
 {
     if (m_is_x2) {
         MSR msr(APIC_REGS_MSR_BASE + (APIC_REG_ICR_LOW >> 4));
@@ -210,13 +211,19 @@ void APIC::write_icr(const ICRReg& icr)
 
 extern "C" void apic_ap_start(void);
 extern "C" u16 apic_ap_start_size;
-extern "C" u32 ap_cpu_init_stacks;
-extern "C" u32 ap_cpu_init_processor_info_array;
+extern "C" FlatPtr ap_cpu_init_stacks;
+extern "C" FlatPtr ap_cpu_init_processor_info_array;
 extern "C" u32 ap_cpu_init_cr0;
-extern "C" u32 ap_cpu_init_cr3;
+extern "C" FlatPtr ap_cpu_init_cr3;
 extern "C" u32 ap_cpu_init_cr4;
-extern "C" u32 ap_cpu_gdtr;
-extern "C" u32 ap_cpu_idtr;
+extern "C" FlatPtr ap_cpu_gdtr;
+extern "C" FlatPtr ap_cpu_idtr;
+#if ARCH(X86_64)
+extern "C" FlatPtr ap_cpu_kernel_map_base;
+extern "C" FlatPtr ap_cpu_kernel_entry_function;
+#endif
+
+extern "C" [[noreturn]] void init_ap(FlatPtr, Processor*);
 
 void APIC::eoi()
 {
@@ -229,7 +236,7 @@ u8 APIC::spurious_interrupt_vector()
 }
 
 #define APIC_INIT_VAR_PTR(tpe, vaddr, varname)                         \
-    reinterpret_cast<volatile tpe*>(reinterpret_cast<ptrdiff_t>(vaddr) \
+    reinterpret_cast<tpe volatile*>(reinterpret_cast<ptrdiff_t>(vaddr) \
         + reinterpret_cast<ptrdiff_t>(&varname)                        \
         - reinterpret_cast<ptrdiff_t>(&apic_ap_start))
 
@@ -270,29 +277,37 @@ UNMAP_AFTER_INIT bool APIC::init_bsp()
         return false;
     }
 
-    auto madt = Memory::map_typed<ACPI::Structures::MADT>(madt_address.value());
-    size_t entry_index = 0;
-    size_t entries_length = madt->h.length - sizeof(ACPI::Structures::MADT);
-    auto* madt_entry = madt->entries;
-    while (entries_length > 0) {
-        size_t entry_length = madt_entry->length;
-        if (madt_entry->type == (u8)ACPI::Structures::MADTEntryType::LocalAPIC) {
-            auto* plapic_entry = (const ACPI::Structures::MADTEntries::ProcessorLocalAPIC*)madt_entry;
-            dbgln_if(APIC_DEBUG, "APIC: AP found @ MADT entry {}, processor ID: {}, xAPIC ID: {}, flags: {:#08x}", entry_index, plapic_entry->acpi_processor_id, plapic_entry->apic_id, plapic_entry->flags);
-            m_processor_cnt++;
-            if ((plapic_entry->flags & 0x1) != 0)
-                m_processor_enabled_cnt++;
-        } else if (madt_entry->type == (u8)ACPI::Structures::MADTEntryType::Local_x2APIC) {
-            // Only used for APID IDs >= 255
-            auto* plx2apic_entry = (const ACPI::Structures::MADTEntries::ProcessorLocalX2APIC*)madt_entry;
-            dbgln_if(APIC_DEBUG, "APIC: AP found @ MADT entry {}, processor ID: {}, x2APIC ID: {}, flags: {:#08x}", entry_index, plx2apic_entry->acpi_processor_id, plx2apic_entry->apic_id, plx2apic_entry->flags);
-            m_processor_cnt++;
-            if ((plx2apic_entry->flags & 0x1) != 0)
-                m_processor_enabled_cnt++;
+    if (kernel_command_line().is_smp_enabled()) {
+        auto madt_or_error = Memory::map_typed<ACPI::Structures::MADT>(madt_address.value());
+        if (madt_or_error.is_error()) {
+            dbgln("APIC: Failed to map MADT table");
+            return false;
         }
-        madt_entry = (ACPI::Structures::MADTEntryHeader*)(VirtualAddress(madt_entry).offset(entry_length).get());
-        entries_length -= entry_length;
-        entry_index++;
+        auto madt = madt_or_error.release_value();
+        size_t entry_index = 0;
+        size_t entries_length = madt->h.length - sizeof(ACPI::Structures::MADT);
+        auto* madt_entry = madt->entries;
+        while (entries_length > 0) {
+            size_t entry_length = madt_entry->length;
+            if (madt_entry->type == (u8)ACPI::Structures::MADTEntryType::LocalAPIC) {
+                auto* plapic_entry = (const ACPI::Structures::MADTEntries::ProcessorLocalAPIC*)madt_entry;
+                dbgln_if(APIC_DEBUG, "APIC: AP found @ MADT entry {}, processor ID: {}, xAPIC ID: {}, flags: {:#08x}", entry_index, plapic_entry->acpi_processor_id, plapic_entry->apic_id, plapic_entry->flags);
+                m_processor_cnt++;
+                if ((plapic_entry->flags & 0x1) != 0)
+                    m_processor_enabled_cnt++;
+            } else if (madt_entry->type == (u8)ACPI::Structures::MADTEntryType::Local_x2APIC) {
+                // Only used for APID IDs >= 255
+                auto* plx2apic_entry = (const ACPI::Structures::MADTEntries::ProcessorLocalX2APIC*)madt_entry;
+                dbgln_if(APIC_DEBUG, "APIC: AP found @ MADT entry {}, processor ID: {}, x2APIC ID: {}, flags: {:#08x}", entry_index, plx2apic_entry->acpi_processor_id, plx2apic_entry->apic_id, plx2apic_entry->flags);
+                m_processor_cnt++;
+                if ((plx2apic_entry->flags & 0x1) != 0)
+                    m_processor_enabled_cnt++;
+            }
+            madt_entry = (ACPI::Structures::MADTEntryHeader*)(VirtualAddress(madt_entry).offset(entry_length).get());
+            entries_length -= entry_length;
+            entry_index++;
+        }
+        dbgln("APIC processors found: {}, enabled: {}", m_processor_cnt, m_processor_enabled_cnt);
     }
 
     if (m_processor_enabled_cnt < 1)
@@ -300,29 +315,13 @@ UNMAP_AFTER_INIT bool APIC::init_bsp()
     if (m_processor_cnt < 1)
         m_processor_cnt = 1;
 
-    dbgln("APIC processors found: {}, enabled: {}", m_processor_cnt, m_processor_enabled_cnt);
-
     enable(0);
     return true;
 }
 
-UNMAP_AFTER_INIT static NonnullOwnPtr<Memory::Region> create_identity_mapped_region(PhysicalAddress paddr, size_t size)
+UNMAP_AFTER_INIT void APIC::setup_ap_boot_environment()
 {
-    auto maybe_vmobject = Memory::AnonymousVMObject::try_create_for_physical_range(paddr, size);
-    // FIXME: Would be nice to be able to return a ErrorOr from here.
-    VERIFY(!maybe_vmobject.is_error());
-
-    auto region_or_error = MM.allocate_kernel_region_with_vmobject(
-        Memory::VirtualRange { VirtualAddress { static_cast<FlatPtr>(paddr.get()) }, size },
-        maybe_vmobject.release_value(),
-        {},
-        Memory::Region::Access::ReadWriteExecute);
-    VERIFY(!region_or_error.is_error());
-    return region_or_error.release_value();
-}
-
-UNMAP_AFTER_INIT void APIC::do_boot_aps()
-{
+    VERIFY(!m_ap_boot_environment);
     VERIFY(m_processor_enabled_cnt > 1);
     u32 aps_to_enable = m_processor_enabled_cnt - 1;
 
@@ -330,11 +329,15 @@ UNMAP_AFTER_INIT void APIC::do_boot_aps()
     // Also account for the data appended to:
     // * aps_to_enable u32 values for ap_cpu_init_stacks
     // * aps_to_enable u32 values for ap_cpu_init_processor_info_array
-    auto apic_startup_region = create_identity_mapped_region(PhysicalAddress(0x8000), Memory::page_round_up(apic_ap_start_size + (2 * aps_to_enable * sizeof(u32))));
-    memcpy(apic_startup_region->vaddr().as_ptr(), reinterpret_cast<const void*>(apic_ap_start), apic_ap_start_size);
+    constexpr u64 apic_startup_region_base = 0x8000;
+    auto apic_startup_region_size = Memory::page_round_up(apic_ap_start_size + (2 * aps_to_enable * sizeof(FlatPtr))).release_value_but_fixme_should_propagate_errors();
+    VERIFY(apic_startup_region_size < USER_RANGE_BASE);
+    auto apic_startup_region = MUST(MM.create_identity_mapped_region(PhysicalAddress(apic_startup_region_base), apic_startup_region_size));
+    u8* apic_startup_region_ptr = apic_startup_region->vaddr().as_ptr();
+    memcpy(apic_startup_region_ptr, reinterpret_cast<void const*>(apic_ap_start), apic_ap_start_size);
 
     // Allocate enough stacks for all APs
-    Vector<OwnPtr<Memory::Region>> apic_ap_stacks;
+    m_ap_temporary_boot_stacks.ensure_capacity(aps_to_enable);
     for (u32 i = 0; i < aps_to_enable; i++) {
         auto stack_region_or_error = MM.allocate_kernel_region(Thread::default_kernel_stack_size, {}, Memory::Region::Access::ReadWrite, AllocationStrategy::AllocateNow);
         if (stack_region_or_error.is_error()) {
@@ -343,40 +346,55 @@ UNMAP_AFTER_INIT void APIC::do_boot_aps()
         }
         auto stack_region = stack_region_or_error.release_value();
         stack_region->set_stack(true);
-        apic_ap_stacks.append(move(stack_region));
+        m_ap_temporary_boot_stacks.unchecked_append(move(stack_region));
     }
 
     // Store pointers to all stacks for the APs to use
-    auto ap_stack_array = APIC_INIT_VAR_PTR(u32, apic_startup_region->vaddr().as_ptr(), ap_cpu_init_stacks);
-    VERIFY(aps_to_enable == apic_ap_stacks.size());
+    auto* ap_stack_array = APIC_INIT_VAR_PTR(FlatPtr, apic_startup_region_ptr, ap_cpu_init_stacks);
+    VERIFY(aps_to_enable == m_ap_temporary_boot_stacks.size());
     for (size_t i = 0; i < aps_to_enable; i++) {
-        ap_stack_array[i] = apic_ap_stacks[i]->vaddr().get() + Thread::default_kernel_stack_size;
+        ap_stack_array[i] = m_ap_temporary_boot_stacks[i]->vaddr().get() + Thread::default_kernel_stack_size;
         dbgln_if(APIC_DEBUG, "APIC: CPU[{}] stack at {}", i + 1, VirtualAddress { ap_stack_array[i] });
     }
 
     // Allocate Processor structures for all APs and store the pointer to the data
     m_ap_processor_info.resize(aps_to_enable);
     for (size_t i = 0; i < aps_to_enable; i++)
-        m_ap_processor_info[i] = make<Processor>();
-    auto ap_processor_info_array = &ap_stack_array[aps_to_enable];
+        m_ap_processor_info[i] = adopt_nonnull_own_or_enomem(new (nothrow) Processor()).release_value_but_fixme_should_propagate_errors();
+    auto* ap_processor_info_array = &ap_stack_array[aps_to_enable];
     for (size_t i = 0; i < aps_to_enable; i++) {
         ap_processor_info_array[i] = FlatPtr(m_ap_processor_info[i].ptr());
         dbgln_if(APIC_DEBUG, "APIC: CPU[{}] processor at {}", i + 1, VirtualAddress { ap_processor_info_array[i] });
     }
-    *APIC_INIT_VAR_PTR(u32, apic_startup_region->vaddr().as_ptr(), ap_cpu_init_processor_info_array) = FlatPtr(&ap_processor_info_array[0]);
+    *APIC_INIT_VAR_PTR(FlatPtr, apic_startup_region_ptr, ap_cpu_init_processor_info_array) = FlatPtr(&ap_processor_info_array[0]);
 
     // Store the BSP's CR3 value for the APs to use
-    *APIC_INIT_VAR_PTR(u32, apic_startup_region->vaddr().as_ptr(), ap_cpu_init_cr3) = MM.kernel_page_directory().cr3();
+    *APIC_INIT_VAR_PTR(FlatPtr, apic_startup_region_ptr, ap_cpu_init_cr3) = MM.kernel_page_directory().cr3();
 
     // Store the BSP's GDT and IDT for the APs to use
-    const auto& gdtr = Processor::current().get_gdtr();
-    *APIC_INIT_VAR_PTR(u32, apic_startup_region->vaddr().as_ptr(), ap_cpu_gdtr) = FlatPtr(&gdtr);
-    const auto& idtr = get_idtr();
-    *APIC_INIT_VAR_PTR(u32, apic_startup_region->vaddr().as_ptr(), ap_cpu_idtr) = FlatPtr(&idtr);
+    auto const& gdtr = Processor::current().get_gdtr();
+    *APIC_INIT_VAR_PTR(FlatPtr, apic_startup_region_ptr, ap_cpu_gdtr) = FlatPtr(&gdtr);
+    auto const& idtr = get_idtr();
+    *APIC_INIT_VAR_PTR(FlatPtr, apic_startup_region_ptr, ap_cpu_idtr) = FlatPtr(&idtr);
+
+#if ARCH(X86_64)
+    // TODO: Use these also in i686 builds
+    *APIC_INIT_VAR_PTR(FlatPtr, apic_startup_region_ptr, ap_cpu_kernel_map_base) = FlatPtr(kernel_mapping_base);
+    *APIC_INIT_VAR_PTR(FlatPtr, apic_startup_region_ptr, ap_cpu_kernel_entry_function) = FlatPtr(&init_ap);
+#endif
 
     // Store the BSP's CR0 and CR4 values for the APs to use
-    *APIC_INIT_VAR_PTR(u32, apic_startup_region->vaddr().as_ptr(), ap_cpu_init_cr0) = read_cr0();
-    *APIC_INIT_VAR_PTR(u32, apic_startup_region->vaddr().as_ptr(), ap_cpu_init_cr4) = read_cr4();
+    *APIC_INIT_VAR_PTR(FlatPtr, apic_startup_region_ptr, ap_cpu_init_cr0) = read_cr0();
+    *APIC_INIT_VAR_PTR(FlatPtr, apic_startup_region_ptr, ap_cpu_init_cr4) = read_cr4();
+
+    m_ap_boot_environment = move(apic_startup_region);
+}
+
+UNMAP_AFTER_INIT void APIC::do_boot_aps()
+{
+    VERIFY(m_ap_boot_environment);
+    VERIFY(m_processor_enabled_cnt > 1);
+    u32 aps_to_enable = m_processor_enabled_cnt - 1;
 
     // Create an idle thread for each processor. We have to do this here
     // because we won't be able to send FlushTLB messages, so we have to
@@ -413,7 +431,11 @@ UNMAP_AFTER_INIT void APIC::do_boot_aps()
 
     // NOTE: Since this region is identity-mapped, we have to unmap it manually to prevent the virtual
     //       address range from leaking into the general virtual range allocator.
-    apic_startup_region->unmap(Memory::Region::ShouldDeallocateVirtualRange::No);
+    m_ap_boot_environment->unmap();
+    m_ap_boot_environment = nullptr;
+    // When the APs signal that they finished their initialization they have already switched over to their
+    // idle thread's stack, so the temporary boot stack can be deallocated
+    m_ap_temporary_boot_stacks.clear();
 }
 
 UNMAP_AFTER_INIT void APIC::boot_aps()
@@ -619,7 +641,7 @@ u32 APIC::get_timer_divisor()
     return 16;
 }
 
-bool APICIPIInterruptHandler::handle_interrupt(const RegisterState&)
+bool APICIPIInterruptHandler::handle_interrupt(RegisterState const&)
 {
     dbgln_if(APIC_SMP_DEBUG, "APIC IPI on CPU #{}", Processor::current_id());
     return true;
@@ -632,7 +654,7 @@ bool APICIPIInterruptHandler::eoi()
     return true;
 }
 
-bool APICErrInterruptHandler::handle_interrupt(const RegisterState&)
+bool APICErrInterruptHandler::handle_interrupt(RegisterState const&)
 {
     dbgln("APIC: SMP error on CPU #{}", Processor::current_id());
     return true;

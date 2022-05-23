@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2018-2021, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2018-2022, Andreas Kling <kling@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -13,22 +13,22 @@
 #include <AK/OwnPtr.h>
 #include <AK/String.h>
 #include <AK/URL.h>
+#include <AK/Vector.h>
 #include <AK/WeakPtr.h>
 #include <LibCore/Forward.h>
 #include <LibJS/Forward.h>
-#include <LibWeb/Bindings/ScriptExecutionContext.h>
 #include <LibWeb/Bindings/WindowObject.h>
 #include <LibWeb/CSS/CSSStyleSheet.h>
 #include <LibWeb/CSS/StyleComputer.h>
 #include <LibWeb/CSS/StyleSheetList.h>
 #include <LibWeb/Cookie/Cookie.h>
-#include <LibWeb/DOM/DOMImplementation.h>
 #include <LibWeb/DOM/ExceptionOr.h>
 #include <LibWeb/DOM/NonElementParentNode.h>
 #include <LibWeb/DOM/ParentNode.h>
 #include <LibWeb/HTML/DocumentReadyState.h>
 #include <LibWeb/HTML/HTMLScriptElement.h>
 #include <LibWeb/HTML/History.h>
+#include <LibWeb/HTML/Scripting/Environments.h>
 
 namespace Web::DOM {
 
@@ -41,8 +41,7 @@ enum class QuirksMode {
 class Document
     : public ParentNode
     , public NonElementParentNode<Document>
-    , public HTML::GlobalEventHandlers
-    , public Bindings::ScriptExecutionContext {
+    , public HTML::GlobalEventHandlers {
 public:
     using WrapperType = Bindings::DocumentWrapper;
 
@@ -58,7 +57,7 @@ public:
     virtual ~Document() override;
 
     String cookie(Cookie::Source = Cookie::Source::NonHttp);
-    void set_cookie(String, Cookie::Source = Cookie::Source::NonHttp);
+    void set_cookie(String const&, Cookie::Source = Cookie::Source::NonHttp);
 
     String referrer() const;
 
@@ -68,10 +67,11 @@ public:
     void set_url(const AK::URL& url) { m_url = url; }
     AK::URL url() const { return m_url; }
 
-    Origin origin() const;
-    void set_origin(const Origin& origin);
+    String url_string() const { return m_url.to_string(); }
+    String document_uri() const { return m_url.to_string(); }
 
-    bool is_scripting_enabled() const { return true; }
+    Origin origin() const;
+    void set_origin(Origin const& origin);
 
     AK::URL parse_url(String const&) const;
 
@@ -87,14 +87,14 @@ public:
 
     void set_hovered_node(Node*);
     Node* hovered_node() { return m_hovered_node; }
-    const Node* hovered_node() const { return m_hovered_node; }
+    Node const* hovered_node() const { return m_hovered_node; }
 
     void set_inspected_node(Node*);
     Node* inspected_node() { return m_inspected_node; }
-    const Node* inspected_node() const { return m_inspected_node; }
+    Node const* inspected_node() const { return m_inspected_node; }
 
     Element* document_element();
-    const Element* document_element() const;
+    Element const* document_element() const;
 
     HTML::HTMLHtmlElement* html_element();
     HTML::HTMLHeadElement* head();
@@ -118,7 +118,7 @@ public:
     ExceptionOr<void> set_body(HTML::HTMLElement* new_body);
 
     String title() const;
-    void set_title(const String&);
+    void set_title(String const&);
 
     void attach_to_browsing_context(Badge<HTML::BrowsingContext>, HTML::BrowsingContext&);
     void detach_from_browsing_context(Badge<HTML::BrowsingContext>, HTML::BrowsingContext&);
@@ -127,9 +127,9 @@ public:
     HTML::BrowsingContext const* browsing_context() const { return m_browsing_context.ptr(); }
 
     Page* page();
-    const Page* page() const;
+    Page const* page() const;
 
-    Color background_color(const Gfx::Palette&) const;
+    Color background_color(Gfx::Palette const&) const;
     Vector<CSS::BackgroundLayerData> const* background_layers() const;
 
     Color link_color() const;
@@ -142,16 +142,18 @@ public:
     void set_visited_link_color(Color);
 
     void force_layout();
-    void ensure_layout();
 
     void update_style();
     void update_layout();
 
     void set_needs_layout();
 
-    virtual bool is_child_allowed(const Node&) const override;
+    void invalidate_layout();
+    void invalidate_stacking_context_tree();
 
-    const Layout::InitialContainingBlock* layout_node() const;
+    virtual bool is_child_allowed(Node const&) const override;
+
+    Layout::InitialContainingBlock const* layout_node() const;
     Layout::InitialContainingBlock* layout_node();
 
     void schedule_style_update();
@@ -169,21 +171,22 @@ public:
     NonnullRefPtr<HTMLCollection> forms();
     NonnullRefPtr<HTMLCollection> scripts();
 
-    const String& source() const { return m_source; }
-    void set_source(const String& source) { m_source = source; }
+    String const& source() const { return m_source; }
+    void set_source(String const& source) { m_source = source; }
 
+    HTML::EnvironmentSettingsObject& relevant_settings_object();
     JS::Realm& realm();
     JS::Interpreter& interpreter();
 
     JS::Value run_javascript(StringView source, StringView filename = "(unknown)");
 
-    NonnullRefPtr<Element> create_element(const String& tag_name);
-    NonnullRefPtr<Element> create_element_ns(const String& namespace_, const String& qualifed_name);
+    ExceptionOr<NonnullRefPtr<Element>> create_element(String const& tag_name);
+    ExceptionOr<NonnullRefPtr<Element>> create_element_ns(String const& namespace_, String const& qualified_name);
     NonnullRefPtr<DocumentFragment> create_document_fragment();
-    NonnullRefPtr<Text> create_text_node(const String& data);
-    NonnullRefPtr<Comment> create_comment(const String& data);
+    NonnullRefPtr<Text> create_text_node(String const& data);
+    NonnullRefPtr<Comment> create_comment(String const& data);
     NonnullRefPtr<Range> create_range();
-    NonnullRefPtr<Event> create_event(const String& interface);
+    NonnullRefPtr<Event> create_event(String const& interface);
 
     void set_pending_parsing_blocking_script(Badge<HTML::HTMLScriptElement>, HTML::HTMLScriptElement*);
     HTML::HTMLScriptElement* pending_parsing_blocking_script() { return m_pending_parsing_blocking_script; }
@@ -205,18 +208,18 @@ public:
     void adopt_node(Node&);
     ExceptionOr<NonnullRefPtr<Node>> adopt_node_binding(NonnullRefPtr<Node>);
 
-    const DocumentType* doctype() const;
-    const String& compat_mode() const;
+    DocumentType const* doctype() const;
+    String const& compat_mode() const;
 
     void set_editable(bool editable) { m_editable = editable; }
     virtual bool is_editable() const final;
 
     Element* focused_element() { return m_focused_element; }
-    const Element* focused_element() const { return m_focused_element; }
+    Element const* focused_element() const { return m_focused_element; }
 
     void set_focused_element(Element*);
 
-    const Element* active_element() const { return m_active_element; }
+    Element const* active_element() const { return m_active_element; }
 
     void set_active_element(Element*);
 
@@ -224,7 +227,7 @@ public:
     void set_created_for_appropriate_template_contents(bool value) { m_created_for_appropriate_template_contents = value; }
 
     Document* associated_inert_template_document() { return m_associated_inert_template_document; }
-    const Document* associated_inert_template_document() const { return m_associated_inert_template_document; }
+    Document const* associated_inert_template_document() const { return m_associated_inert_template_document; }
     void set_associated_inert_template_document(Document& document) { m_associated_inert_template_document = document; }
 
     String ready_state() const;
@@ -242,17 +245,24 @@ public:
 
     void removed_last_ref();
 
-    Window& window() { return *m_window; }
+    HTML::Window& window() { return *m_window; }
+    HTML::Window const& window() const { return *m_window; }
 
-    Window* default_view() { return m_window; }
+    ExceptionOr<void> write(Vector<String> const& strings);
+    ExceptionOr<void> writeln(Vector<String> const& strings);
 
-    const String& content_type() const { return m_content_type; }
-    void set_content_type(const String& content_type) { m_content_type = content_type; }
+    ExceptionOr<Document*> open(String const& = "", String const& = "");
+    ExceptionOr<void> close();
+
+    HTML::Window* default_view() { return m_window; }
+
+    String const& content_type() const { return m_content_type; }
+    void set_content_type(String const& content_type) { m_content_type = content_type; }
 
     bool has_encoding() const { return m_encoding.has_value(); }
-    const Optional<String>& encoding() const { return m_encoding; }
+    Optional<String> const& encoding() const { return m_encoding; }
     String encoding_or_default() const { return m_encoding.value_or("UTF-8"); }
-    void set_encoding(const Optional<String>& encoding) { m_encoding = encoding; }
+    void set_encoding(Optional<String> const& encoding) { m_encoding = encoding; }
 
     // NOTE: These are intended for the JS bindings
     String character_set() const { return encoding_or_default(); }
@@ -264,7 +274,7 @@ public:
 
     void completely_finish_loading();
 
-    const NonnullRefPtr<DOMImplementation> implementation() const { return m_implementation; }
+    NonnullRefPtr<DOMImplementation> implementation() const;
 
     RefPtr<HTML::HTMLScriptElement> current_script() const { return m_current_script; }
     void set_current_script(Badge<HTML::HTMLScriptElement>, RefPtr<HTML::HTMLScriptElement> script) { m_current_script = move(script); }
@@ -273,7 +283,7 @@ public:
     void increment_ignore_destructive_writes_counter() { m_ignore_destructive_writes_counter++; }
     void decrement_ignore_destructive_writes_counter() { m_ignore_destructive_writes_counter--; }
 
-    virtual EventTarget* get_parent(const Event&) override;
+    virtual EventTarget* get_parent(Event const&) override;
 
     String dump_dom_tree_as_json() const;
 
@@ -287,12 +297,8 @@ public:
     Bindings::LocationObject* location();
 
     size_t number_of_things_delaying_the_load_event() { return m_number_of_things_delaying_the_load_event; }
-    void increment_number_of_things_delaying_the_load_event(Badge<DocumentLoadEventDelayer>) { ++m_number_of_things_delaying_the_load_event; }
-    void decrement_number_of_things_delaying_the_load_event(Badge<DocumentLoadEventDelayer>)
-    {
-        VERIFY(m_number_of_things_delaying_the_load_event);
-        --m_number_of_things_delaying_the_load_event;
-    }
+    void increment_number_of_things_delaying_the_load_event(Badge<DocumentLoadEventDelayer>);
+    void decrement_number_of_things_delaying_the_load_event(Badge<DocumentLoadEventDelayer>);
 
     bool page_showing() const { return m_page_showing; }
     void set_page_showing(bool value) { m_page_showing = value; }
@@ -305,16 +311,51 @@ public:
     void evaluate_media_queries_and_report_changes();
     void add_media_query_list(NonnullRefPtr<CSS::MediaQueryList>&);
 
+    bool has_focus() const;
+
+    void set_parser(Badge<HTML::HTMLParser>, HTML::HTMLParser&);
+    void detach_parser(Badge<HTML::HTMLParser>);
+
+    static bool is_valid_name(String const&);
+
+    struct PrefixAndTagName {
+        FlyString prefix;
+        FlyString tag_name;
+    };
+    static ExceptionOr<PrefixAndTagName> validate_qualified_name(String const& qualified_name);
+
+    NonnullRefPtr<NodeIterator> create_node_iterator(Node& root, unsigned what_to_show, RefPtr<NodeFilter>);
+    NonnullRefPtr<TreeWalker> create_tree_walker(Node& root, unsigned what_to_show, RefPtr<NodeFilter>);
+
+    void register_node_iterator(Badge<NodeIterator>, NodeIterator&);
+    void unregister_node_iterator(Badge<NodeIterator>, NodeIterator&);
+
+    template<typename Callback>
+    void for_each_node_iterator(Callback callback)
+    {
+        for (auto* node_iterator : m_node_iterators)
+            callback(*node_iterator);
+    }
+
+    bool needs_full_style_update() const { return m_needs_full_style_update; }
+    void set_needs_full_style_update(bool b) { m_needs_full_style_update = b; }
+
+    bool in_removed_last_ref() const { return m_in_removed_last_ref; }
+
+    bool has_active_favicon() const { return m_active_favicon; }
+    void check_favicon_after_loading_link_resource();
+
 private:
     explicit Document(const AK::URL&);
-
-    // ^DOM::Node
-    virtual RefPtr<Layout::Node> create_layout_node() override;
 
     // ^HTML::GlobalEventHandlers
     virtual EventTarget& global_event_handlers_to_event_target() final { return *this; }
 
     void tear_down_layout_tree();
+
+    void evaluate_media_rules();
+
+    ExceptionOr<void> run_the_document_write_steps(String);
 
     void increment_referencing_node_count()
     {
@@ -339,10 +380,11 @@ private:
     RefPtr<CSS::StyleSheetList> m_style_sheets;
     RefPtr<Node> m_hovered_node;
     RefPtr<Node> m_inspected_node;
+    RefPtr<Node> m_active_favicon;
     WeakPtr<HTML::BrowsingContext> m_browsing_context;
     AK::URL m_url;
 
-    RefPtr<Window> m_window;
+    RefPtr<HTML::Window> m_window;
 
     RefPtr<Layout::InitialContainingBlock> m_layout_root;
 
@@ -352,6 +394,9 @@ private:
 
     RefPtr<Core::Timer> m_style_update_timer;
     RefPtr<Core::Timer> m_layout_update_timer;
+
+    RefPtr<HTML::HTMLParser> m_parser;
+    bool m_active_parser_was_aborted { false };
 
     String m_source;
 
@@ -376,12 +421,18 @@ private:
 
     bool m_ready_for_post_load_tasks { false };
 
-    NonnullRefPtr<DOMImplementation> m_implementation;
+    NonnullOwnPtr<DOMImplementation> m_implementation;
     RefPtr<HTML::HTMLScriptElement> m_current_script;
 
     bool m_should_invalidate_styles_on_attribute_changes { true };
 
     u32 m_ignore_destructive_writes_counter { 0 };
+
+    // https://html.spec.whatwg.org/multipage/browsing-the-web.html#unload-counter
+    u32 m_unload_counter { 0 };
+
+    // https://html.spec.whatwg.org/multipage/dynamic-markup-insertion.html#throw-on-dynamic-markup-insertion-counter
+    u32 m_throw_on_dynamic_markup_insertion_counter { 0 };
 
     // https://html.spec.whatwg.org/multipage/semantics.html#script-blocking-style-sheet-counter
     u32 m_script_blocking_style_sheet_counter { 0 };
@@ -400,6 +451,10 @@ private:
     Vector<WeakPtr<CSS::MediaQueryList>> m_media_query_lists;
 
     bool m_needs_layout { false };
+
+    bool m_needs_full_style_update { false };
+
+    HashTable<NodeIterator*> m_node_iterators;
 };
 
 }

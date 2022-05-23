@@ -180,9 +180,7 @@ ISO9660FS::ISO9660FS(OpenFileDescription& description)
     m_logical_block_size = logical_sector_size;
 }
 
-ISO9660FS::~ISO9660FS()
-{
-}
+ISO9660FS::~ISO9660FS() = default;
 
 ErrorOr<void> ISO9660FS::initialize()
 {
@@ -216,7 +214,7 @@ unsigned ISO9660FS::total_inode_count() const
     return m_cached_inode_count;
 }
 
-u8 ISO9660FS::internal_file_type_to_directory_entry_type(const DirectoryEntryView& entry) const
+u8 ISO9660FS::internal_file_type_to_directory_entry_type(DirectoryEntryView const& entry) const
 {
     if (has_flag(static_cast<ISO::FileFlags>(entry.file_type), ISO::FileFlags::Directory)) {
         return DT_DIR;
@@ -234,13 +232,13 @@ ErrorOr<void> ISO9660FS::parse_volume_set()
 
     auto current_block_index = first_data_area_block;
     while (true) {
-        bool result = raw_read(BlockIndex { current_block_index }, block_buffer);
-        if (!result) {
-            dbgln_if(ISO9660_DEBUG, "Failed to read volume descriptor from ISO file");
-            return EIO;
+        auto result = raw_read(BlockIndex { current_block_index }, block_buffer);
+        if (result.is_error()) {
+            dbgln_if(ISO9660_DEBUG, "Failed to read volume descriptor from ISO file: {}", result.error());
+            return result;
         }
 
-        auto header = reinterpret_cast<ISO::VolumeDescriptorHeader const*>(block->data());
+        auto const* header = reinterpret_cast<ISO::VolumeDescriptorHeader const*>(block->data());
         if (StringView { header->identifier, 5 } != "CD001") {
             dbgln_if(ISO9660_DEBUG, "Header magic at volume descriptor {} is not valid", current_block_index - first_data_area_block);
             return EIO;
@@ -248,7 +246,7 @@ ErrorOr<void> ISO9660FS::parse_volume_set()
 
         switch (header->type) {
         case ISO::VolumeDescriptorType::PrimaryVolumeDescriptor: {
-            auto primary_volume = reinterpret_cast<ISO::PrimaryVolumeDescriptor const*>(header);
+            auto const* primary_volume = reinterpret_cast<ISO::PrimaryVolumeDescriptor const*>(header);
             m_primary_volume = adopt_own_if_nonnull(new ISO::PrimaryVolumeDescriptor(*primary_volume));
             break;
         }
@@ -387,11 +385,7 @@ ErrorOr<NonnullRefPtr<ISO9660FS::DirectoryEntry>> ISO9660FS::directory_entry_for
 
     auto blocks = TRY(KBuffer::try_create_with_size(data_length, Memory::Region::Access::Read | Memory::Region::Access::Write, "ISO9660FS: Directory traversal buffer"));
     auto blocks_buffer = UserOrKernelBuffer::for_kernel_buffer(blocks->data());
-    auto did_read = raw_read_blocks(BlockBasedFileSystem::BlockIndex { extent_location }, data_length / logical_block_size(), blocks_buffer);
-    if (!did_read) {
-        return EIO;
-    }
-
+    TRY(raw_read_blocks(BlockBasedFileSystem::BlockIndex { extent_location }, data_length / logical_block_size(), blocks_buffer));
     auto entry = TRY(DirectoryEntry::try_create(extent_location, data_length, move(blocks)));
     m_directory_entry_cache.set(key, entry);
 
@@ -428,10 +422,7 @@ ErrorOr<size_t> ISO9660Inode::read_bytes(off_t offset, size_t size, UserOrKernel
         auto buffer_offset = buffer.offset(nread);
         dbgln_if(ISO9660_VERY_DEBUG, "ISO9660Inode::read_bytes: Reading {} bytes into buffer offset {}/{}, logical block index: {}", bytes_to_read, nread, total_bytes, current_block_index.value());
 
-        if (bool result = const_cast<ISO9660FS&>(fs()).raw_read(current_block_index, block_buffer); !result) {
-            return EIO;
-        }
-
+        TRY(const_cast<ISO9660FS&>(fs()).raw_read(current_block_index, block_buffer));
         TRY(buffer_offset.write(block->data() + initial_offset, bytes_to_read));
 
         nread += bytes_to_read;
@@ -502,7 +493,7 @@ ErrorOr<void> ISO9660Inode::flush_metadata()
     return {};
 }
 
-ErrorOr<size_t> ISO9660Inode::write_bytes(off_t, size_t, const UserOrKernelBuffer&, OpenFileDescription*)
+ErrorOr<size_t> ISO9660Inode::write_bytes(off_t, size_t, UserOrKernelBuffer const&, OpenFileDescription*)
 {
     return EROFS;
 }
@@ -552,10 +543,6 @@ ErrorOr<void> ISO9660Inode::set_mtime(time_t)
     return EROFS;
 }
 
-void ISO9660Inode::one_ref_left()
-{
-}
-
 ISO9660Inode::ISO9660Inode(ISO9660FS& fs, ISO::DirectoryRecordHeader const& record, StringView name)
     : Inode(fs, get_inode_index(record, name))
     , m_record(record)
@@ -564,9 +551,7 @@ ISO9660Inode::ISO9660Inode(ISO9660FS& fs, ISO::DirectoryRecordHeader const& reco
     create_metadata();
 }
 
-ISO9660Inode::~ISO9660Inode()
-{
-}
+ISO9660Inode::~ISO9660Inode() = default;
 
 ErrorOr<NonnullRefPtr<ISO9660Inode>> ISO9660Inode::try_create_from_directory_record(ISO9660FS& fs, ISO::DirectoryRecordHeader const& record, StringView name)
 {
@@ -611,7 +596,7 @@ time_t ISO9660Inode::parse_numerical_date_time(ISO::NumericalDateAndTime const& 
 
 StringView ISO9660Inode::get_normalized_filename(ISO::DirectoryRecordHeader const& record, Bytes buffer)
 {
-    auto file_identifier = reinterpret_cast<u8 const*>(&record + 1);
+    auto const* file_identifier = reinterpret_cast<u8 const*>(&record + 1);
     auto filename = StringView { file_identifier, record.file_identifier_length };
 
     if (filename.length() == 1) {

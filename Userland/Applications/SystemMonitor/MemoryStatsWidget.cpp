@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2018-2020, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2022, the SerenityOS developers.
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -9,12 +10,17 @@
 #include <AK/JsonObject.h>
 #include <AK/NumberFormat.h>
 #include <LibCore/File.h>
+#include <LibCore/Object.h>
 #include <LibGUI/BoxLayout.h>
 #include <LibGUI/Label.h>
 #include <LibGUI/Painter.h>
-#include <LibGfx/FontDatabase.h>
+#include <LibGfx/Font/FontDatabase.h>
 #include <LibGfx/StylePainter.h>
 #include <stdlib.h>
+
+REGISTER_WIDGET(SystemMonitor, MemoryStatsWidget)
+
+namespace SystemMonitor {
 
 static MemoryStatsWidget* s_the;
 
@@ -23,11 +29,18 @@ MemoryStatsWidget* MemoryStatsWidget::the()
     return s_the;
 }
 
-MemoryStatsWidget::MemoryStatsWidget(GraphWidget& graph)
+MemoryStatsWidget::MemoryStatsWidget()
+    : MemoryStatsWidget(nullptr)
+{
+}
+
+MemoryStatsWidget::MemoryStatsWidget(GraphWidget* graph)
     : m_graph(graph)
 {
     VERIFY(!s_the);
     s_the = this;
+
+    REGISTER_STRING_PROPERTY("memory_graph", graph_widget_name, set_graph_widget_via_name);
 
     set_fixed_height(110);
 
@@ -35,7 +48,7 @@ MemoryStatsWidget::MemoryStatsWidget(GraphWidget& graph)
     layout()->set_margins({ 8, 0, 0 });
     layout()->set_spacing(3);
 
-    auto build_widgets_for_label = [this](const String& description) -> RefPtr<GUI::Label> {
+    auto build_widgets_for_label = [this](String const& description) -> RefPtr<GUI::Label> {
         auto& container = add<GUI::Widget>();
         container.set_layout<GUI::HorizontalBoxLayout>();
         container.set_fixed_size(275, 12);
@@ -58,23 +71,37 @@ MemoryStatsWidget::MemoryStatsWidget(GraphWidget& graph)
     refresh();
 }
 
-MemoryStatsWidget::~MemoryStatsWidget()
+void MemoryStatsWidget::set_graph_widget(GraphWidget& graph)
 {
+    m_graph = &graph;
+}
+
+void MemoryStatsWidget::set_graph_widget_via_name(String name)
+{
+    m_graph_widget_name = move(name);
+    if (!m_graph_widget_name.is_null()) {
+        // FIXME: We assume here that the graph widget is a sibling or descendant of a sibling. This prevents more complex hierarchies.
+        auto* maybe_graph = parent_widget()->find_descendant_of_type_named<GraphWidget>(m_graph_widget_name);
+        if (maybe_graph) {
+            m_graph = maybe_graph;
+            // Delete the stored graph name to signal that we found the widget
+            m_graph_widget_name = {};
+        } else {
+            dbgln("MemoryStatsWidget: Couldn't find graph of name '{}', retrying later.", m_graph_widget_name);
+        }
+    }
+}
+
+String MemoryStatsWidget::graph_widget_name()
+{
+    if (m_graph)
+        return m_graph->name();
+    return m_graph_widget_name;
 }
 
 static inline u64 page_count_to_bytes(size_t count)
 {
     return count * 4096;
-}
-
-static inline u64 page_count_to_kb(u64 count)
-{
-    return page_count_to_bytes(count) / 1024;
-}
-
-static inline u64 bytes_to_kb(u64 bytes)
-{
-    return bytes / 1024;
 }
 
 void MemoryStatsWidget::refresh()
@@ -87,7 +114,6 @@ void MemoryStatsWidget::refresh()
     auto json_result = JsonValue::from_string(file_contents).release_value_but_fixme_should_propagate_errors();
     auto const& json = json_result.as_object();
 
-    [[maybe_unused]] u32 kmalloc_eternal_allocated = json.get("kmalloc_eternal_allocated").to_u32();
     u32 kmalloc_allocated = json.get("kmalloc_allocated").to_u32();
     u32 kmalloc_available = json.get("kmalloc_available").to_u32();
     u64 user_physical_allocated = json.get("user_physical_allocated").to_u64();
@@ -115,6 +141,15 @@ void MemoryStatsWidget::refresh()
     m_kfree_count_label->set_text(String::formatted("{}", kfree_call_count));
     m_kmalloc_difference_label->set_text(String::formatted("{:+}", kmalloc_call_count - kfree_call_count));
 
-    m_graph.set_max(page_count_to_bytes(total_userphysical_and_swappable_pages) + kmalloc_bytes_total);
-    m_graph.add_value({ page_count_to_bytes(user_physical_committed), page_count_to_bytes(user_physical_allocated), kmalloc_bytes_total });
+    // Because the initialization order of us and the graph is unknown, we might get a couple of updates where the graph widget lookup fails.
+    // Therefore, we can retry indefinitely. (Should not be too much of a performance hit, as we don't update that often.)
+    if (!m_graph)
+        set_graph_widget_via_name(move(m_graph_widget_name));
+
+    if (m_graph) {
+        m_graph->set_max(page_count_to_bytes(total_userphysical_and_swappable_pages) + kmalloc_bytes_total);
+        m_graph->add_value({ page_count_to_bytes(user_physical_committed), page_count_to_bytes(user_physical_allocated), kmalloc_bytes_total });
+    }
+}
+
 }

@@ -17,6 +17,8 @@
 #include <LibCore/DateTime.h>
 #include <LibCore/DirIterator.h>
 #include <LibCore/File.h>
+#include <LibCore/System.h>
+#include <LibMain/Main.h>
 #include <ctype.h>
 #include <dirent.h>
 #include <errno.h>
@@ -28,6 +30,7 @@
 #include <string.h>
 #include <sys/ioctl.h>
 #include <sys/stat.h>
+#include <sys/sysmacros.h>
 #include <sys/types.h>
 #include <time.h>
 #include <unistd.h>
@@ -39,10 +42,10 @@ struct FileMetadata {
     };
 };
 
-static int do_file_system_object_long(const char* path);
-static int do_file_system_object_short(const char* path);
+static int do_file_system_object_long(char const* path);
+static int do_file_system_object_short(char const* path);
 
-static bool print_names(const char* path, size_t longest_name, const Vector<FileMetadata>& files);
+static bool print_names(char const* path, size_t longest_name, Vector<FileMetadata> const& files);
 
 static bool filemetadata_comparator(FileMetadata& a, FileMetadata& b);
 
@@ -61,6 +64,7 @@ static bool flag_sort_by_timestamp = false;
 static bool flag_reverse_sort = false;
 static bool flag_disable_hyperlinks = false;
 static bool flag_recursive = false;
+static bool flag_force_newline = false;
 
 static size_t terminal_rows = 0;
 static size_t terminal_columns = 0;
@@ -71,12 +75,9 @@ static HashMap<gid_t, String> groups;
 
 static bool is_a_tty = false;
 
-int main(int argc, char** argv)
+ErrorOr<int> serenity_main(Main::Arguments arguments)
 {
-    if (pledge("stdio rpath tty", nullptr) < 0) {
-        perror("pledge");
-        return 1;
-    }
+    TRY(Core::System::pledge("stdio rpath tty"));
 
     struct winsize ws;
     int rc = ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws);
@@ -93,10 +94,7 @@ int main(int argc, char** argv)
         flag_colorize = true;
     }
 
-    if (pledge("stdio rpath", nullptr) < 0) {
-        perror("pledge");
-        return 1;
-    }
+    TRY(Core::System::pledge("stdio rpath"));
 
     Vector<StringView> paths;
 
@@ -104,7 +102,7 @@ int main(int argc, char** argv)
     args_parser.set_general_help("List files in a directory.");
     args_parser.add_option(flag_show_dotfiles, "Show dotfiles", "all", 'a');
     args_parser.add_option(flag_show_almost_all_dotfiles, "Do not list implied . and .. directories", nullptr, 'A');
-    args_parser.add_option(flag_ignore_backups, "Do not list implied entries ending with ~", "--ignore-backups", 'B');
+    args_parser.add_option(flag_ignore_backups, "Do not list implied entries ending with ~", "ignore-backups", 'B');
     args_parser.add_option(flag_list_directories_only, "List directories themselves, not their contents", "directory", 'd');
     args_parser.add_option(flag_long, "Display long info", "long", 'l');
     args_parser.add_option(flag_sort_by_timestamp, "Sort files by timestamp", nullptr, 't');
@@ -117,8 +115,9 @@ int main(int argc, char** argv)
     args_parser.add_option(flag_human_readable, "Print human-readable sizes", "human-readable", 'h');
     args_parser.add_option(flag_disable_hyperlinks, "Disable hyperlinks", "no-hyperlinks", 'K');
     args_parser.add_option(flag_recursive, "List subdirectories recursively", "recursive", 'R');
+    args_parser.add_option(flag_force_newline, "List one file per line", nullptr, '1');
     args_parser.add_positional_argument(paths, "Directory to list", "path", Core::ArgsParser::Required::No);
-    args_parser.parse(argc, argv);
+    args_parser.parse(arguments);
 
     if (flag_show_almost_all_dotfiles)
         flag_show_dotfiles = true;
@@ -134,7 +133,7 @@ int main(int argc, char** argv)
         endgrent();
     }
 
-    auto do_file_system_object = [&](const char* path) {
+    auto do_file_system_object = [&](char const* path) {
         if (flag_long)
             return do_file_system_object_long(path);
         return do_file_system_object_short(path);
@@ -149,8 +148,10 @@ int main(int argc, char** argv)
         metadata.name = path;
 
         int rc = lstat(String(path).characters(), &metadata.stat);
-        if (rc < 0)
+        if (rc < 0) {
             perror("lstat");
+            continue;
+        }
 
         files.append(metadata);
     }
@@ -231,7 +232,7 @@ static String& hostname()
     return s_hostname;
 }
 
-static size_t print_name(const struct stat& st, const String& name, const char* path_for_link_resolution, const char* path_for_hyperlink)
+static size_t print_name(const struct stat& st, String const& name, char const* path_for_link_resolution, char const* path_for_hyperlink)
 {
     if (!flag_disable_hyperlinks) {
         auto full_path = Core::File::real_path_for(path_for_hyperlink);
@@ -246,8 +247,8 @@ static size_t print_name(const struct stat& st, const String& name, const char* 
     if (!flag_colorize || !output_is_terminal) {
         nprinted = printf("%s", name.characters());
     } else {
-        const char* begin_color = "";
-        const char* end_color = "\033[0m";
+        char const* begin_color = "";
+        char const* end_color = "\033[0m";
 
         if (st.st_mode & S_ISVTX)
             begin_color = "\033[42;30;1m";
@@ -271,11 +272,11 @@ static size_t print_name(const struct stat& st, const String& name, const char* 
     }
     if (S_ISLNK(st.st_mode)) {
         if (path_for_link_resolution) {
-            auto link_destination = Core::File::read_link(path_for_link_resolution);
-            if (link_destination.is_null()) {
+            auto link_destination_or_error = Core::File::read_link(path_for_link_resolution);
+            if (link_destination_or_error.is_error()) {
                 perror("readlink");
             } else {
-                nprinted += printf(" -> ") + print_escaped(link_destination.characters());
+                nprinted += printf(" -> ") + print_escaped(link_destination_or_error.value().characters());
             }
         } else {
             if (flag_classify)
@@ -296,7 +297,7 @@ static size_t print_name(const struct stat& st, const String& name, const char* 
     return nprinted;
 }
 
-static bool print_filesystem_object(const String& path, const String& name, const struct stat& st)
+static bool print_filesystem_object(String const& path, String const& name, const struct stat& st)
 {
     if (flag_show_inode)
         printf("%s ", String::formatted("{}", st.st_ino).characters());
@@ -369,7 +370,7 @@ static bool print_filesystem_object(const String& path, const String& name, cons
     return true;
 }
 
-static int do_file_system_object_long(const char* path)
+static int do_file_system_object_long(char const* path)
 {
     if (flag_list_directories_only) {
         struct stat stat {
@@ -436,7 +437,7 @@ static int do_file_system_object_long(const char* path)
     return 0;
 }
 
-static bool print_filesystem_object_short(const char* path, const char* name, size_t* nprinted)
+static bool print_filesystem_object_short(char const* path, char const* name, size_t* nprinted)
 {
     struct stat st;
     int rc = lstat(path, &st);
@@ -452,7 +453,7 @@ static bool print_filesystem_object_short(const char* path, const char* name, si
     return true;
 }
 
-static bool print_names(const char* path, size_t longest_name, const Vector<FileMetadata>& files)
+static bool print_names(char const* path, size_t longest_name, Vector<FileMetadata> const& files)
 {
     size_t printed_on_row = 0;
     size_t nprinted = 0;
@@ -478,7 +479,7 @@ static bool print_names(const char* path, size_t longest_name, const Vector<File
             for (size_t j = nprinted; i != (files.size() - 1) && j < column_width; ++j)
                 printf(" ");
         }
-        if ((printed_on_row + column_width) >= terminal_columns) {
+        if ((printed_on_row + column_width) >= terminal_columns || flag_force_newline) {
             printf("\n");
             printed_on_row = 0;
         }
@@ -486,7 +487,7 @@ static bool print_names(const char* path, size_t longest_name, const Vector<File
     return printed_on_row;
 }
 
-int do_file_system_object_short(const char* path)
+int do_file_system_object_short(char const* path)
 {
     if (flag_list_directories_only) {
         size_t nprinted = 0;

@@ -250,34 +250,34 @@ void Terminal::SGR(Parameters params)
                 m_current_state.attribute.reset();
                 break;
             case 1:
-                m_current_state.attribute.flags |= Attribute::Bold;
+                m_current_state.attribute.flags |= Attribute::Flags::Bold;
                 break;
             case 3:
-                m_current_state.attribute.flags |= Attribute::Italic;
+                m_current_state.attribute.flags |= Attribute::Flags::Italic;
                 break;
             case 4:
-                m_current_state.attribute.flags |= Attribute::Underline;
+                m_current_state.attribute.flags |= Attribute::Flags::Underline;
                 break;
             case 5:
-                m_current_state.attribute.flags |= Attribute::Blink;
+                m_current_state.attribute.flags |= Attribute::Flags::Blink;
                 break;
             case 7:
-                m_current_state.attribute.flags |= Attribute::Negative;
+                m_current_state.attribute.flags |= Attribute::Flags::Negative;
                 break;
             case 22:
-                m_current_state.attribute.flags &= ~Attribute::Bold;
+                m_current_state.attribute.flags &= ~Attribute::Flags::Bold;
                 break;
             case 23:
-                m_current_state.attribute.flags &= ~Attribute::Italic;
+                m_current_state.attribute.flags &= ~Attribute::Flags::Italic;
                 break;
             case 24:
-                m_current_state.attribute.flags &= ~Attribute::Underline;
+                m_current_state.attribute.flags &= ~Attribute::Flags::Underline;
                 break;
             case 25:
-                m_current_state.attribute.flags &= ~Attribute::Blink;
+                m_current_state.attribute.flags &= ~Attribute::Flags::Blink;
                 break;
             case 27:
-                m_current_state.attribute.flags &= ~Attribute::Negative;
+                m_current_state.attribute.flags &= ~Attribute::Flags::Negative;
                 break;
             case 30:
             case 31:
@@ -383,7 +383,11 @@ void Terminal::XTERM_WM(Parameters params)
             return;
         }
         dbgln_if(TERMINAL_DEBUG, "Title stack push: {}", m_current_window_title);
-        [[maybe_unused]] auto rc = m_title_stack.try_append(move(m_current_window_title));
+#ifdef KERNEL
+        (void)m_title_stack.try_append(m_current_window_title.release_nonnull()); // FIXME: Propagate Error
+#else
+        (void)m_title_stack.try_append(move(m_current_window_title));
+#endif
         break;
     }
     case 23: {
@@ -395,7 +399,11 @@ void Terminal::XTERM_WM(Parameters params)
         }
         m_current_window_title = m_title_stack.take_last();
         dbgln_if(TERMINAL_DEBUG, "Title stack pop: {}", m_current_window_title);
+#ifdef KERNEL
+        m_client.set_window_title(m_current_window_title->view());
+#else
         m_client.set_window_title(m_current_window_title);
+#endif
         break;
     }
     default:
@@ -864,7 +872,7 @@ void Terminal::put_character_at(unsigned row, unsigned column, u32 code_point)
     auto& line = active_buffer()[row];
     line.set_code_point(column, code_point);
     line.attribute_at(column) = m_current_state.attribute;
-    line.attribute_at(column).flags |= Attribute::Touched;
+    line.attribute_at(column).flags |= Attribute::Flags::Touched;
     line.set_dirty(true);
 
     m_last_code_point = code_point;
@@ -881,6 +889,7 @@ void Terminal::set_cursor(unsigned a_row, unsigned a_column, bool skip_debug)
 {
     unsigned row = min(a_row, m_rows - 1u);
     unsigned column = min(a_column, m_columns - 1u);
+    m_stomp = false;
     if (row == cursor_row() && column == cursor_column())
         return;
     VERIFY(row < rows());
@@ -888,7 +897,6 @@ void Terminal::set_cursor(unsigned a_row, unsigned a_column, bool skip_debug)
     invalidate_cursor();
     m_current_state.cursor.row = row;
     m_current_state.cursor.column = column;
-    m_stomp = false;
     invalidate_cursor();
     if (!skip_debug)
         dbgln_if(TERMINAL_DEBUG, "Set cursor position: {},{}", cursor_row(), cursor_column());
@@ -975,7 +983,9 @@ void Terminal::DSR(Parameters params)
         emit_string("\033[0n"); // Terminal status OK!
     } else if (params.size() == 1 && params[0] == 6) {
         // Cursor position query
-        emit_string(String::formatted("\e[{};{}R", cursor_row() + 1, cursor_column() + 1));
+        StringBuilder builder;
+        MUST(builder.try_appendff("\e[{};{}R", cursor_row() + 1, cursor_column() + 1)); // StringBuilder's inline capacity of 256 is enough to guarantee no allocations
+        emit_string(builder.string_view());
     } else {
         dbgln("Unknown DSR");
     }
@@ -1278,8 +1288,13 @@ void Terminal::execute_osc_sequence(OscParameters parameters, u8 last_byte)
         } else {
             // FIXME: the split breaks titles containing semicolons.
             // Should we expose the raw OSC string from the parser? Or join by semicolon?
+#ifdef KERNEL
+            m_current_window_title = Kernel::KString::try_create(stringview_ify(1)).release_value_but_fixme_should_propagate_errors();
+            m_client.set_window_title(m_current_window_title->view());
+#else
             m_current_window_title = stringview_ify(1).to_string();
             m_client.set_window_title(m_current_window_title);
+#endif
         }
         break;
     case 8:
@@ -1332,7 +1347,7 @@ void Terminal::inject_string(StringView str)
 
 void Terminal::emit_string(StringView string)
 {
-    m_client.emit((const u8*)string.characters_without_null_termination(), string.length());
+    m_client.emit((u8 const*)string.characters_without_null_termination(), string.length());
 }
 
 void Terminal::handle_key_press(KeyCode key, u32 code_point, u8 flags)
@@ -1344,16 +1359,20 @@ void Terminal::handle_key_press(KeyCode key, u32 code_point, u8 flags)
 
     auto emit_final_with_modifier = [this, modifier_mask](char final) {
         char escape_character = m_cursor_keys_mode == CursorKeysMode::Application ? 'O' : '[';
+        StringBuilder builder;
         if (modifier_mask)
-            emit_string(String::formatted("\e{}1;{}{:c}", escape_character, modifier_mask + 1, final));
+            MUST(builder.try_appendff("\e{}1;{}{:c}", escape_character, modifier_mask + 1, final)); // StringBuilder's inline capacity of 256 is enough to guarantee no allocations
         else
-            emit_string(String::formatted("\e{}{:c}", escape_character, final));
+            MUST(builder.try_appendff("\e{}{:c}", escape_character, final)); // StringBuilder's inline capacity of 256 is enough to guarantee no allocations
+        emit_string(builder.string_view());
     };
     auto emit_tilde_with_modifier = [this, modifier_mask](unsigned num) {
+        StringBuilder builder;
         if (modifier_mask)
-            emit_string(String::formatted("\e[{};{}~", num, modifier_mask + 1));
+            MUST(builder.try_appendff("\e[{};{}~", num, modifier_mask + 1)); // StringBuilder's inline capacity of 256 is enough to guarantee no allocations
         else
-            emit_string(String::formatted("\e[{}~", num));
+            MUST(builder.try_appendff("\e[{}~", num)); // StringBuilder's inline capacity of 256 is enough to guarantee no allocations
+        emit_string(builder.string_view());
     };
 
     switch (key) {
@@ -1422,8 +1441,7 @@ void Terminal::handle_key_press(KeyCode key, u32 code_point, u8 flags)
 
     StringBuilder sb;
     sb.append_code_point(code_point);
-
-    emit_string(sb.to_string());
+    emit_string(sb.string_view());
 }
 
 void Terminal::unimplemented_control_code(u8 code)
@@ -1568,7 +1586,7 @@ void Terminal::set_size(u16 columns, u16 rows)
                 if (m_history.size() >= 2 && m_history[m_history.size() - 2].termination_column().has_value())
                     break;
                 --extra_lines;
-                m_history.take_last();
+                (void)m_history.take_last();
                 continue;
             }
             break;
@@ -1639,7 +1657,7 @@ void Terminal::invalidate_cursor()
         active_buffer()[cursor_row()].set_dirty(true);
 }
 
-Attribute Terminal::attribute_at(const Position& position) const
+Attribute Terminal::attribute_at(Position const& position) const
 {
     if (!position.is_valid())
         return {};

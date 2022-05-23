@@ -10,9 +10,12 @@
 #include <AK/Types.h>
 #include <Kernel/Interrupts/GenericInterruptHandler.h>
 
+#include <AK/Platform.h>
+VALIDATE_IS_X86()
+
 namespace Kernel {
 
-class GenericInterruptHandeler;
+class GenericInterruptHandler;
 
 extern "C" void interrupt_common_asm_entry();
 
@@ -41,6 +44,7 @@ void register_interrupt_handler(u8 number, void (*handler)());
 void register_user_callable_interrupt_handler(u8 number, void (*handler)());
 GenericInterruptHandler& get_interrupt_handler(u8 interrupt_number);
 void register_generic_interrupt_handler(u8 number, GenericInterruptHandler&);
+void register_disabled_interrupt_handler(u8 number, GenericInterruptHandler& handler);
 void unregister_generic_interrupt_handler(u8 number, GenericInterruptHandler&);
 
 void idt_init();

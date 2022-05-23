@@ -4,7 +4,8 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-#include "BookmarksBarWidget.h"
+#include <Applications/Browser/BookmarksBarWidget.h>
+#include <Applications/Browser/Browser.h>
 #include <Applications/Browser/EditBookmarkGML.h>
 #include <LibGUI/Action.h>
 #include <LibGUI/BoxLayout.h>
@@ -32,8 +33,9 @@ public:
     {
         auto editor = BookmarkEditor::construct(parent_window, title, url);
         editor->set_title("Edit Bookmark");
+        editor->set_icon(g_icon_bag.bookmark_filled);
 
-        if (editor->exec() == Dialog::ExecOK) {
+        if (editor->exec() == ExecResult::OK) {
             return Vector<JsonValue> { editor->title(), editor->url() };
         }
 
@@ -56,23 +58,23 @@ private:
         m_title_textbox->set_focus(true);
         m_title_textbox->select_all();
         m_title_textbox->on_return_pressed = [this] {
-            done(Dialog::ExecOK);
+            done(ExecResult::OK);
         };
 
         m_url_textbox = *widget.find_descendant_of_type_named<GUI::TextBox>("url_textbox");
         m_url_textbox->set_text(url);
         m_url_textbox->on_return_pressed = [this] {
-            done(Dialog::ExecOK);
+            done(ExecResult::OK);
         };
 
         auto& ok_button = *widget.find_descendant_of_type_named<GUI::Button>("ok_button");
         ok_button.on_click = [this](auto) {
-            done(Dialog::ExecOK);
+            done(ExecResult::OK);
         };
 
         auto& cancel_button = *widget.find_descendant_of_type_named<GUI::Button>("cancel_button");
         cancel_button.on_click = [this](auto) {
-            done(Dialog::ExecCancel);
+            done(ExecResult::Cancel);
         };
     }
 
@@ -99,7 +101,7 @@ BookmarksBarWidget& BookmarksBarWidget::the()
     return *s_the;
 }
 
-BookmarksBarWidget::BookmarksBarWidget(const String& bookmarks_file, bool enabled)
+BookmarksBarWidget::BookmarksBarWidget(String const& bookmarks_file, bool enabled)
 {
     s_the = this;
     set_layout<GUI::HorizontalBoxLayout>();
@@ -198,7 +200,7 @@ void BookmarksBarWidget::model_did_update(unsigned)
 
         button.set_button_style(Gfx::ButtonStyle::Coolbar);
         button.set_text(title);
-        button.set_icon(Gfx::Bitmap::try_load_from_file("/res/icons/16x16/filetype-html.png").release_value_but_fixme_should_propagate_errors());
+        button.set_icon(g_icon_bag.filetype_html);
         button.set_fixed_size(font().width(title) + 32, 20);
         button.set_relative_rect(rect);
         button.set_focus_policy(GUI::FocusPolicy::TabFocus);
@@ -249,16 +251,12 @@ void BookmarksBarWidget::update_content_size()
         for (size_t i = m_last_visible_index; i < m_bookmarks.size(); ++i) {
             auto& bookmark = m_bookmarks.at(i);
             bookmark.set_visible(false);
-            m_additional_menu->add_action(GUI::Action::create(bookmark.text(),
-                Gfx::Bitmap::try_load_from_file("/res/icons/16x16/filetype-html.png").release_value_but_fixme_should_propagate_errors(),
-                [&](auto&) {
-                    bookmark.on_click(0);
-                }));
+            m_additional_menu->add_action(GUI::Action::create(bookmark.text(), g_icon_bag.filetype_html, [&](auto&) { bookmark.on_click(0); }));
         }
     }
 }
 
-bool BookmarksBarWidget::contains_bookmark(const String& url)
+bool BookmarksBarWidget::contains_bookmark(String const& url)
 {
     for (int item_index = 0; item_index < model()->row_count(); ++item_index) {
 
@@ -271,7 +269,7 @@ bool BookmarksBarWidget::contains_bookmark(const String& url)
     return false;
 }
 
-bool BookmarksBarWidget::remove_bookmark(const String& url)
+bool BookmarksBarWidget::remove_bookmark(String const& url)
 {
     for (int item_index = 0; item_index < model()->row_count(); ++item_index) {
 
@@ -280,7 +278,7 @@ bool BookmarksBarWidget::remove_bookmark(const String& url)
         if (item_url == url) {
             auto& json_model = *static_cast<GUI::JsonArrayModel*>(model());
 
-            const auto item_removed = json_model.remove(item_index);
+            auto const item_removed = json_model.remove(item_index);
             if (item_removed)
                 json_model.store();
 
@@ -291,7 +289,7 @@ bool BookmarksBarWidget::remove_bookmark(const String& url)
     return false;
 }
 
-bool BookmarksBarWidget::add_bookmark(const String& url, const String& title)
+bool BookmarksBarWidget::add_bookmark(String const& url, String const& title)
 {
     Vector<JsonValue> values;
     values.append(title);
@@ -305,7 +303,7 @@ bool BookmarksBarWidget::add_bookmark(const String& url, const String& title)
     return false;
 }
 
-bool BookmarksBarWidget::edit_bookmark(const String& url)
+bool BookmarksBarWidget::edit_bookmark(String const& url)
 {
     for (int item_index = 0; item_index < model()->row_count(); ++item_index) {
         auto item_title = model()->index(item_index, 0).data().to_string();

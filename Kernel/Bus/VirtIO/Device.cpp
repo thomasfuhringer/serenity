@@ -18,7 +18,7 @@ UNMAP_AFTER_INIT void detect()
 {
     if (kernel_command_line().disable_virtio())
         return;
-    PCI::enumerate([&](PCI::DeviceIdentifier const& device_identifier) {
+    MUST(PCI::enumerate([&](PCI::DeviceIdentifier const& device_identifier) {
         if (device_identifier.hardware_id().is_null())
             return;
         // TODO: We should also be checking that the device_id is in between 0x1000 - 0x107F inclusive
@@ -43,10 +43,10 @@ UNMAP_AFTER_INIT void detect()
             dbgln_if(VIRTIO_DEBUG, "VirtIO: Unknown VirtIO device with ID: {}", device_identifier.hardware_id().device_id);
             break;
         }
-    });
+    }));
 }
 
-static StringView const determine_device_class(PCI::DeviceIdentifier const& device_identifier)
+static StringView determine_device_class(PCI::DeviceIdentifier const& device_identifier)
 {
     if (device_identifier.revision_id().value() == 0) {
         // Note: If the device is a legacy (or transitional) device, therefore,
@@ -97,32 +97,32 @@ UNMAP_AFTER_INIT void Device::initialize()
     for (auto& capability : capabilities) {
         if (capability.id().value() == PCI::Capabilities::ID::VendorSpecific) {
             // We have a virtio_pci_cap
-            auto cfg = make<Configuration>();
+            Configuration config {};
             auto raw_config_type = capability.read8(0x3);
             if (raw_config_type < static_cast<u8>(ConfigurationType::Common) || raw_config_type > static_cast<u8>(ConfigurationType::PCI)) {
                 dbgln("{}: Unknown capability configuration type: {}", m_class_name, raw_config_type);
                 return;
             }
-            cfg->cfg_type = static_cast<ConfigurationType>(raw_config_type);
+            config.cfg_type = static_cast<ConfigurationType>(raw_config_type);
             auto cap_length = capability.read8(0x2);
             if (cap_length < 0x10) {
                 dbgln("{}: Unexpected capability size: {}", m_class_name, cap_length);
                 break;
             }
-            cfg->bar = capability.read8(0x4);
-            if (cfg->bar > 0x5) {
-                dbgln("{}: Unexpected capability bar value: {}", m_class_name, cfg->bar);
+            config.bar = capability.read8(0x4);
+            if (config.bar > 0x5) {
+                dbgln("{}: Unexpected capability bar value: {}", m_class_name, config.bar);
                 break;
             }
-            cfg->offset = capability.read32(0x8);
-            cfg->length = capability.read32(0xc);
-            dbgln_if(VIRTIO_DEBUG, "{}: Found configuration {}, bar: {}, offset: {}, length: {}", m_class_name, (u32)cfg->cfg_type, cfg->bar, cfg->offset, cfg->length);
-            if (cfg->cfg_type == ConfigurationType::Common)
+            config.offset = capability.read32(0x8);
+            config.length = capability.read32(0xc);
+            dbgln_if(VIRTIO_DEBUG, "{}: Found configuration {}, bar: {}, offset: {}, length: {}", m_class_name, (u32)config.cfg_type, config.bar, config.offset, config.length);
+            if (config.cfg_type == ConfigurationType::Common)
                 m_use_mmio = true;
-            else if (cfg->cfg_type == ConfigurationType::Notify)
+            else if (config.cfg_type == ConfigurationType::Notify)
                 m_notify_multiplier = capability.read32(0x10);
 
-            m_configs.append(move(cfg));
+            m_configs.append(config);
         }
     }
 
@@ -131,7 +131,12 @@ UNMAP_AFTER_INIT void Device::initialize()
             auto& mapping = m_mmio[cfg.bar];
             mapping.size = PCI::get_BAR_space_size(pci_address(), cfg.bar);
             if (!mapping.base && mapping.size) {
-                auto region_or_error = MM.allocate_kernel_region(PhysicalAddress(page_base_of(PCI::get_BAR(pci_address(), cfg.bar))), Memory::page_round_up(mapping.size), "VirtIO MMIO", Memory::Region::Access::ReadWrite, Memory::Region::Cacheable::No);
+                auto region_size_or_error = Memory::page_round_up(mapping.size);
+                if (region_size_or_error.is_error()) {
+                    dbgln_if(VIRTIO_DEBUG, "{}: Failed to round up size={} to pages", m_class_name, mapping.size);
+                    continue;
+                }
+                auto region_or_error = MM.allocate_kernel_region(PhysicalAddress(page_base_of(PCI::get_BAR(pci_address(), cfg.bar))), region_size_or_error.value(), "VirtIO MMIO", Memory::Region::Access::ReadWrite, Memory::Region::Cacheable::No);
                 if (region_or_error.is_error()) {
                     dbgln_if(VIRTIO_DEBUG, "{}: Failed to map bar {} - (size={}) {}", m_class_name, cfg.bar, mapping.size, region_or_error.error());
                 } else {
@@ -174,37 +179,37 @@ void Device::notify_queue(u16 queue_index)
         config_write16(*m_notify_cfg, get_queue(queue_index).notify_offset() * m_notify_multiplier, queue_index);
 }
 
-u8 Device::config_read8(const Configuration& config, u32 offset)
+u8 Device::config_read8(Configuration const& config, u32 offset)
 {
     return mapping_for_bar(config.bar).read<u8>(config.offset + offset);
 }
 
-u16 Device::config_read16(const Configuration& config, u32 offset)
+u16 Device::config_read16(Configuration const& config, u32 offset)
 {
     return mapping_for_bar(config.bar).read<u16>(config.offset + offset);
 }
 
-u32 Device::config_read32(const Configuration& config, u32 offset)
+u32 Device::config_read32(Configuration const& config, u32 offset)
 {
     return mapping_for_bar(config.bar).read<u32>(config.offset + offset);
 }
 
-void Device::config_write8(const Configuration& config, u32 offset, u8 value)
+void Device::config_write8(Configuration const& config, u32 offset, u8 value)
 {
     mapping_for_bar(config.bar).write(config.offset + offset, value);
 }
 
-void Device::config_write16(const Configuration& config, u32 offset, u16 value)
+void Device::config_write16(Configuration const& config, u32 offset, u16 value)
 {
     mapping_for_bar(config.bar).write(config.offset + offset, value);
 }
 
-void Device::config_write32(const Configuration& config, u32 offset, u32 value)
+void Device::config_write32(Configuration const& config, u32 offset, u32 value)
 {
     mapping_for_bar(config.bar).write(config.offset + offset, value);
 }
 
-void Device::config_write64(const Configuration& config, u32 offset, u64 value)
+void Device::config_write64(Configuration const& config, u32 offset, u64 value)
 {
     mapping_for_bar(config.bar).write(config.offset + offset, value);
 }
@@ -322,9 +327,10 @@ bool Device::setup_queue(u16 queue_index)
 
     u16 queue_notify_offset = config_read16(*m_common_cfg, COMMON_CFG_QUEUE_NOTIFY_OFF);
 
-    auto queue = make<Queue>(queue_size, queue_notify_offset);
-    if (queue->is_null())
+    auto queue_or_error = Queue::try_create(queue_size, queue_notify_offset);
+    if (queue_or_error.is_error())
         return false;
+    auto queue = queue_or_error.release_value();
 
     config_write64(*m_common_cfg, COMMON_CFG_QUEUE_DESC, queue->descriptor_area().get());
     config_write64(*m_common_cfg, COMMON_CFG_QUEUE_DRIVER, queue->driver_area().get());
@@ -397,7 +403,7 @@ u8 Device::isr_status()
     return config_read8(*m_isr_cfg, 0);
 }
 
-bool Device::handle_irq(const RegisterState&)
+bool Device::handle_irq(RegisterState const&)
 {
     u8 isr_type = isr_status();
     if ((isr_type & (QUEUE_INTERRUPT | DEVICE_CONFIG_INTERRUPT)) == 0) {

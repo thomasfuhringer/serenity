@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2020, the SerenityOS developers.
+ * Copyright (c) 2020-2022, the SerenityOS developers.
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -18,7 +18,7 @@ namespace Spreadsheet {
 Optional<FunctionAndArgumentIndex> get_function_and_argument_index(StringView source)
 {
     JS::Lexer lexer { source };
-    // Track <identifier> <OpenParen>'s, and how many complete expressions are inside the parenthesised expression.
+    // Track <identifier> <OpenParen>'s, and how many complete expressions are inside the parenthesized expression.
     Vector<size_t> state;
     StringView last_name;
     Vector<StringView> names;
@@ -97,10 +97,6 @@ SheetGlobalObject::SheetGlobalObject(Sheet& sheet)
 {
 }
 
-SheetGlobalObject::~SheetGlobalObject()
-{
-}
-
 JS::ThrowCompletionOr<bool> SheetGlobalObject::internal_has_property(JS::PropertyKey const& name) const
 {
     if (name.is_string()) {
@@ -157,14 +153,16 @@ void SheetGlobalObject::initialize_global_object()
     define_native_function("current_cell_position", current_cell_position, 0, attr);
     define_native_function("column_arithmetic", column_arithmetic, 2, attr);
     define_native_function("column_index", column_index, 1, attr);
+    define_native_function("get_column_bound", get_column_bound, 1, attr);
 }
 
 void SheetGlobalObject::visit_edges(Visitor& visitor)
 {
     Base::visit_edges(visitor);
     for (auto& it : m_sheet.cells()) {
-        if (it.value->exception())
-            visitor.visit(it.value->exception());
+        if (auto opt_thrown_value = it.value->thrown_value(); opt_thrown_value.has_value())
+            visitor.visit(*opt_thrown_value);
+
         visitor.visit(it.value->evaluated_data());
     }
 }
@@ -188,7 +186,7 @@ JS_DEFINE_NATIVE_FUNCTION(SheetGlobalObject::get_real_cell_contents)
     if (!position.has_value())
         return vm.throw_completion<JS::TypeError>(global_object, "Invalid cell name");
 
-    const auto* cell = sheet_object->m_sheet.at(position.value());
+    auto const* cell = sheet_object->m_sheet.at(position.value());
     if (!cell)
         return JS::js_undefined();
 
@@ -329,13 +327,34 @@ JS_DEFINE_NATIVE_FUNCTION(SheetGlobalObject::column_arithmetic)
     return JS::js_string(vm, new_column.release_value());
 }
 
-WorkbookObject::WorkbookObject(Workbook& workbook)
-    : JS::Object(*JS::Object::create(workbook.global_object(), workbook.global_object().object_prototype()))
-    , m_workbook(workbook)
+JS_DEFINE_NATIVE_FUNCTION(SheetGlobalObject::get_column_bound)
 {
+    if (vm.argument_count() != 1)
+        return vm.throw_completion<JS::TypeError>(global_object, "Expected exactly one argument to get_column_bound()");
+
+    auto column_name = vm.argument(0);
+    if (!column_name.is_string())
+        return vm.throw_completion<JS::TypeError>(global_object, JS::ErrorType::NotAnObjectOfType, "String");
+
+    auto& column_name_str = column_name.as_string().string();
+    auto* this_object = TRY(vm.this_value(global_object).to_object(global_object));
+
+    if (!is<SheetGlobalObject>(this_object))
+        return vm.throw_completion<JS::TypeError>(global_object, JS::ErrorType::NotAnObjectOfType, "SheetGlobalObject");
+
+    auto sheet_object = static_cast<SheetGlobalObject*>(this_object);
+    auto& sheet = sheet_object->m_sheet;
+    auto maybe_column_index = sheet.column_index(column_name_str);
+    if (!maybe_column_index.has_value())
+        return vm.throw_completion<JS::TypeError>(global_object, String::formatted("'{}' is not a valid column", column_name_str));
+
+    auto bounds = sheet.written_data_bounds(*maybe_column_index);
+    return JS::Value(bounds.row);
 }
 
-WorkbookObject::~WorkbookObject()
+WorkbookObject::WorkbookObject(Workbook& workbook, JS::GlobalObject& global_object)
+    : JS::Object(*JS::Object::create(global_object, global_object.object_prototype()))
+    , m_workbook(workbook)
 {
 }
 

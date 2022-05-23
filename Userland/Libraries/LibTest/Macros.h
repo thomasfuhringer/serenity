@@ -14,7 +14,7 @@
 
 namespace AK {
 template<typename... Parameters>
-void warnln(CheckedFormatString<Parameters...>&& fmtstr, const Parameters&...);
+void warnln(CheckedFormatString<Parameters...>&& fmtstr, Parameters const&...);
 }
 
 namespace Test {
@@ -126,4 +126,18 @@ void current_test_case_did_fail();
         Test::Crash crash(test_message, test_func); \
         if (!crash.run())                           \
             ::Test::current_test_case_did_fail();   \
+    } while (false)
+
+#define EXPECT_CRASH_WITH_SIGNAL(test_message, signal, test_func) \
+    do {                                                          \
+        Test::Crash crash(test_message, test_func, (signal));     \
+        if (!crash.run())                                         \
+            ::Test::current_test_case_did_fail();                 \
+    } while (false)
+
+#define EXPECT_NO_CRASH(test_message, test_func)       \
+    do {                                               \
+        Test::Crash crash(test_message, test_func, 0); \
+        if (!crash.run())                              \
+            ::Test::current_test_case_did_fail();      \
     } while (false)

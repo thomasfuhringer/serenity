@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2021, Matthew Olsson <mattco@serenityos.org>
+ * Copyright (c) 2021-2022, Matthew Olsson <mattco@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -25,8 +25,12 @@
 
 namespace PDF {
 
+struct Page;
+
 class ColorSpace : public RefCounted<ColorSpace> {
 public:
+    static PDFErrorOr<NonnullRefPtr<ColorSpace>> create(Document*, FlyString const& name, Page const& page);
+
     virtual ~ColorSpace() = default;
 
     virtual Color color(Vector<Value> const& arguments) const = 0;
@@ -34,11 +38,11 @@ public:
 
 class DeviceGrayColorSpace final : public ColorSpace {
 public:
-    static RefPtr<DeviceGrayColorSpace> the();
+    static NonnullRefPtr<DeviceGrayColorSpace> the();
 
-    virtual ~DeviceGrayColorSpace() override = default;
+    ~DeviceGrayColorSpace() override = default;
 
-    virtual Color color(Vector<Value> const& arguments) const override;
+    Color color(Vector<Value> const& arguments) const override;
 
 private:
     DeviceGrayColorSpace() = default;
@@ -46,11 +50,11 @@ private:
 
 class DeviceRGBColorSpace final : public ColorSpace {
 public:
-    static RefPtr<DeviceRGBColorSpace> the();
+    static NonnullRefPtr<DeviceRGBColorSpace> the();
 
-    virtual ~DeviceRGBColorSpace() override = default;
+    ~DeviceRGBColorSpace() override = default;
 
-    virtual Color color(Vector<Value> const& arguments) const override;
+    Color color(Vector<Value> const& arguments) const override;
 
 private:
     DeviceRGBColorSpace() = default;
@@ -58,11 +62,11 @@ private:
 
 class DeviceCMYKColorSpace final : public ColorSpace {
 public:
-    static RefPtr<DeviceCMYKColorSpace> the();
+    static NonnullRefPtr<DeviceCMYKColorSpace> the();
 
-    virtual ~DeviceCMYKColorSpace() override = default;
+    ~DeviceCMYKColorSpace() override = default;
 
-    virtual Color color(Vector<Value> const& arguments) const override;
+    Color color(Vector<Value> const& arguments) const override;
 
 private:
     DeviceCMYKColorSpace() = default;
@@ -70,10 +74,11 @@ private:
 
 class CalRGBColorSpace final : public ColorSpace {
 public:
-    static RefPtr<CalRGBColorSpace> create(RefPtr<Document>, Vector<Value>&& parameters);
-    virtual ~CalRGBColorSpace() override = default;
+    static PDFErrorOr<NonnullRefPtr<CalRGBColorSpace>> create(Document*, Vector<Value>&& parameters);
 
-    virtual Color color(Vector<Value> const& arguments) const override;
+    ~CalRGBColorSpace() override = default;
+
+    Color color(Vector<Value> const& arguments) const override;
 
 private:
     CalRGBColorSpace() = default;
@@ -82,6 +87,18 @@ private:
     Array<float, 3> m_blackpoint { 0, 0, 0 };
     Array<float, 3> m_gamma { 1, 1, 1 };
     Array<float, 9> m_matrix { 1, 0, 0, 0, 1, 0, 0, 0, 1 };
+};
+
+class ICCBasedColorSpace final : public ColorSpace {
+public:
+    static PDFErrorOr<NonnullRefPtr<ColorSpace>> create(Document*, Page const&, Vector<Value>&& parameters);
+
+    ~ICCBasedColorSpace() override = default;
+
+    Color color(Vector<Value> const& arguments) const override;
+
+private:
+    ICCBasedColorSpace() = delete;
 };
 
 }

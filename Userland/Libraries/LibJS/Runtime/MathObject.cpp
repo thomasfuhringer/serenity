@@ -6,6 +6,7 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <AK/BuiltinWrappers.h>
 #include <AK/Function.h>
 #include <AK/Random.h>
 #include <LibJS/Runtime/GlobalObject.h>
@@ -72,10 +73,6 @@ void MathObject::initialize(GlobalObject& global_object)
 
     // 21.3.1.9 Math [ @@toStringTag ], https://tc39.es/ecma262/#sec-math-@@tostringtag
     define_direct_property(*vm.well_known_symbol_to_string_tag(), js_string(vm, vm.names.Math.as_string()), Attribute::Configurable);
-}
-
-MathObject::~MathObject()
-{
 }
 
 // 21.3.2.1 Math.abs ( x ), https://tc39.es/ecma262/#sec-math.abs
@@ -215,53 +212,7 @@ JS_DEFINE_NATIVE_FUNCTION(MathObject::pow)
 {
     auto base = TRY(vm.argument(0).to_number(global_object));
     auto exponent = TRY(vm.argument(1).to_number(global_object));
-    if (exponent.is_nan())
-        return js_nan();
-    if (exponent.is_positive_zero() || exponent.is_negative_zero())
-        return Value(1);
-    if (base.is_nan())
-        return js_nan();
-    if (base.is_positive_infinity())
-        return exponent.as_double() > 0 ? js_infinity() : Value(0);
-    if (base.is_negative_infinity()) {
-        auto is_odd_integral_number = exponent.is_integral_number() && (exponent.as_i32() % 2 != 0);
-        if (exponent.as_double() > 0)
-            return is_odd_integral_number ? js_negative_infinity() : js_infinity();
-        else
-            return is_odd_integral_number ? Value(-0.0) : Value(0);
-    }
-    if (base.is_positive_zero())
-        return exponent.as_double() > 0 ? Value(0) : js_infinity();
-    if (base.is_negative_zero()) {
-        auto is_odd_integral_number = exponent.is_integral_number() && (exponent.as_i32() % 2 != 0);
-        if (exponent.as_double() > 0)
-            return is_odd_integral_number ? Value(-0.0) : Value(0);
-        else
-            return is_odd_integral_number ? js_negative_infinity() : js_infinity();
-    }
-    VERIFY(base.is_finite_number() && !base.is_positive_zero() && !base.is_negative_zero());
-    if (exponent.is_positive_infinity()) {
-        auto absolute_base = fabs(base.as_double());
-        if (absolute_base > 1)
-            return js_infinity();
-        else if (absolute_base == 1)
-            return js_nan();
-        else if (absolute_base < 1)
-            return Value(0);
-    }
-    if (exponent.is_negative_infinity()) {
-        auto absolute_base = fabs(base.as_double());
-        if (absolute_base > 1)
-            return Value(0);
-        else if (absolute_base == 1)
-            return js_nan();
-        else if (absolute_base < 1)
-            return js_infinity();
-    }
-    VERIFY(exponent.is_finite_number() && !exponent.is_positive_zero() && !exponent.is_negative_zero());
-    if (base.as_double() < 0 && !exponent.is_integral_number())
-        return js_nan();
-    return Value(::pow(base.as_double(), exponent.as_double()));
+    return JS::exp(global_object, base, exponent);
 }
 
 // 21.3.2.14 Math.exp ( x ), https://tc39.es/ecma262/#sec-math.exp
@@ -303,7 +254,7 @@ JS_DEFINE_NATIVE_FUNCTION(MathObject::clz32)
     auto number = TRY(vm.argument(0).to_u32(global_object));
     if (number == 0)
         return Value(32);
-    return Value(__builtin_clz(number));
+    return Value(count_leading_zeroes(number));
 }
 
 // 21.3.2.2 Math.acos ( x ), https://tc39.es/ecma262/#sec-math.acos

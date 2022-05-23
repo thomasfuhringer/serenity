@@ -5,6 +5,7 @@
  */
 
 #include <AK/CharacterTypes.h>
+#include <AK/DateConstants.h>
 #include <AK/StringBuilder.h>
 #include <AK/Time.h>
 #include <LibCore/DateTime.h>
@@ -83,27 +84,36 @@ void DateTime::set_time(int year, int month, int day, int hour, int minute, int 
     m_second = tm.tm_sec;
 }
 
-String DateTime::to_string(const String& format) const
+String DateTime::to_string(StringView format) const
 {
-    const char wday_short_names[7][4] = {
-        "Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"
-    };
-    const char wday_long_names[7][10] = {
-        "Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"
-    };
-    const char mon_short_names[12][4] = {
-        "Jan", "Feb", "Mar", "Apr", "May", "Jun",
-        "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"
-    };
-    const char mon_long_names[12][10] = {
-        "January", "February", "March", "April", "May", "June",
-        "July", "August", "September", "October", "November", "December"
-    };
-
     struct tm tm;
     localtime_r(&m_timestamp, &tm);
     StringBuilder builder;
-    const int format_len = format.length();
+    int const format_len = format.length();
+
+    auto format_time_zone_offset = [&](bool with_separator) {
+#if defined(__serenity__)
+        auto offset_seconds = daylight ? -altzone : -timezone;
+#elif !defined(__FreeBSD__)
+        auto offset_seconds = -timezone;
+#else
+        auto offset_seconds = 0;
+#endif
+        StringView offset_sign;
+
+        if (offset_seconds >= 0) {
+            offset_sign = "+"sv;
+        } else {
+            offset_sign = "-"sv;
+            offset_seconds *= -1;
+        }
+
+        auto offset_hours = offset_seconds / 3600;
+        auto offset_minutes = (offset_seconds % 3600) / 60;
+        auto separator = with_separator ? ":"sv : ""sv;
+
+        builder.appendff("{}{:02}{}{:02}", offset_sign, offset_hours, separator, offset_minutes);
+    };
 
     for (int i = 0; i < format_len; ++i) {
         if (format[i] != '%') {
@@ -114,16 +124,16 @@ String DateTime::to_string(const String& format) const
 
             switch (format[i]) {
             case 'a':
-                builder.append(wday_short_names[tm.tm_wday]);
+                builder.append(short_day_names[tm.tm_wday]);
                 break;
             case 'A':
-                builder.append(wday_long_names[tm.tm_wday]);
+                builder.append(long_day_names[tm.tm_wday]);
                 break;
             case 'b':
-                builder.append(mon_short_names[tm.tm_mon]);
+                builder.append(short_month_names[tm.tm_mon]);
                 break;
             case 'B':
-                builder.append(mon_long_names[tm.tm_mon]);
+                builder.append(long_month_names[tm.tm_mon]);
                 break;
             case 'C':
                 builder.appendff("{:02}", (tm.tm_year + 1900) / 100);
@@ -138,14 +148,18 @@ String DateTime::to_string(const String& format) const
                 builder.appendff("{:2}", tm.tm_mday);
                 break;
             case 'h':
-                builder.append(mon_short_names[tm.tm_mon]);
+                builder.append(short_month_names[tm.tm_mon]);
                 break;
             case 'H':
                 builder.appendff("{:02}", tm.tm_hour);
                 break;
-            case 'I':
-                builder.appendff("{:02}", tm.tm_hour % 12);
+            case 'I': {
+                int display_hour = tm.tm_hour % 12;
+                if (display_hour == 0)
+                    display_hour = 12;
+                builder.appendff("{:02}", display_hour);
                 break;
+            }
             case 'j':
                 builder.appendff("{:03}", tm.tm_yday + 1);
                 break;
@@ -159,11 +173,15 @@ String DateTime::to_string(const String& format) const
                 builder.append('\n');
                 break;
             case 'p':
-                builder.append(tm.tm_hour < 12 ? "a.m." : "p.m.");
+                builder.append(tm.tm_hour < 12 ? "AM" : "PM");
                 break;
-            case 'r':
-                builder.appendff("{:02}:{:02}:{:02} {}", tm.tm_hour % 12, tm.tm_min, tm.tm_sec, tm.tm_hour < 12 ? "a.m." : "p.m.");
+            case 'r': {
+                int display_hour = tm.tm_hour % 12;
+                if (display_hour == 0)
+                    display_hour = 12;
+                builder.appendff("{:02}:{:02}:{:02} {}", display_hour, tm.tm_min, tm.tm_sec, tm.tm_hour < 12 ? "AM" : "PM");
                 break;
+            }
             case 'R':
                 builder.appendff("{:02}:{:02}", tm.tm_hour, tm.tm_min);
                 break;
@@ -180,20 +198,20 @@ String DateTime::to_string(const String& format) const
                 builder.appendff("{}", tm.tm_wday ? tm.tm_wday : 7);
                 break;
             case 'U': {
-                const int wday_of_year_beginning = (tm.tm_wday + 6 * tm.tm_yday) % 7;
-                const int week_number = (tm.tm_yday + wday_of_year_beginning) / 7;
+                int const wday_of_year_beginning = (tm.tm_wday + 6 * tm.tm_yday) % 7;
+                int const week_number = (tm.tm_yday + wday_of_year_beginning) / 7;
                 builder.appendff("{:02}", week_number);
                 break;
             }
             case 'V': {
-                const int wday_of_year_beginning = (tm.tm_wday + 6 + 6 * tm.tm_yday) % 7;
+                int const wday_of_year_beginning = (tm.tm_wday + 6 + 6 * tm.tm_yday) % 7;
                 int week_number = (tm.tm_yday + wday_of_year_beginning) / 7 + 1;
                 if (wday_of_year_beginning > 3) {
                     if (tm.tm_yday >= 7 - wday_of_year_beginning)
                         --week_number;
                     else {
-                        const int days_of_last_year = days_in_year(tm.tm_year + 1900 - 1);
-                        const int wday_of_last_year_beginning = (wday_of_year_beginning + 6 * days_of_last_year) % 7;
+                        int const days_of_last_year = days_in_year(tm.tm_year + 1900 - 1);
+                        int const wday_of_last_year_beginning = (wday_of_year_beginning + 6 * days_of_last_year) % 7;
                         week_number = (days_of_last_year + wday_of_last_year_beginning) / 7 + 1;
                         if (wday_of_last_year_beginning > 3)
                             --week_number;
@@ -206,8 +224,8 @@ String DateTime::to_string(const String& format) const
                 builder.appendff("{}", tm.tm_wday);
                 break;
             case 'W': {
-                const int wday_of_year_beginning = (tm.tm_wday + 6 + 6 * tm.tm_yday) % 7;
-                const int week_number = (tm.tm_yday + wday_of_year_beginning) / 7;
+                int const wday_of_year_beginning = (tm.tm_wday + 6 + 6 * tm.tm_yday) % 7;
+                int const week_number = (tm.tm_yday + wday_of_year_beginning) / 7;
                 builder.appendff("{:02}", week_number);
                 break;
             }
@@ -217,11 +235,31 @@ String DateTime::to_string(const String& format) const
             case 'Y':
                 builder.appendff("{}", tm.tm_year + 1900);
                 break;
+            case 'z':
+                format_time_zone_offset(false);
+                break;
+            case ':':
+                if (++i == format_len) {
+                    builder.append("%:");
+                    break;
+                }
+                if (format[i] != 'z') {
+                    builder.append("%:");
+                    builder.append(format[i]);
+                    break;
+                }
+                format_time_zone_offset(true);
+                break;
+            case 'Z':
+                builder.append(tzname[daylight]);
+                break;
             case '%':
                 builder.append('%');
                 break;
             default:
-                return String();
+                builder.append('%');
+                builder.append(format[i]);
+                break;
             }
         }
     }
@@ -229,26 +267,11 @@ String DateTime::to_string(const String& format) const
     return builder.build();
 }
 
-Optional<DateTime> DateTime::parse(const String& format, const String& string)
+Optional<DateTime> DateTime::parse(StringView format, String const& string)
 {
     unsigned format_pos = 0;
     unsigned string_pos = 0;
     struct tm tm = {};
-
-    const StringView wday_short_names[7] = {
-        "Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"
-    };
-    const StringView wday_long_names[7] = {
-        "Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"
-    };
-    const StringView mon_short_names[12] = {
-        "Jan", "Feb", "Mar", "Apr", "May", "Jun",
-        "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"
-    };
-    const StringView mon_long_names[12] = {
-        "January", "February", "March", "April", "May", "June",
-        "July", "August", "September", "October", "November", "December"
-    };
 
     auto parsing_failed = false;
 
@@ -298,7 +321,7 @@ Optional<DateTime> DateTime::parse(const String& format, const String& string)
         switch (format[format_pos]) {
         case 'a': {
             auto wday = 0;
-            for (auto name : wday_short_names) {
+            for (auto name : short_day_names) {
                 if (string.substring_view(string_pos).starts_with(name, AK::CaseSensitivity::CaseInsensitive)) {
                     string_pos += name.length();
                     tm.tm_wday = wday;
@@ -312,7 +335,7 @@ Optional<DateTime> DateTime::parse(const String& format, const String& string)
         }
         case 'A': {
             auto wday = 0;
-            for (auto name : wday_long_names) {
+            for (auto name : long_day_names) {
                 if (string.substring_view(string_pos).starts_with(name, AK::CaseSensitivity::CaseInsensitive)) {
                     string_pos += name.length();
                     tm.tm_wday = wday;
@@ -327,7 +350,7 @@ Optional<DateTime> DateTime::parse(const String& format, const String& string)
         case 'h':
         case 'b': {
             auto mon = 0;
-            for (auto name : mon_short_names) {
+            for (auto name : short_month_names) {
                 if (string.substring_view(string_pos).starts_with(name, AK::CaseSensitivity::CaseInsensitive)) {
                     string_pos += name.length();
                     tm.tm_mon = mon;
@@ -341,7 +364,7 @@ Optional<DateTime> DateTime::parse(const String& format, const String& string)
         }
         case 'B': {
             auto mon = 0;
-            for (auto name : mon_long_names) {
+            for (auto name : long_month_names) {
                 if (string.substring_view(string_pos).starts_with(name, AK::CaseSensitivity::CaseInsensitive)) {
                     string_pos += name.length();
                     tm.tm_mon = mon;
@@ -410,19 +433,19 @@ Optional<DateTime> DateTime::parse(const String& format, const String& string)
             }
             break;
         case 'p': {
-            auto ampm = string.substring_view(string_pos, 4);
-            if (ampm == "p.m." && tm.tm_hour < 12) {
+            auto ampm = string.substring_view(string_pos, 2);
+            if (ampm == "PM" && tm.tm_hour < 12) {
                 tm.tm_hour += 12;
             }
-            string_pos += 4;
+            string_pos += 2;
             break;
         }
         case 'r': {
-            auto ampm = string.substring_view(string_pos, 4);
-            if (ampm == "p.m." && tm.tm_hour < 12) {
+            auto ampm = string.substring_view(string_pos, 2);
+            if (ampm == "PM" && tm.tm_hour < 12) {
                 tm.tm_hour += 12;
             }
-            string_pos += 4;
+            string_pos += 2;
             break;
         }
         case 'R': {

@@ -1,12 +1,13 @@
 /*
  * Copyright (c) 2018-2020, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2022, the SerenityOS developers.
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #include <LibGUI/GroupBox.h>
 #include <LibGUI/Painter.h>
-#include <LibGfx/Font.h>
+#include <LibGfx/Font/Font.h>
 #include <LibGfx/Palette.h>
 #include <LibGfx/StylePainter.h>
 
@@ -18,10 +19,6 @@ GroupBox::GroupBox(StringView title)
     : m_title(title)
 {
     REGISTER_STRING_PROPERTY("title", title, set_title);
-}
-
-GroupBox::~GroupBox()
-{
 }
 
 Margins GroupBox::content_margins() const

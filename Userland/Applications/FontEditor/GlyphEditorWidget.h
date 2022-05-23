@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2018-2020, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2022, the SerenityOS developers.
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -8,7 +9,7 @@
 
 #include <AK/Function.h>
 #include <LibGUI/Frame.h>
-#include <LibGfx/BitmapFont.h>
+#include <LibGfx/Font/BitmapFont.h>
 
 class GlyphEditorWidget final : public GUI::Frame {
     C_OBJECT(GlyphEditorWidget)
@@ -23,17 +24,12 @@ public:
         Counterclockwise
     };
 
-    virtual ~GlyphEditorWidget() override;
+    virtual ~GlyphEditorWidget() override = default;
 
     void initialize(Gfx::BitmapFont&);
 
     int glyph() const { return m_glyph; }
     void set_glyph(int);
-
-    void cut_glyph();
-    void copy_glyph();
-    void paste_glyph();
-    void delete_glyph();
     bool is_glyph_empty();
 
     void rotate_90(Direction);
@@ -56,7 +52,7 @@ public:
     Function<void()> on_undo_event;
 
 private:
-    GlyphEditorWidget() {};
+    GlyphEditorWidget() = default;
     virtual void paint_event(GUI::PaintEvent&) override;
     virtual void mousedown_event(GUI::MouseEvent&) override;
     virtual void mousemove_event(GUI::MouseEvent&) override;

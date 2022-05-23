@@ -13,8 +13,8 @@
 #include <Kernel/Bus/VirtIO/Device.h>
 #include <Kernel/CMOS.h>
 #include <Kernel/CommandLine.h>
-#include <Kernel/Devices/Audio/AC97.h>
-#include <Kernel/Devices/Audio/SB16.h>
+#include <Kernel/Devices/Audio/Management.h>
+#include <Kernel/Devices/DeviceControlDevice.h>
 #include <Kernel/Devices/DeviceManagement.h>
 #include <Kernel/Devices/FullDevice.h>
 #include <Kernel/Devices/HID/HIDManagement.h>
@@ -23,18 +23,19 @@
 #include <Kernel/Devices/NullDevice.h>
 #include <Kernel/Devices/PCISerialDevice.h>
 #include <Kernel/Devices/RandomDevice.h>
+#include <Kernel/Devices/SelfTTYDevice.h>
 #include <Kernel/Devices/SerialDevice.h>
-#include <Kernel/Devices/VMWareBackdoor.h>
 #include <Kernel/Devices/ZeroDevice.h>
 #include <Kernel/FileSystem/Ext2FileSystem.h>
 #include <Kernel/FileSystem/SysFS.h>
 #include <Kernel/FileSystem/VirtualFileSystem.h>
 #include <Kernel/Firmware/ACPI/Initialize.h>
-#include <Kernel/Firmware/ACPI/MultiProcessorParser.h>
 #include <Kernel/Firmware/ACPI/Parser.h>
+#include <Kernel/Firmware/Hypervisor/VMWareBackdoor.h>
 #include <Kernel/Firmware/SysFSFirmware.h>
+#include <Kernel/Graphics/Console/BootFramebufferConsole.h>
+#include <Kernel/Graphics/Console/TextModeConsole.h>
 #include <Kernel/Graphics/GraphicsManagement.h>
-#include <Kernel/Heap/SlabAllocator.h>
 #include <Kernel/Heap/kmalloc.h>
 #include <Kernel/Interrupts/APIC.h>
 #include <Kernel/Interrupts/InterruptManagement.h>
@@ -97,7 +98,15 @@ extern "C" [[noreturn]] void init(BootInfo const&);
 
 READONLY_AFTER_INIT VirtualConsole* tty0;
 
-static Processor s_bsp_processor; // global but let's keep it "private"
+ProcessID g_init_pid { 0 };
+
+ALWAYS_INLINE static Processor& bsp_processor()
+{
+    // This solves a problem where the bsp Processor instance
+    // gets "re"-initialized in init() when we run all global constructors.
+    alignas(Processor) static u8 bsp_processor_storage[sizeof(Processor)];
+    return (Processor&)bsp_processor_storage;
+}
 
 // SerenityOS Kernel C++ entry point :^)
 //
@@ -122,7 +131,7 @@ READONLY_AFTER_INIT PhysicalAddress boot_pdpt;
 READONLY_AFTER_INIT PhysicalAddress boot_pd0;
 READONLY_AFTER_INIT PhysicalAddress boot_pd_kernel;
 READONLY_AFTER_INIT PageTableEntry* boot_pd_kernel_pt1023;
-READONLY_AFTER_INIT const char* kernel_cmdline;
+READONLY_AFTER_INIT char const* kernel_cmdline;
 READONLY_AFTER_INIT u32 multiboot_flags;
 READONLY_AFTER_INIT multiboot_memory_map_t* multiboot_memory_map;
 READONLY_AFTER_INIT size_t multiboot_memory_map_count;
@@ -135,6 +144,8 @@ READONLY_AFTER_INIT u32 multiboot_framebuffer_height;
 READONLY_AFTER_INIT u8 multiboot_framebuffer_bpp;
 READONLY_AFTER_INIT u8 multiboot_framebuffer_type;
 }
+
+Atomic<Graphics::Console*> g_boot_console;
 
 extern "C" [[noreturn]] UNMAP_AFTER_INIT void init(BootInfo const& boot_info)
 {
@@ -174,24 +185,41 @@ extern "C" [[noreturn]] UNMAP_AFTER_INIT void init(BootInfo const& boot_info)
     CommandLine::early_initialize(kernel_cmdline);
     memcpy(multiboot_copy_boot_modules_array, multiboot_modules, multiboot_modules_count * sizeof(multiboot_module_entry_t));
     multiboot_copy_boot_modules_count = multiboot_modules_count;
-    s_bsp_processor.early_initialize(0);
+
+    new (&bsp_processor()) Processor();
+    bsp_processor().early_initialize(0);
 
     // Invoke the constructors needed for the kernel heap
     for (ctor_func_t* ctor = start_heap_ctors; ctor < end_heap_ctors; ctor++)
         (*ctor)();
     kmalloc_init();
-    slab_alloc_init();
 
     load_kernel_symbol_table();
+
+    bsp_processor().initialize(0);
+
+    CommandLine::initialize();
+    Memory::MemoryManager::initialize(0);
+
+    // NOTE: If the bootloader provided a framebuffer, then set up an initial console.
+    // If the bootloader didn't provide a framebuffer, then set up an initial text console.
+    // We do so we can see the output on the screen as soon as possible.
+    if (!kernel_command_line().is_early_boot_console_disabled()) {
+        if (!multiboot_framebuffer_addr.is_null() && multiboot_framebuffer_type == MULTIBOOT_FRAMEBUFFER_TYPE_RGB) {
+            g_boot_console = &try_make_ref_counted<Graphics::BootFramebufferConsole>(multiboot_framebuffer_addr, multiboot_framebuffer_width, multiboot_framebuffer_height, multiboot_framebuffer_pitch).value().leak_ref();
+        } else {
+            g_boot_console = &Graphics::TextModeConsole::initialize().leak_ref();
+        }
+    }
+    dmesgln("Starting SerenityOS...");
 
     DeviceManagement::initialize();
     SysFSComponentRegistry::initialize();
     DeviceManagement::the().attach_null_device(*NullDevice::must_initialize());
     DeviceManagement::the().attach_console_device(*ConsoleDevice::must_create());
-    s_bsp_processor.initialize(0);
+    DeviceManagement::the().attach_device_control_device(*DeviceControlDevice::must_create());
 
-    CommandLine::initialize();
-    Memory::MemoryManager::initialize(0);
+    MM.unmap_prekernel();
 
     // Ensure that the safemem sections are not empty. This could happen if the linker accidentally discards the sections.
     VERIFY(+start_of_safemem_text != +end_of_safemem_text);
@@ -202,7 +230,6 @@ extern "C" [[noreturn]] UNMAP_AFTER_INIT void init(BootInfo const& boot_info)
     for (ctor_func_t* ctor = start_ctors; ctor < end_ctors; ctor++)
         (*ctor)();
 
-    APIC::initialize();
     InterruptManagement::initialize();
     ACPI::initialize();
 
@@ -216,11 +243,16 @@ extern "C" [[noreturn]] UNMAP_AFTER_INIT void init(BootInfo const& boot_info)
 
     Scheduler::initialize();
 
-    dmesgln("Starting SerenityOS...");
+    if (APIC::initialized() && APIC::the().enabled_processor_count() > 1) {
+        // We must set up the AP boot environment before switching to a kernel process,
+        // as pages below address USER_RANGE_BASE are only accesible through the kernel
+        // page directory.
+        APIC::the().setup_ap_boot_environment();
+    }
 
     {
         RefPtr<Thread> init_stage2_thread;
-        Process::create_kernel_process(init_stage2_thread, KString::must_create("init_stage2"), init_stage2, nullptr, THREAD_AFFINITY_DEFAULT, Process::RegisterProcess::No);
+        (void)Process::create_kernel_process(init_stage2_thread, KString::must_create("init_stage2"), init_stage2, nullptr, THREAD_AFFINITY_DEFAULT, Process::RegisterProcess::No);
         // We need to make sure we drop the reference for init_stage2_thread
         // before calling into Scheduler::start, otherwise we will have a
         // dangling Thread that never gets cleaned up
@@ -271,7 +303,7 @@ void init_stage2(void*)
 
     WorkQueue::initialize();
 
-    if (APIC::initialized() && APIC::the().enabled_processor_count() > 1) {
+    if (kernel_command_line().is_smp_enabled() && APIC::initialized() && APIC::the().enabled_processor_count() > 1) {
         // We can't start the APs until we have a scheduler up and running.
         // We need to be able to process ICI messages, otherwise another
         // core may send too many and end up deadlocking once the pool is
@@ -281,7 +313,9 @@ void init_stage2(void*)
 
     // Initialize the PCI Bus as early as possible, for early boot (PCI based) serial logging
     PCI::initialize();
-    PCISerialDevice::detect();
+    if (!PCI::Access::is_disabled()) {
+        PCISerialDevice::detect();
+    }
 
     VirtualFileSystem::initialize();
 
@@ -292,7 +326,7 @@ void init_stage2(void*)
     (void)SerialDevice::must_create(3).leak_ref();
 
     VMWareBackdoor::the(); // don't wait until first mouse packet
-    HIDManagement::initialize();
+    MUST(HIDManagement::initialize());
 
     GraphicsManagement::the().initialize();
     ConsoleManagement::the().initialize();
@@ -302,10 +336,14 @@ void init_stage2(void*)
 
     auto boot_profiling = kernel_command_line().is_boot_profiling_enabled();
 
-    USB::USBManagement::initialize();
+    if (!PCI::Access::is_disabled()) {
+        USB::USBManagement::initialize();
+    }
     FirmwareSysFSDirectory::initialize();
 
-    VirtIO::detect();
+    if (!PCI::Access::is_disabled()) {
+        VirtIO::detect();
+    }
 
     NetworkingManagement::the().initialize();
     Syscall::initialize();
@@ -317,12 +355,12 @@ void init_stage2(void*)
     (void)ZeroDevice::must_create().leak_ref();
     (void)FullDevice::must_create().leak_ref();
     (void)RandomDevice::must_create().leak_ref();
+    (void)SelfTTYDevice::must_create().leak_ref();
     PTYMultiplexer::initialize();
 
-    SB16::try_detect_and_create();
-    AC97::detect();
+    AudioManagement::the().initialize();
 
-    StorageManagement::the().initialize(kernel_command_line().root_device(), kernel_command_line().is_force_pio());
+    StorageManagement::the().initialize(kernel_command_line().root_device(), kernel_command_line().is_force_pio(), kernel_command_line().is_nvme_polling_enabled());
     if (VirtualFileSystem::the().mount_root(StorageManagement::the().root_filesystem()).is_error()) {
         PANIC("VirtualFileSystem::mount_root failed");
     }
@@ -333,15 +371,12 @@ void init_stage2(void*)
     // NOTE: Everything marked READONLY_AFTER_INIT becomes non-writable after this point.
     MM.protect_readonly_after_init_memory();
 
+    // NOTE: Everything in the .ksyms section becomes read-only after this point.
+    MM.protect_ksyms_after_init();
+
     // NOTE: Everything marked UNMAP_AFTER_INIT becomes inaccessible after this point.
     MM.unmap_text_after_init();
 
-    // NOTE: Everything in the .ksyms section becomes inaccessible after this point.
-    MM.unmap_ksyms_after_init();
-
-    // FIXME: It would be nicer to set the mode from userspace.
-    // FIXME: It would be smarter to not hardcode that the first tty is the only graphical one
-    ConsoleManagement::the().first_tty()->set_graphical(GraphicsManagement::the().framebuffer_devices_exist());
     RefPtr<Thread> thread;
     auto userspace_init = kernel_command_line().userspace_init();
     auto init_args = kernel_command_line().userspace_init_args();
@@ -350,12 +385,15 @@ void init_stage2(void*)
     if (init_or_error.is_error())
         PANIC("init_stage2: Error spawning init process: {}", init_or_error.error());
 
+    g_init_pid = init_or_error.value()->pid();
+
     thread->set_priority(THREAD_PRIORITY_HIGH);
 
     if (boot_profiling) {
         dbgln("Starting full system boot profiling");
         MutexLocker mutex_locker(Process::current().big_lock());
-        auto result = Process::current().sys$profiling_enable(-1, ~0ull);
+        auto const enable_all = ~(u64)0;
+        auto result = Process::current().sys$profiling_enable(-1, reinterpret_cast<FlatPtr>(&enable_all));
         VERIFY(!result.is_error());
     }
 

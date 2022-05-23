@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2018-2021, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2022, the SerenityOS developers.
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -37,21 +38,32 @@ AbstractScrollableWidget::AbstractScrollableWidget()
     };
 }
 
-AbstractScrollableWidget::~AbstractScrollableWidget()
-{
-}
-
 void AbstractScrollableWidget::handle_wheel_event(MouseEvent& event, Widget& event_source)
 {
     if (!m_scrollbars_enabled) {
         event.ignore();
         return;
     }
-    // FIXME: The wheel delta multiplier should probably come from... somewhere?
+
+    int wheel_delta_x { 0 };
+    bool vertical_scroll_hijacked { false };
+
     if (event.shift() || &event_source == m_horizontal_scrollbar.ptr()) {
-        horizontal_scrollbar().set_value(horizontal_scrollbar().value() + event.wheel_delta() * 60);
-    } else {
-        vertical_scrollbar().set_value(vertical_scrollbar().value() + event.wheel_delta() * 20);
+        wheel_delta_x = event.wheel_delta_y();
+        vertical_scroll_hijacked = true;
+    }
+
+    if (event.wheel_delta_x() != 0) {
+        wheel_delta_x = event.wheel_delta_x();
+    }
+
+    if (wheel_delta_x != 0) {
+        // FIXME: The wheel delta multiplier should probably come from... somewhere?
+        horizontal_scrollbar().increase_slider_by(wheel_delta_x * 60);
+    }
+
+    if (!vertical_scroll_hijacked && event.wheel_delta_y() != 0) {
+        vertical_scrollbar().increase_slider_by(event.wheel_delta_y() * 20);
     }
 }
 
@@ -134,7 +146,7 @@ void AbstractScrollableWidget::update_scrollbar_ranges()
     m_vertical_scrollbar->set_page_step(visible_content_rect().height() - m_vertical_scrollbar->step());
 }
 
-void AbstractScrollableWidget::set_content_size(const Gfx::IntSize& size)
+void AbstractScrollableWidget::set_content_size(Gfx::IntSize const& size)
 {
     if (m_content_size == size)
         return;
@@ -142,7 +154,7 @@ void AbstractScrollableWidget::set_content_size(const Gfx::IntSize& size)
     update_scrollbar_ranges();
 }
 
-void AbstractScrollableWidget::set_size_occupied_by_fixed_elements(const Gfx::IntSize& size)
+void AbstractScrollableWidget::set_size_occupied_by_fixed_elements(Gfx::IntSize const& size)
 {
     if (m_size_occupied_by_fixed_elements == size)
         return;
@@ -179,14 +191,14 @@ Gfx::IntRect AbstractScrollableWidget::visible_content_rect() const
     return rect;
 }
 
-void AbstractScrollableWidget::scroll_into_view(const Gfx::IntRect& rect, Orientation orientation)
+void AbstractScrollableWidget::scroll_into_view(Gfx::IntRect const& rect, Orientation orientation)
 {
     if (orientation == Orientation::Vertical)
         return scroll_into_view(rect, false, true);
     return scroll_into_view(rect, true, false);
 }
 
-void AbstractScrollableWidget::scroll_into_view(const Gfx::IntRect& rect, bool scroll_horizontally, bool scroll_vertically)
+void AbstractScrollableWidget::scroll_into_view(Gfx::IntRect const& rect, bool scroll_horizontally, bool scroll_vertically)
 {
     auto visible_content_rect = this->visible_content_rect();
     if (visible_content_rect.contains(rect))
@@ -243,7 +255,7 @@ void AbstractScrollableWidget::set_automatic_scrolling_timer(bool active)
     }
 }
 
-Gfx::IntPoint AbstractScrollableWidget::automatic_scroll_delta_from_position(const Gfx::IntPoint& pos) const
+Gfx::IntPoint AbstractScrollableWidget::automatic_scroll_delta_from_position(Gfx::IntPoint const& pos) const
 {
     Gfx::IntPoint delta { 0, 0 };
 
@@ -268,7 +280,7 @@ Gfx::IntRect AbstractScrollableWidget::widget_inner_rect() const
     return rect;
 }
 
-Gfx::IntPoint AbstractScrollableWidget::to_content_position(const Gfx::IntPoint& widget_position) const
+Gfx::IntPoint AbstractScrollableWidget::to_content_position(Gfx::IntPoint const& widget_position) const
 {
     auto content_position = widget_position;
     content_position.translate_by(horizontal_scrollbar().value(), vertical_scrollbar().value());
@@ -276,12 +288,11 @@ Gfx::IntPoint AbstractScrollableWidget::to_content_position(const Gfx::IntPoint&
     return content_position;
 }
 
-Gfx::IntPoint AbstractScrollableWidget::to_widget_position(const Gfx::IntPoint& content_position) const
+Gfx::IntPoint AbstractScrollableWidget::to_widget_position(Gfx::IntPoint const& content_position) const
 {
     auto widget_position = content_position;
     widget_position.translate_by(-horizontal_scrollbar().value(), -vertical_scrollbar().value());
     widget_position.translate_by(frame_thickness(), frame_thickness());
     return widget_position;
 }
-
 }

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2020, the SerenityOS developers.
+ * Copyright (c) 2020-2022, the SerenityOS developers.
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -20,7 +20,7 @@ class CellEditor final : public GUI::TextEditor {
     C_OBJECT(CellEditor);
 
 public:
-    virtual ~CellEditor() { }
+    virtual ~CellEditor() = default;
 
     Function<void(GUI::KeyEvent&)> on_cursor_key_pressed;
 
@@ -76,11 +76,17 @@ private:
     virtual void mousemove_event(GUI::MouseEvent&) override;
     virtual void mousedown_event(GUI::MouseEvent&) override;
     virtual void mouseup_event(GUI::MouseEvent&) override;
+    virtual void drop_event(GUI::DropEvent&) override;
 
-    bool m_should_intercept_drag { false };
-    bool m_has_committed_to_dragging { false };
-    bool m_is_dragging_for_copy { false };
+    bool m_is_hovering_extend_zone { false };
+    bool m_is_hovering_cut_zone { false };
+    bool m_is_dragging_for_select { false };
+    bool m_is_dragging_for_cut { false };
+    bool m_is_dragging_for_extend { false };
+    bool m_has_committed_to_cutting { false };
+    bool m_has_committed_to_extending { false };
     GUI::ModelIndex m_starting_selection_index;
+    GUI::ModelIndex m_target_cell;
     RefPtr<Core::Timer> m_horizontal_scroll_end_timer;
     RefPtr<Core::Timer> m_vertical_scroll_end_timer;
 };
@@ -89,7 +95,7 @@ class SpreadsheetView final : public GUI::Widget {
     C_OBJECT(SpreadsheetView);
 
 public:
-    ~SpreadsheetView();
+    ~SpreadsheetView() = default;
 
     Sheet* sheet_if_available() { return m_sheet; }
 
@@ -103,6 +109,8 @@ public:
 
     void move_cursor(GUI::AbstractView::CursorMovement);
 
+    NonnullRefPtr<SheetModel> model() { return m_sheet_model; };
+
 private:
     virtual void hide_event(GUI::HideEvent&) override;
     virtual void show_event(GUI::ShowEvent&) override;
@@ -113,7 +121,7 @@ private:
 
     class EditingDelegate final : public GUI::StringModelEditingDelegate {
     public:
-        EditingDelegate(const Sheet& sheet)
+        EditingDelegate(Sheet const& sheet)
             : m_sheet(sheet)
         {
         }
@@ -140,7 +148,7 @@ private:
 
     private:
         bool m_has_set_initial_value { false };
-        const Sheet& m_sheet;
+        Sheet const& m_sheet;
     };
 
     class TableCellPainter final : public GUI::TableCellPaintingDelegate {
@@ -149,7 +157,7 @@ private:
             : m_table_view(view)
         {
         }
-        void paint(GUI::Painter&, const Gfx::IntRect&, const Gfx::Palette&, const GUI::ModelIndex&) override;
+        void paint(GUI::Painter&, Gfx::IntRect const&, Gfx::Palette const&, const GUI::ModelIndex&) override;
 
     private:
         const GUI::TableView& m_table_view;

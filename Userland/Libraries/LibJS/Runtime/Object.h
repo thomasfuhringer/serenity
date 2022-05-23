@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2020, Andreas Kling <kling@serenityos.org>
- * Copyright (c) 2020-2021, Linus Groh <linusg@serenityos.org>
+ * Copyright (c) 2020-2022, Linus Groh <linusg@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -10,11 +10,12 @@
 #include <AK/Badge.h>
 #include <AK/HashMap.h>
 #include <AK/String.h>
+#include <AK/StringView.h>
 #include <LibJS/Forward.h>
 #include <LibJS/Heap/Cell.h>
+#include <LibJS/Heap/MarkedVector.h>
 #include <LibJS/Runtime/Completion.h>
 #include <LibJS/Runtime/IndexedProperties.h>
-#include <LibJS/Runtime/MarkedValueList.h>
 #include <LibJS/Runtime/PrimitiveString.h>
 #include <LibJS/Runtime/PrivateEnvironment.h>
 #include <LibJS/Runtime/PropertyDescriptor.h>
@@ -24,10 +25,13 @@
 
 namespace JS {
 
-#define JS_OBJECT(class_, base_class) \
-public:                               \
-    using Base = base_class;          \
-    virtual const char* class_name() const override { return #class_; }
+#define JS_OBJECT(class_, base_class)              \
+public:                                            \
+    using Base = base_class;                       \
+    virtual StringView class_name() const override \
+    {                                              \
+        return #class_;                            \
+    }
 
 struct PrivateElement {
     enum class Kind {
@@ -45,10 +49,11 @@ class Object : public Cell {
 public:
     static Object* create(GlobalObject&, Object* prototype);
 
+    Object(GlobalObject&, Object* prototype);
     explicit Object(Object& prototype);
     explicit Object(Shape&);
     virtual void initialize(GlobalObject&) override;
-    virtual ~Object();
+    virtual ~Object() = default;
 
     enum class PropertyKind {
         Key,
@@ -89,26 +94,26 @@ public:
     // 7.3 Operations on Objects, https://tc39.es/ecma262/#sec-operations-on-objects
 
     ThrowCompletionOr<Value> get(PropertyKey const&) const;
-    ThrowCompletionOr<bool> set(PropertyKey const&, Value, ShouldThrowExceptions);
+    ThrowCompletionOr<void> set(PropertyKey const&, Value, ShouldThrowExceptions);
     ThrowCompletionOr<bool> create_data_property(PropertyKey const&, Value);
-    ThrowCompletionOr<bool> create_method_property(PropertyKey const&, Value);
+    ThrowCompletionOr<void> create_method_property(PropertyKey const&, Value);
     ThrowCompletionOr<bool> create_data_property_or_throw(PropertyKey const&, Value);
-    ThrowCompletionOr<bool> create_non_enumerable_data_property_or_throw(PropertyKey const&, Value);
-    ThrowCompletionOr<bool> define_property_or_throw(PropertyKey const&, PropertyDescriptor const&);
-    ThrowCompletionOr<bool> delete_property_or_throw(PropertyKey const&);
+    void create_non_enumerable_data_property_or_throw(PropertyKey const&, Value);
+    ThrowCompletionOr<void> define_property_or_throw(PropertyKey const&, PropertyDescriptor const&);
+    ThrowCompletionOr<void> delete_property_or_throw(PropertyKey const&);
     ThrowCompletionOr<bool> has_property(PropertyKey const&) const;
     ThrowCompletionOr<bool> has_own_property(PropertyKey const&) const;
     ThrowCompletionOr<bool> set_integrity_level(IntegrityLevel);
     ThrowCompletionOr<bool> test_integrity_level(IntegrityLevel) const;
-    ThrowCompletionOr<MarkedValueList> enumerable_own_property_names(PropertyKind kind) const;
-    ThrowCompletionOr<Object*> copy_data_properties(Value source, HashTable<PropertyKey> const& seen_names, GlobalObject& global_object);
+    ThrowCompletionOr<MarkedVector<Value>> enumerable_own_property_names(PropertyKind kind) const;
+    ThrowCompletionOr<void> copy_data_properties(Value source, HashTable<PropertyKey> const& seen_names, GlobalObject& global_object);
 
     PrivateElement* private_element_find(PrivateName const& name);
     ThrowCompletionOr<void> private_field_add(PrivateName const& name, Value value);
     ThrowCompletionOr<void> private_method_or_accessor_add(PrivateElement element);
     ThrowCompletionOr<Value> private_get(PrivateName const& name);
     ThrowCompletionOr<void> private_set(PrivateName const& name, Value value);
-    ThrowCompletionOr<void> define_field(Variant<PropertyKey, PrivateName> name, ECMAScriptFunctionObject* initializer);
+    ThrowCompletionOr<void> define_field(ClassFieldDefinition const&);
 
     // 10.1 Ordinary Object Internal Methods and Internal Slots, https://tc39.es/ecma262/#sec-ordinary-object-internal-methods-and-internal-slots
 
@@ -122,7 +127,7 @@ public:
     virtual ThrowCompletionOr<Value> internal_get(PropertyKey const&, Value receiver) const;
     virtual ThrowCompletionOr<bool> internal_set(PropertyKey const&, Value value, Value receiver);
     virtual ThrowCompletionOr<bool> internal_delete(PropertyKey const&);
-    virtual ThrowCompletionOr<MarkedValueList> internal_own_property_keys() const;
+    virtual ThrowCompletionOr<MarkedVector<Value>> internal_own_property_keys() const;
 
     ThrowCompletionOr<bool> ordinary_set_with_own_descriptor(PropertyKey const&, Value, Value, Optional<PropertyDescriptor>);
 
@@ -134,6 +139,10 @@ public:
 
     ThrowCompletionOr<Object*> define_properties(Value properties);
 
+    // 14.7.5 The for-in, for-of, and for-await-of Statements
+
+    Optional<Completion> enumerate_object_properties(Function<Optional<Completion>(Value)>) const;
+
     // Implementation-specific storage abstractions
 
     Optional<ValueAndAttributes> storage_get(PropertyKey const&) const;
@@ -143,9 +152,9 @@ public:
 
     // Non-standard methods
 
-    Value get_without_side_effects(const PropertyKey&) const;
+    Value get_without_side_effects(PropertyKey const&) const;
 
-    void define_direct_property(PropertyKey const& property_name, Value value, PropertyAttributes attributes) { storage_set(property_name, { value, attributes }); };
+    void define_direct_property(PropertyKey const& property_key, Value value, PropertyAttributes attributes) { storage_set(property_key, { value, attributes }); };
     void define_direct_accessor(PropertyKey const&, FunctionObject* getter, FunctionObject* setter, PropertyAttributes attributes);
 
     void define_native_function(PropertyKey const&, Function<ThrowCompletionOr<Value>(VM&, GlobalObject&)>, i32 length, PropertyAttributes attributes);
@@ -165,13 +174,12 @@ public:
     bool has_parameter_map() const { return m_has_parameter_map; }
     void set_has_parameter_map() { m_has_parameter_map = true; }
 
-    virtual const char* class_name() const override { return "Object"; }
+    virtual StringView class_name() const override { return "Object"sv; }
     virtual void visit_edges(Cell::Visitor&) override;
-    virtual Value value_of() const { return Value(const_cast<Object*>(this)); }
 
     Value get_direct(size_t index) const { return m_storage[index]; }
 
-    const IndexedProperties& indexed_properties() const { return m_indexed_properties; }
+    IndexedProperties const& indexed_properties() const { return m_indexed_properties; }
     IndexedProperties& indexed_properties() { return m_indexed_properties; }
     void set_indexed_property_elements(Vector<Value>&& values) { m_indexed_properties = IndexedProperties(move(values)); }
 
@@ -208,7 +216,7 @@ private:
     Shape* m_shape { nullptr };
     Vector<Value> m_storage;
     IndexedProperties m_indexed_properties;
-    Vector<PrivateElement> m_private_elements; // [[PrivateElements]]
+    OwnPtr<Vector<PrivateElement>> m_private_elements; // [[PrivateElements]]
 };
 
 }

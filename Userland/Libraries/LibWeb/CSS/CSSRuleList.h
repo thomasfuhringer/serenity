@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2021, Sam Atkins <atkinssj@serenityos.org>
+ * Copyright (c) 2021-2022, Sam Atkins <atkinssj@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -12,6 +12,7 @@
 #include <AK/RefCounted.h>
 #include <AK/RefPtr.h>
 #include <LibWeb/CSS/CSSRule.h>
+#include <LibWeb/DOM/ExceptionOr.h>
 #include <LibWeb/Forward.h>
 
 namespace Web::CSS {
@@ -27,7 +28,7 @@ public:
     {
         return adopt_ref(*new CSSRuleList(move(rules)));
     }
-    ~CSSRuleList();
+    ~CSSRuleList() = default;
 
     RefPtr<CSSRule> item(size_t index) const
     {
@@ -49,10 +50,11 @@ public:
     bool is_supported_property_index(u32 index) const;
 
     DOM::ExceptionOr<void> remove_a_css_rule(u32 index);
-    DOM::ExceptionOr<unsigned> insert_a_css_rule(NonnullRefPtr<CSSRule>, u32 index);
+    DOM::ExceptionOr<unsigned> insert_a_css_rule(Variant<StringView, NonnullRefPtr<CSSRule>>, u32 index);
 
     void for_each_effective_style_rule(Function<void(CSSStyleRule const&)> const& callback) const;
-    void evaluate_media_queries(DOM::Window const&);
+    // Returns whether the match state of any media queries changed after evaluation.
+    bool evaluate_media_queries(HTML::Window const&);
 
 private:
     explicit CSSRuleList(NonnullRefPtrVector<CSSRule>&&);

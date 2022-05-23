@@ -19,6 +19,7 @@
 #include <LibGUI/StackWidget.h>
 #include <LibGUI/TableView.h>
 #include <LibGUI/TextBox.h>
+#include <LibGUI/Window.h>
 #include <LibGUI/Wizards/WizardDialog.h>
 #include <LibGUI/Wizards/WizardPage.h>
 
@@ -174,9 +175,9 @@ void CSVImportDialogPage::update_preview()
     m_data_preview_table_view->update();
 }
 
-Result<NonnullRefPtrVector<Sheet>, String> ImportDialog::make_and_run_for(StringView mime, Core::File& file, Workbook& workbook)
+Result<NonnullRefPtrVector<Sheet>, String> ImportDialog::make_and_run_for(GUI::Window& parent, StringView mime, Core::File& file, Workbook& workbook)
 {
-    auto wizard = GUI::WizardDialog::construct(GUI::Application::the()->active_window());
+    auto wizard = GUI::WizardDialog::construct(&parent);
     wizard->set_title("File Import Wizard");
     wizard->set_icon(GUI::Icon::default_icon("app-spreadsheet").bitmap_for_size(16));
 
@@ -186,7 +187,7 @@ Result<NonnullRefPtrVector<Sheet>, String> ImportDialog::make_and_run_for(String
         wizard->replace_page(page.page());
         auto result = wizard->exec();
 
-        if (result == GUI::Dialog::ExecResult::ExecOK) {
+        if (result == GUI::Dialog::ExecResult::OK) {
             auto& reader = page.reader();
 
             NonnullRefPtrVector<Sheet> sheets;
@@ -244,7 +245,7 @@ Result<NonnullRefPtrVector<Sheet>, String> ImportDialog::make_and_run_for(String
 
     if (mime == "text/csv") {
         return import_xsv();
-    } else if (mime == "text/plain" && file.filename().ends_with(".sheets")) {
+    } else if (mime == "application/x-sheets+json") {
         return import_worksheet();
     } else {
         auto page = GUI::WizardPage::construct(
@@ -264,7 +265,7 @@ Result<NonnullRefPtrVector<Sheet>, String> ImportDialog::make_and_run_for(String
 
         wizard->push_page(page);
 
-        if (wizard->exec() != GUI::Dialog::ExecResult::ExecOK)
+        if (wizard->exec() != GUI::Dialog::ExecResult::OK)
             return String { "Import was cancelled" };
 
         if (format_combo_box->selected_index() == 0)

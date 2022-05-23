@@ -1,11 +1,15 @@
 /*
  * Copyright (c) 2018-2020, Andreas Kling <kling@serenityos.org>
  * Copyright (c) 2020, Sarah Taube <metalflakecobaltpaint@gmail.com>
+ * Copyright (c) 2021, Filiph Sandström <filiph.sandstrom@filfatstudios.com>
+ * Copyright (c) 2022, Cameron Youell <cameronyouell@gmail.com>
+ * Copyright (c) 2022, the SerenityOS developers.
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #include <AK/StringView.h>
+#include <LibGfx/AntiAliasingPainter.h>
 #include <LibGfx/Bitmap.h>
 #include <LibGfx/CharacterBitmap.h>
 #include <LibGfx/ClassicStylePainter.h>
@@ -14,7 +18,7 @@
 
 namespace Gfx {
 
-void ClassicStylePainter::paint_tab_button(Painter& painter, IntRect const& rect, Palette const& palette, bool active, bool hovered, bool enabled, bool top, bool in_active_window)
+void ClassicStylePainter::paint_tab_button(Painter& painter, IntRect const& rect, Palette const& palette, bool active, bool hovered, bool enabled, GUI::TabWidget::TabPosition position, bool in_active_window)
 {
     Color base_color = palette.button();
     Color highlight_color2 = palette.threed_highlight();
@@ -27,18 +31,19 @@ void ClassicStylePainter::paint_tab_button(Painter& painter, IntRect const& rect
     PainterStateSaver saver(painter);
     painter.translate(rect.location());
 
-    if (top) {
+    auto accent = palette.accent();
+    if (!in_active_window)
+        accent = accent.to_grayscale();
+
+    switch (position) {
+    case GUI::TabWidget::TabPosition::Top:
         // Base
         painter.fill_rect({ 1, 1, rect.width() - 2, rect.height() - 1 }, base_color);
 
         // Top line
         if (active) {
-            auto accent = palette.accent();
-            if (!in_active_window)
-                accent = accent.to_grayscale();
             painter.draw_line({ 3, 0 }, { rect.width() - 3, 0 }, accent.darkened());
-            Gfx::IntRect accent_rect { 1, 1, rect.width() - 2, 2 };
-            painter.fill_rect_with_gradient(accent_rect, accent, accent.lightened(1.5f));
+            painter.fill_rect_with_gradient({ 1, 1, rect.width() - 2, 2 }, accent, accent.lightened(1.5f));
             painter.set_pixel({ 2, 0 }, highlight_color2);
         } else {
             painter.draw_line({ 2, 0 }, { rect.width() - 3, 0 }, highlight_color2);
@@ -49,27 +54,17 @@ void ClassicStylePainter::paint_tab_button(Painter& painter, IntRect const& rect
         painter.set_pixel({ 1, 1 }, highlight_color2);
 
         // Right side
-
-        IntPoint top_right_outer { rect.width() - 1, 2 };
-        IntPoint bottom_right_outer { rect.width() - 1, rect.height() - 1 };
-        painter.draw_line(top_right_outer, bottom_right_outer, shadow_color2);
-
-        IntPoint top_right_inner { rect.width() - 2, 2 };
-        IntPoint bottom_right_inner { rect.width() - 2, rect.height() - 1 };
-        painter.draw_line(top_right_inner, bottom_right_inner, shadow_color1);
-
+        painter.draw_line({ rect.width() - 1, 2 }, { rect.width() - 1, rect.height() - 1 }, shadow_color2);
+        painter.draw_line({ rect.width() - 2, 2 }, { rect.width() - 2, rect.height() - 1 }, shadow_color1);
         painter.set_pixel(rect.width() - 2, 1, shadow_color2);
-    } else {
+        break;
+    case GUI::TabWidget::TabPosition::Bottom:
         // Base
         painter.fill_rect({ 0, 0, rect.width() - 1, rect.height() }, base_color);
 
         // Bottom line
         if (active) {
-            auto accent = palette.accent();
-            if (!in_active_window)
-                accent = accent.to_grayscale();
-            Gfx::IntRect accent_rect { 1, rect.height() - 3, rect.width() - 2, 2 };
-            painter.fill_rect_with_gradient(accent_rect, accent, accent.lightened(1.5f));
+            painter.fill_rect_with_gradient({ 1, rect.height() - 3, rect.width() - 2, 2 }, accent, accent.lightened(1.5f));
             painter.draw_line({ 2, rect.height() - 1 }, { rect.width() - 3, rect.height() - 1 }, accent.darkened());
         } else {
             painter.draw_line({ 2, rect.height() - 1 }, { rect.width() - 3, rect.height() - 1 }, shadow_color2);
@@ -80,19 +75,52 @@ void ClassicStylePainter::paint_tab_button(Painter& painter, IntRect const& rect
         painter.set_pixel({ 1, rect.height() - 2 }, highlight_color2);
 
         // Right side
-        IntPoint top_right_outer { rect.width() - 1, 0 };
-        IntPoint bottom_right_outer { rect.width() - 1, rect.height() - 3 };
-        painter.draw_line(top_right_outer, bottom_right_outer, shadow_color2);
+        painter.draw_line({ rect.width() - 1, 0 }, { rect.width() - 1, rect.height() - 3 }, shadow_color2);
+        painter.draw_line({ rect.width() - 2, 0 }, { rect.width() - 2, rect.height() - 3 }, shadow_color1);
+        painter.set_pixel({ rect.width() - 2, rect.height() - 2 }, shadow_color2);
+        break;
+    case GUI::TabWidget::TabPosition::Left:
+        // Base tab
+        painter.fill_rect({ 1, 1, rect.width(), rect.height() - 1 }, base_color);
+        painter.draw_line({ 2, 0 }, { rect.width(), 0 }, highlight_color2);
+        painter.draw_line({ 2, rect.height() - 1 }, { rect.width(), rect.height() - 1 }, shadow_color2);
 
-        IntPoint top_right_inner { rect.width() - 2, 0 };
-        IntPoint bottom_right_inner { rect.width() - 2, rect.height() - 3 };
-        painter.draw_line(top_right_inner, bottom_right_inner, shadow_color1);
+        // If the tab is active, draw the accent line
+        if (active) {
+            painter.fill_rect_with_gradient({ 1, 1, 2, rect.height() - 2 }, accent, accent.lightened(1.5f));
+            painter.draw_line({ 0, 2 }, { 0, rect.height() - 3 }, accent.darkened());
+        } else {
+            painter.draw_line({ 0, 2 }, { 0, rect.height() - 3 }, highlight_color2);
+            painter.draw_line({ rect.width(), 1 }, { rect.width(), rect.height() - 1 }, shadow_color1);
+        }
 
-        painter.set_pixel(rect.width() - 2, rect.height() - 2, shadow_color2);
+        // Make appear as if the tab is rounded
+        painter.set_pixel({ 1, 1 }, highlight_color2);
+        painter.set_pixel({ 1, rect.height() - 2 }, shadow_color2);
+        break;
+    case GUI::TabWidget::TabPosition::Right:
+        // Base tab
+        painter.fill_rect({ 0, 1, rect.width() - 1, rect.height() - 1 }, base_color);
+        painter.draw_line({ 0, 0 }, { rect.width() - 2, 0 }, highlight_color2);
+        painter.draw_line({ 0, rect.height() - 1 }, { rect.width() - 2, rect.height() - 1 }, shadow_color2);
+
+        // If the tab is active, draw the accent line
+        if (active) {
+            painter.fill_rect_with_gradient({ rect.width() - 2, 1, 2, rect.height() - 2 }, accent.lightened(1.5f), accent);
+            painter.draw_line({ rect.width(), 2 }, { rect.width(), rect.height() - 3 }, accent.darkened());
+        } else {
+            painter.draw_line({ rect.width(), 2 }, { rect.width(), rect.height() - 3 }, shadow_color2);
+            painter.draw_line({ 0, 0 }, { 0, rect.height() - 1 }, shadow_color1);
+        }
+
+        // Make appear as if the tab is rounded
+        painter.set_pixel({ rect.width() - 1, 1 }, shadow_color1);
+        painter.set_pixel({ rect.width() - 1, rect.height() - 2 }, shadow_color2);
+        break;
     }
 }
 
-static void paint_button_new(Painter& painter, IntRect const& a_rect, Palette const& palette, ButtonStyle style, bool pressed, bool checked, bool hovered, bool enabled, bool focused)
+static void paint_button_new(Painter& painter, IntRect const& a_rect, Palette const& palette, ButtonStyle style, bool pressed, bool checked, bool hovered, bool enabled, bool focused, bool default_button)
 {
     Color button_color = palette.button();
     Color highlight_color = palette.threed_highlight();
@@ -110,7 +138,7 @@ static void paint_button_new(Painter& painter, IntRect const& a_rect, Palette co
     PainterStateSaver saver(painter);
 
     auto rect = a_rect;
-    if (focused) {
+    if (focused || default_button) {
         painter.draw_rect(a_rect, palette.threed_shadow2());
         rect.shrink(2, 2);
     }
@@ -164,10 +192,10 @@ static void paint_button_new(Painter& painter, IntRect const& a_rect, Palette co
     }
 }
 
-void ClassicStylePainter::paint_button(Painter& painter, IntRect const& rect, Palette const& palette, ButtonStyle button_style, bool pressed, bool hovered, bool checked, bool enabled, bool focused)
+void ClassicStylePainter::paint_button(Painter& painter, IntRect const& rect, Palette const& palette, ButtonStyle button_style, bool pressed, bool hovered, bool checked, bool enabled, bool focused, bool default_button)
 {
     if (button_style == ButtonStyle::Normal || button_style == ButtonStyle::ThickCap)
-        return paint_button_new(painter, rect, palette, button_style, pressed, checked, hovered, enabled, focused);
+        return paint_button_new(painter, rect, palette, button_style, pressed, checked, hovered, enabled, focused, default_button);
 
     if (button_style == ButtonStyle::Coolbar && !enabled)
         return;
@@ -215,6 +243,14 @@ void ClassicStylePainter::paint_button(Painter& painter, IntRect const& rect, Pa
 
 void ClassicStylePainter::paint_frame(Painter& painter, IntRect const& rect, Palette const& palette, FrameShape shape, FrameShadow shadow, int thickness, bool skip_vertical_lines)
 {
+    if (shape == Gfx::FrameShape::NoFrame)
+        return;
+
+    if (shape == FrameShape::Window) {
+        StylePainter::paint_window_frame(painter, rect, palette);
+        return;
+    }
+
     Color top_left_color;
     Color bottom_right_color;
     Color dark_shade = palette.threed_shadow1();
@@ -286,8 +322,24 @@ void ClassicStylePainter::paint_window_frame(Painter& painter, IntRect const& re
     Color dark_shade = palette.threed_shadow2();
     Color mid_shade = palette.threed_shadow1();
     Color light_shade = palette.threed_highlight();
+    auto border_thickness = palette.window_border_thickness();
+    auto border_radius = palette.window_border_radius();
 
-    painter.draw_line(rect.top_left(), rect.top_right(), base_color);
+    if (border_radius > 0) {
+        // FIXME: This will draw "useless" pixels that'll get drawn over by the window contents.
+        // preferrably we should just remove the corner pixels from the completely drawn window
+        // but I don't know how to do that yet. :^)
+        AntiAliasingPainter aa_painter { painter };
+        aa_painter.fill_rect_with_rounded_corners(rect, base_color, border_radius);
+        return;
+    }
+
+    painter.draw_rect_with_thickness({ rect.x() + border_thickness / 2,
+                                         rect.y() + border_thickness / 2,
+                                         rect.width() - border_thickness,
+                                         rect.height() - border_thickness },
+        base_color, border_thickness);
+
     painter.draw_line(rect.top_left().translated(0, 1), rect.bottom_left(), base_color);
     painter.draw_line(rect.top_left().translated(1, 1), rect.top_right().translated(-1, 1), light_shade);
     painter.draw_line(rect.top_left().translated(1, 1), rect.bottom_left().translated(1, -1), light_shade);
@@ -367,7 +419,7 @@ void ClassicStylePainter::paint_radio_button(Painter& painter, IntRect const& re
     painter.blit(rect.location(), bitmap, bitmap.rect());
 }
 
-static char const* s_checked_bitmap_data = {
+static constexpr Gfx::CharacterBitmap s_checked_bitmap {
     "         "
     "       # "
     "      ## "
@@ -376,12 +428,9 @@ static char const* s_checked_bitmap_data = {
     " #####   "
     "  ###    "
     "   #     "
-    "         "
+    "         ",
+    9, 9
 };
-
-static Gfx::CharacterBitmap* s_checked_bitmap;
-static int const s_checked_bitmap_width = 9;
-static int const s_checked_bitmap_height = 9;
 
 void ClassicStylePainter::paint_check_box(Painter& painter, IntRect const& rect, Palette const& palette, bool is_enabled, bool is_checked, bool is_being_pressed)
 {
@@ -394,9 +443,7 @@ void ClassicStylePainter::paint_check_box(Painter& painter, IntRect const& rect,
     }
 
     if (is_checked) {
-        if (!s_checked_bitmap)
-            s_checked_bitmap = &Gfx::CharacterBitmap::create_from_ascii(s_checked_bitmap_data, s_checked_bitmap_width, s_checked_bitmap_height).leak_ref();
-        painter.draw_bitmap(rect.shrunken(4, 4).location(), *s_checked_bitmap, is_enabled ? palette.base_text() : palette.threed_shadow1());
+        painter.draw_bitmap(rect.shrunken(4, 4).location(), s_checked_bitmap, is_enabled ? palette.base_text() : palette.threed_shadow1());
     }
 }
 

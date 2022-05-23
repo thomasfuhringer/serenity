@@ -42,11 +42,10 @@ public:
     virtual ErrorOr<void> reset() override;
     virtual ErrorOr<void> stop() override;
     virtual ErrorOr<void> start() override;
-    void spawn_port_proc();
-
-    void do_debug_transfer();
+    ErrorOr<void> spawn_port_process();
 
     virtual ErrorOr<size_t> submit_control_transfer(Transfer& transfer) override;
+    virtual ErrorOr<size_t> submit_bulk_transfer(Transfer& transfer) override;
 
     void get_port_status(Badge<UHCIRootHub>, u8, HubStatus&);
     ErrorOr<void> set_port_feature(Badge<UHCIRootHub>, u8, HubFeatureSelector);
@@ -73,7 +72,7 @@ private:
     void write_portsc1(u16 value) { m_io_base.offset(0x10).out(value); }
     void write_portsc2(u16 value) { m_io_base.offset(0x12).out(value); }
 
-    virtual bool handle_irq(const RegisterState&) override;
+    virtual bool handle_irq(RegisterState const&) override;
 
     ErrorOr<void> create_structures();
     void setup_schedule();
@@ -88,7 +87,6 @@ private:
 
     void reset_port(u8);
 
-private:
     IOAddress m_io_base;
 
     OwnPtr<UHCIRootHub> m_root_hub;

@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2018-2021, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2022, the SerenityOS developers.
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -35,15 +36,11 @@ Toolbar::Toolbar(Orientation orientation, int button_size)
     layout()->set_margins({ 2, 2, 2, 2 });
 }
 
-Toolbar::~Toolbar()
-{
-}
-
 class ToolbarButton final : public Button {
     C_OBJECT(ToolbarButton);
 
 public:
-    virtual ~ToolbarButton() override { }
+    virtual ~ToolbarButton() override = default;
 
 private:
     explicit ToolbarButton(Action& action)
@@ -59,7 +56,7 @@ private:
             set_text(action.text());
         set_button_style(Gfx::ButtonStyle::Coolbar);
     }
-    String tooltip(const Action& action) const
+    String tooltip(Action const& action) const
     {
         StringBuilder builder;
         builder.append(action.text());
@@ -118,7 +115,7 @@ ErrorOr<void> Toolbar::try_add_separator()
 
     auto item = TRY(adopt_nonnull_own_or_enomem(new (nothrow) Item));
     item->type = Item::Type::Separator;
-    TRY(try_add<SeparatorWidget>(m_orientation == Gfx::Orientation::Horizontal ? Gfx::Orientation::Vertical : Gfx::Orientation::Horizontal));
+    (void)TRY(try_add<SeparatorWidget>(m_orientation == Gfx::Orientation::Horizontal ? Gfx::Orientation::Vertical : Gfx::Orientation::Horizontal));
     m_items.unchecked_append(move(item));
     return {};
 }

@@ -43,7 +43,11 @@ Optional<TableAddress> Store::allocate(TableType const& type)
 Optional<MemoryAddress> Store::allocate(MemoryType const& type)
 {
     MemoryAddress address { m_memories.size() };
-    m_memories.empend(MemoryInstance { type });
+    auto instance = MemoryInstance::create(type);
+    if (instance.is_error())
+        return {};
+
+    m_memories.append(instance.release_value());
     return address;
 }
 
@@ -51,6 +55,13 @@ Optional<GlobalAddress> Store::allocate(GlobalType const& type, Value value)
 {
     GlobalAddress address { m_globals.size() };
     m_globals.append(GlobalInstance { move(value), type.is_mutable() });
+    return address;
+}
+
+Optional<DataAddress> Store::allocate_data(Vector<u8> initializer)
+{
+    DataAddress address { m_datas.size() };
+    m_datas.append(DataInstance { move(initializer) });
     return address;
 }
 
@@ -99,6 +110,14 @@ ElementInstance* Store::get(ElementAddress address)
     if (m_elements.size() <= value)
         return nullptr;
     return &m_elements[value];
+}
+
+DataInstance* Store::get(DataAddress address)
+{
+    auto value = address.value();
+    if (m_datas.size() <= value)
+        return nullptr;
+    return &m_datas[value];
 }
 
 ErrorOr<void, ValidationError> AbstractMachine::validate(Module& module)
@@ -304,7 +323,7 @@ InstantiationResult AbstractMachine::instantiate(Module const& module, Vector<Ex
                     size_t offset = 0;
                     result.values().first().value().visit(
                         [&](auto const& value) { offset = value; },
-                        [&](Reference const&) { instantiation_result = InstantiationError { "Data segment offset returned a reference" }; });
+                        [&](Reference const&) { instantiation_result = InstantiationError { "Data segment offset returned a reference"sv }; });
                     if (instantiation_result.has_value() && instantiation_result->is_error())
                         return;
                     if (main_module_instance.memories().size() <= data.index.value()) {
@@ -314,6 +333,13 @@ InstantiationResult AbstractMachine::instantiate(Module const& module, Vector<Ex
                         };
                         return;
                     }
+                    auto maybe_data_address = m_store.allocate_data(data.init);
+                    if (!maybe_data_address.has_value()) {
+                        instantiation_result = InstantiationError { "Failed to allocate a data instance for an active data segment"sv };
+                        return;
+                    }
+                    main_module_instance.datas().append(*maybe_data_address);
+
                     if (data.init.is_empty())
                         return;
                     auto address = main_module_instance.memories()[data.index.value()];
@@ -332,8 +358,13 @@ InstantiationResult AbstractMachine::instantiate(Module const& module, Vector<Ex
                         instance->data().overwrite(offset, data.init.data(), data.init.size());
                     }
                 },
-                [&](DataSection::Data::Passive const&) {
-                    // FIXME: What do we do here?
+                [&](DataSection::Data::Passive const& passive) {
+                    auto maybe_data_address = m_store.allocate_data(passive.init);
+                    if (!maybe_data_address.has_value()) {
+                        instantiation_result = InstantiationError { "Failed to allocate a data instance for a passive data segment"sv };
+                        return;
+                    }
+                    main_module_instance.datas().append(*maybe_data_address);
                 });
         }
     });

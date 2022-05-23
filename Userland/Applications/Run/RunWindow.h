@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2021, Nick Vella <nick@nxk.io>
+ * Copyright (c) 2022, the SerenityOS developers.
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -15,7 +16,7 @@
 class RunWindow final : public GUI::Window {
     C_OBJECT(RunWindow)
 public:
-    virtual ~RunWindow() override;
+    virtual ~RunWindow() override = default;
 
     virtual void event(Core::Event&) override;
 
@@ -23,8 +24,8 @@ private:
     RunWindow();
 
     void do_run();
-    bool run_as_command(const String& run_input);
-    bool run_via_launch(const String& run_input);
+    bool run_as_command(String const& run_input);
+    bool run_via_launch(String const& run_input);
 
     String history_file_path();
     void load_history();

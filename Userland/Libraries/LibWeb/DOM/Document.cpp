@@ -1,6 +1,6 @@
 /*
- * Copyright (c) 2018-2021, Andreas Kling <kling@serenityos.org>
- * Copyright (c) 2021, Linus Groh <linusg@serenityos.org>
+ * Copyright (c) 2018-2022, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2021-2022, Linus Groh <linusg@serenityos.org>
  * Copyright (c) 2021, Luke Wilde <lukew@serenityos.org>
  * Copyright (c) 2021, Sam Atkins <atkinssj@serenityos.org>
  *
@@ -22,6 +22,7 @@
 #include <LibWeb/DOM/Comment.h>
 #include <LibWeb/DOM/CustomEvent.h>
 #include <LibWeb/DOM/DOMException.h>
+#include <LibWeb/DOM/DOMImplementation.h>
 #include <LibWeb/DOM/Document.h>
 #include <LibWeb/DOM/DocumentFragment.h>
 #include <LibWeb/DOM/DocumentType.h>
@@ -30,10 +31,11 @@
 #include <LibWeb/DOM/Event.h>
 #include <LibWeb/DOM/ExceptionOr.h>
 #include <LibWeb/DOM/HTMLCollection.h>
+#include <LibWeb/DOM/NodeIterator.h>
 #include <LibWeb/DOM/Range.h>
 #include <LibWeb/DOM/ShadowRoot.h>
 #include <LibWeb/DOM/Text.h>
-#include <LibWeb/DOM/Window.h>
+#include <LibWeb/DOM/TreeWalker.h>
 #include <LibWeb/Dump.h>
 #include <LibWeb/HTML/AttributeNames.h>
 #include <LibWeb/HTML/BrowsingContext.h>
@@ -49,9 +51,14 @@
 #include <LibWeb/HTML/HTMLHtmlElement.h>
 #include <LibWeb/HTML/HTMLIFrameElement.h>
 #include <LibWeb/HTML/HTMLImageElement.h>
+#include <LibWeb/HTML/HTMLLinkElement.h>
 #include <LibWeb/HTML/HTMLScriptElement.h>
 #include <LibWeb/HTML/HTMLTitleElement.h>
 #include <LibWeb/HTML/MessageEvent.h>
+#include <LibWeb/HTML/Parser/HTMLParser.h>
+#include <LibWeb/HTML/Scripting/ExceptionReporter.h>
+#include <LibWeb/HTML/Scripting/WindowEnvironmentSettingsObject.h>
+#include <LibWeb/HTML/Window.h>
 #include <LibWeb/Layout/BlockFormattingContext.h>
 #include <LibWeb/Layout/InitialContainingBlock.h>
 #include <LibWeb/Layout/TreeBuilder.h>
@@ -60,6 +67,7 @@
 #include <LibWeb/Page/Page.h>
 #include <LibWeb/SVG/TagNames.h>
 #include <LibWeb/UIEvents/EventNames.h>
+#include <LibWeb/UIEvents/FocusEvent.h>
 #include <LibWeb/UIEvents/KeyboardEvent.h>
 #include <LibWeb/UIEvents/MouseEvent.h>
 
@@ -70,8 +78,8 @@ Document::Document(const AK::URL& url)
     , m_style_computer(make<CSS::StyleComputer>(*this))
     , m_style_sheets(CSS::StyleSheetList::create(*this))
     , m_url(url)
-    , m_window(Window::create_with_document(*this))
-    , m_implementation(DOMImplementation::create(*this))
+    , m_window(HTML::Window::create_with_document(*this))
+    , m_implementation(DOMImplementation::create({}, *this))
     , m_history(HTML::History::create(*this))
 {
     HTML::main_thread_event_loop().register_document({}, *this);
@@ -85,9 +93,7 @@ Document::Document(const AK::URL& url)
     });
 }
 
-Document::~Document()
-{
-}
+Document::~Document() = default;
 
 void Document::removed_last_ref()
 {
@@ -143,6 +149,158 @@ void Document::removed_last_ref()
     delete this;
 }
 
+// https://html.spec.whatwg.org/multipage/dynamic-markup-insertion.html#dom-document-write
+ExceptionOr<void> Document::write(Vector<String> const& strings)
+{
+    StringBuilder builder;
+    builder.join(""sv, strings);
+
+    return run_the_document_write_steps(builder.build());
+}
+
+// https://html.spec.whatwg.org/multipage/dynamic-markup-insertion.html#dom-document-writeln
+ExceptionOr<void> Document::writeln(Vector<String> const& strings)
+{
+    StringBuilder builder;
+    builder.join(""sv, strings);
+    builder.append("\n"sv);
+
+    return run_the_document_write_steps(builder.build());
+}
+
+// https://html.spec.whatwg.org/multipage/dynamic-markup-insertion.html#document-write-steps
+ExceptionOr<void> Document::run_the_document_write_steps(String input)
+{
+    // 1. If document is an XML document, then throw an "InvalidStateError" DOMException.
+    if (doctype() && doctype()->name() == "xml")
+        return DOM::InvalidStateError::create("write() called on XML document.");
+
+    // 2. If document's throw-on-dynamic-markup-insertion counter is greater than 0, then throw an "InvalidStateError" DOMException.
+    if (m_throw_on_dynamic_markup_insertion_counter > 0)
+        return DOM::InvalidStateError::create("throw-on-dynamic-markup-insertion-counter greater than zero.");
+
+    // 3. If document's active parser was aborted is true, then return.
+    if (m_active_parser_was_aborted)
+        return {};
+
+    // 4. If the insertion point is undefined, then:
+    if (!(m_parser && m_parser->tokenizer().is_insertion_point_defined())) {
+        // 1. If document's unload counter is greater than 0 or document's ignore-destructive-writes counter is greater than 0, then return.
+        if (m_unload_counter > 0 || m_ignore_destructive_writes_counter > 0)
+            return {};
+
+        // 2. Run the document open steps with document.
+        open();
+    }
+
+    // 5. Insert input into the input stream just before the insertion point.
+    m_parser->tokenizer().insert_input_at_insertion_point(input);
+
+    // 6. If there is no pending parsing-blocking script, have the HTML parser process input, one code point at a time, processing resulting tokens as they are emitted, and stopping when the tokenizer reaches the insertion point or when the processing of the tokenizer is aborted by the tree construction stage (this can happen if a script end tag token is emitted by the tokenizer).
+    if (!pending_parsing_blocking_script())
+        m_parser->run();
+
+    return {};
+}
+
+// https://html.spec.whatwg.org/multipage/dynamic-markup-insertion.html#dom-document-open
+ExceptionOr<Document*> Document::open(String const&, String const&)
+{
+    // 1. If document is an XML document, then throw an "InvalidStateError" DOMException exception.
+    if (doctype() && doctype()->name() == "xml")
+        return DOM::InvalidStateError::create("open() called on XML document.");
+
+    // 2. If document's throw-on-dynamic-markup-insertion counter is greater than 0, then throw an "InvalidStateError" DOMException.
+    if (m_throw_on_dynamic_markup_insertion_counter > 0)
+        return DOM::InvalidStateError::create("throw-on-dynamic-markup-insertion-counter greater than zero.");
+
+    // FIXME: 3. Let entryDocument be the entry global object's associated Document.
+    auto& entry_document = *this;
+
+    // 4. If document's origin is not same origin to entryDocument's origin, then throw a "SecurityError" DOMException.
+    if (origin() != entry_document.origin())
+        return DOM::SecurityError::create("Document.origin() not the same as entryDocument's.");
+
+    // 5. If document has an active parser whose script nesting level is greater than 0, then return document.
+    if (m_parser && m_parser->script_nesting_level() > 0)
+        return this;
+
+    // 6. Similarly, if document's unload counter is greater than 0, then return document.
+    if (m_unload_counter > 0)
+        return this;
+
+    // 7. If document's active parser was aborted is true, then return document.
+    if (m_active_parser_was_aborted)
+        return this;
+
+    // FIXME: 8. If document's browsing context is non-null and there is an existing attempt to navigate document's browsing context, then stop document loading given document.
+
+    // FIXME: 9. For each shadow-including inclusive descendant node of document, erase all event listeners and handlers given node.
+
+    // FIXME 10. If document is the associated Document of document's relevant global object, then erase all event listeners and handlers given document's relevant global object.
+
+    // 11. Replace all with null within document, without firing any mutation events.
+    replace_all(nullptr);
+
+    // 12. If document is fully active, then:
+    if (is_fully_active()) {
+        // 1. Let newURL be a copy of entryDocument's URL.
+        auto new_url = entry_document.url();
+        // 2. If entryDocument is not document, then set newURL's fragment to null.
+        if (&entry_document != this)
+            new_url.set_fragment("");
+
+        // FIXME: 3. Run the URL and history update steps with document and newURL.
+    }
+
+    // FIXME: 13. Set document's is initial about:blank to false.
+
+    // FIXME: 14. If document's iframe load in progress flag is set, then set document's mute iframe load flag.
+
+    // 15. Set document to no-quirks mode.
+    set_quirks_mode(QuirksMode::No);
+
+    // 16. Create a new HTML parser and associate it with document. This is a script-created parser (meaning that it can be closed by the document.open() and document.close() methods, and that the tokenizer will wait for an explicit call to document.close() before emitting an end-of-file token). The encoding confidence is irrelevant.
+    m_parser = HTML::HTMLParser::create_for_scripting(*this);
+
+    // 17. Set the insertion point to point at just before the end of the input stream (which at this point will be empty).
+    m_parser->tokenizer().update_insertion_point();
+
+    // 18. Update the current document readiness of document to "loading".
+    update_readiness(HTML::DocumentReadyState::Loading);
+
+    // 19. Return document.
+    return this;
+}
+
+// https://html.spec.whatwg.org/multipage/dynamic-markup-insertion.html#closing-the-input-stream
+ExceptionOr<void> Document::close()
+{
+    // 1. If document is an XML document, then throw an "InvalidStateError" DOMException exception.
+    if (doctype() && doctype()->name() == "xml")
+        return DOM::InvalidStateError::create("close() called on XML document.");
+
+    // 2. If document's throw-on-dynamic-markup-insertion counter is greater than 0, then throw an "InvalidStateError" DOMException.
+    if (m_throw_on_dynamic_markup_insertion_counter > 0)
+        return DOM::InvalidStateError::create("throw-on-dynamic-markup-insertion-counter greater than zero.");
+
+    // 3. If there is no script-created parser associated with the document, then return.
+    if (!m_parser)
+        return {};
+
+    // FIXME: 4. Insert an explicit "EOF" character at the end of the parser's input stream.
+    m_parser->tokenizer().insert_eof();
+
+    // 5. If there is a pending parsing-blocking script, then return.
+    if (pending_parsing_blocking_script())
+        return {};
+
+    // FIXME: 6. Run the tokenizer, processing resulting tokens as they are emitted, and stopping when the tokenizer reaches the explicit "EOF" character or spins the event loop.
+    m_parser->run();
+
+    return {};
+}
+
 Origin Document::origin() const
 {
     if (!m_url.is_valid())
@@ -150,7 +308,7 @@ Origin Document::origin() const
     return { m_url.protocol(), m_url.host(), m_url.port_or_default() };
 }
 
-void Document::set_origin(const Origin& origin)
+void Document::set_origin(Origin const& origin)
 {
     m_url.set_protocol(origin.protocol());
     m_url.set_host(origin.host());
@@ -171,7 +329,7 @@ void Document::schedule_layout_update()
     m_layout_update_timer->start();
 }
 
-bool Document::is_child_allowed(const Node& node) const
+bool Document::is_child_allowed(Node const& node) const
 {
     switch (node.type()) {
     case NodeType::DOCUMENT_NODE:
@@ -193,7 +351,7 @@ Element* Document::document_element()
     return first_child_of_type<Element>();
 }
 
-const Element* Document::document_element() const
+Element const* Document::document_element() const
 {
     return first_child_of_type<Element>();
 }
@@ -236,9 +394,7 @@ ExceptionOr<void> Document::set_body(HTML::HTMLElement* new_body)
 
     auto* existing_body = body();
     if (existing_body) {
-        auto replace_result = existing_body->parent()->replace_child(*new_body, *existing_body);
-        if (replace_result.is_exception())
-            return replace_result.exception();
+        (void)TRY(existing_body->parent()->replace_child(*new_body, *existing_body));
         return {};
     }
 
@@ -246,9 +402,7 @@ ExceptionOr<void> Document::set_body(HTML::HTMLElement* new_body)
     if (!document_element)
         return DOM::HierarchyRequestError::create("Missing document element");
 
-    auto append_result = document_element->append_child(*new_body);
-    if (append_result.is_exception())
-        return append_result.exception();
+    (void)TRY(document_element->append_child(*new_body));
     return {};
 }
 
@@ -279,7 +433,7 @@ String Document::title() const
     return builder.to_string();
 }
 
-void Document::set_title(const String& title)
+void Document::set_title(String const& title)
 {
     auto* head_element = const_cast<HTML::HTMLHeadElement*>(head());
     if (!head_element)
@@ -287,7 +441,7 @@ void Document::set_title(const String& title)
 
     RefPtr<HTML::HTMLTitleElement> title_element = head_element->first_child_of_type<HTML::HTMLTitleElement>();
     if (!title_element) {
-        title_element = static_ptr_cast<HTML::HTMLTitleElement>(create_element(HTML::TagNames::title));
+        title_element = static_ptr_cast<HTML::HTMLTitleElement>(create_element(HTML::TagNames::title).release_value());
         head_element->append_child(*title_element);
     }
 
@@ -336,21 +490,24 @@ void Document::tear_down_layout_tree()
     m_layout_root = nullptr;
 }
 
-Color Document::background_color(const Palette& palette) const
+Color Document::background_color(Gfx::Palette const& palette) const
 {
-    auto default_color = palette.base();
-    auto* body_element = body();
-    if (!body_element)
-        return default_color;
+    // CSS2 says we should use the HTML element's background color unless it's transparent...
+    if (auto* html_element = this->html_element(); html_element && html_element->layout_node()) {
+        auto color = html_element->layout_node()->computed_values().background_color();
+        if (color.alpha())
+            return color;
+    }
 
-    auto* body_layout_node = body_element->layout_node();
-    if (!body_layout_node)
-        return default_color;
+    // ...in which case we use the BODY element's background color.
+    if (auto* body_element = body(); body_element && body_element->layout_node()) {
+        auto color = body_element->layout_node()->computed_values().background_color();
+        if (color.alpha())
+            return color;
+    }
 
-    auto color = body_layout_node->computed_values().background_color();
-    if (!color.alpha())
-        return default_color;
-    return color;
+    // If both HTML and BODY are transparent, we fall back to the system's "base" palette color.
+    return palette.base();
 }
 
 Vector<CSS::BackgroundLayerData> const* Document::background_layers() const
@@ -387,31 +544,48 @@ void Document::force_layout()
     update_layout();
 }
 
-void Document::ensure_layout()
+void Document::invalidate_layout()
 {
-    if (m_needs_layout || !m_layout_root)
-        update_layout();
+    tear_down_layout_tree();
 }
 
 void Document::update_layout()
 {
+    // NOTE: If our parent document needs a relayout, we must do that *first*.
+    //       This is necessary as the parent layout may cause our viewport to change.
+    if (browsing_context() && browsing_context()->container())
+        browsing_context()->container()->document().update_layout();
+
+    update_style();
+
     if (!m_needs_layout && m_layout_root)
         return;
 
     if (!browsing_context())
         return;
 
-    update_style();
+    auto viewport_rect = browsing_context()->viewport_rect();
 
     if (!m_layout_root) {
         Layout::TreeBuilder tree_builder;
         m_layout_root = static_ptr_cast<Layout::InitialContainingBlock>(tree_builder.build(*this));
     }
 
-    Layout::BlockFormattingContext root_formatting_context(*m_layout_root, nullptr);
-    root_formatting_context.run(*m_layout_root, Layout::LayoutMode::Default);
+    Layout::FormattingState formatting_state;
+    Layout::BlockFormattingContext root_formatting_context(formatting_state, *m_layout_root, nullptr);
 
-    m_layout_root->set_needs_display();
+    auto& icb = static_cast<Layout::InitialContainingBlock&>(*m_layout_root);
+    auto& icb_state = formatting_state.get_mutable(icb);
+    icb_state.content_width = viewport_rect.width();
+    icb_state.content_height = viewport_rect.height();
+
+    icb.set_has_definite_width(true);
+    icb.set_has_definite_height(true);
+
+    root_formatting_context.run(*m_layout_root, Layout::LayoutMode::Normal);
+    formatting_state.commit();
+
+    browsing_context()->set_needs_display();
 
     if (browsing_context()->is_top_level()) {
         if (auto* page = this->page())
@@ -422,37 +596,45 @@ void Document::update_layout()
     m_layout_update_timer->stop();
 }
 
-static void update_style_recursively(DOM::Node& node)
+[[nodiscard]] static bool update_style_recursively(DOM::Node& node)
 {
-    if (is<Element>(node))
-        static_cast<Element&>(node).recompute_style();
+    bool const needs_full_style_update = node.document().needs_full_style_update();
+    bool needs_relayout = false;
+
+    if (is<Element>(node)) {
+        needs_relayout |= static_cast<Element&>(node).recompute_style() == Element::NeedsRelayout::Yes;
+    }
     node.set_needs_style_update(false);
 
-    if (node.child_needs_style_update()) {
+    if (needs_full_style_update || node.child_needs_style_update()) {
+        if (node.is_element()) {
+            if (auto* shadow_root = static_cast<DOM::Element&>(node).shadow_root()) {
+                if (needs_full_style_update || shadow_root->needs_style_update() || shadow_root->child_needs_style_update())
+                    needs_relayout |= update_style_recursively(*shadow_root);
+            }
+        }
         node.for_each_child([&](auto& child) {
-            if (child.needs_style_update() || child.child_needs_style_update())
-                update_style_recursively(child);
+            if (needs_full_style_update || child.needs_style_update() || child.child_needs_style_update())
+                needs_relayout |= update_style_recursively(child);
             return IterationDecision::Continue;
         });
     }
 
     node.set_child_needs_style_update(false);
+    return needs_relayout;
 }
 
 void Document::update_style()
 {
     if (!browsing_context())
         return;
-    if (!needs_style_update() && !child_needs_style_update())
+    if (!needs_full_style_update() && !needs_style_update() && !child_needs_style_update())
         return;
-    update_style_recursively(*this);
+    evaluate_media_rules();
+    if (update_style_recursively(*this))
+        invalidate_layout();
+    m_needs_full_style_update = false;
     m_style_update_timer->stop();
-    set_needs_layout();
-}
-
-RefPtr<Layout::Node> Document::create_layout_node()
-{
-    return adopt_ref(*new Layout::InitialContainingBlock(*this, style_computer().create_document_style()));
 }
 
 void Document::set_link_color(Color color)
@@ -470,9 +652,9 @@ void Document::set_visited_link_color(Color color)
     m_visited_link_color = color;
 }
 
-const Layout::InitialContainingBlock* Document::layout_node() const
+Layout::InitialContainingBlock const* Document::layout_node() const
 {
-    return static_cast<const Layout::InitialContainingBlock*>(Node::layout_node());
+    return static_cast<Layout::InitialContainingBlock const*>(Node::layout_node());
 }
 
 Layout::InitialContainingBlock* Document::layout_node()
@@ -494,6 +676,26 @@ void Document::set_inspected_node(Node* node)
         m_inspected_node->layout_node()->set_needs_display();
 }
 
+static Node* find_common_ancestor(Node* a, Node* b)
+{
+    if (!a || !b)
+        return nullptr;
+
+    if (a == b)
+        return a;
+
+    HashTable<Node*> ancestors;
+    for (auto* node = a; node; node = node->parent_or_shadow_host())
+        ancestors.set(node);
+
+    for (auto* node = b; node; node = node->parent_or_shadow_host()) {
+        if (ancestors.contains(node))
+            return node;
+    }
+
+    return nullptr;
+}
+
 void Document::set_hovered_node(Node* node)
 {
     if (m_hovered_node == node)
@@ -502,7 +704,10 @@ void Document::set_hovered_node(Node* node)
     RefPtr<Node> old_hovered_node = move(m_hovered_node);
     m_hovered_node = node;
 
-    invalidate_style();
+    if (auto* common_ancestor = find_common_ancestor(old_hovered_node, m_hovered_node))
+        common_ancestor->invalidate_style();
+    else
+        invalidate_style();
 }
 
 NonnullRefPtr<HTMLCollection> Document::get_elements_by_name(String const& name)
@@ -620,6 +825,13 @@ Color Document::visited_link_color() const
     return page()->palette().visited_link();
 }
 
+// https://html.spec.whatwg.org/multipage/webappapis.html#relevant-settings-object
+HTML::EnvironmentSettingsObject& Document::relevant_settings_object()
+{
+    // Then, the relevant settings object for a platform object o is the environment settings object of the relevant Realm for o.
+    return verify_cast<HTML::EnvironmentSettingsObject>(*realm().host_defined());
+}
+
 JS::Realm& Document::realm()
 {
     return interpreter().realm();
@@ -628,83 +840,95 @@ JS::Realm& Document::realm()
 JS::Interpreter& Document::interpreter()
 {
     if (!m_interpreter) {
+        // FIXME: This is all ad-hoc. It loosely follows steps 6.4 to 6.9 of https://html.spec.whatwg.org/#initialise-the-document-object
         auto& vm = Bindings::main_thread_vm();
+
+        // https://html.spec.whatwg.org/multipage/webappapis.html#creating-a-new-javascript-realm
+        // FIXME: Put all this into it's own function that can be used outside of Document.
+
+        // 1. Perform InitializeHostDefinedRealm() with the provided customizations for creating the global object and the global this binding.
+        // FIXME: Use WindowProxy as the global this value.
         m_interpreter = JS::Interpreter::create<Bindings::WindowObject>(vm, *m_window);
 
-        // NOTE: We must hook `on_call_stack_emptied` after the interpreter was created, as the initialization of the
-        // WindowsObject can invoke some internal calls, which will eventually lead to this hook being called without
-        // `m_interpreter` being fully initialized yet.
-        // TODO: Hook up vm.on_promise_unhandled_rejection and vm.on_promise_rejection_handled
-        // See https://developer.mozilla.org/en-US/docs/Web/JavaScript/Guide/Using_promises#promise_rejection_events
-        vm.on_call_stack_emptied = [this] {
-            auto& vm = m_interpreter->vm();
-            vm.run_queued_promise_jobs();
-            vm.run_queued_finalization_registry_cleanup_jobs();
+        // 2. Let realm execution context be the running JavaScript execution context.
+        auto& realm_execution_context = vm.running_execution_context();
 
-            // FIXME: This isn't exactly the right place for this.
-            HTML::main_thread_event_loop().perform_a_microtask_checkpoint();
+        // 3. Remove realm execution context from the JavaScript execution context stack.
+        vm.execution_context_stack().remove_first_matching([&realm_execution_context](auto* execution_context) {
+            return execution_context == &realm_execution_context;
+        });
 
-            // Note: This is not an exception check for the promise jobs, they will just leave any
-            // exception that already exists intact and never throw a new one (without cleaning it
-            // up, that is). Taking care of any previous unhandled exception just happens to be the
-            // very last thing we want to do, even after running promise jobs.
-            if (auto* exception = vm.exception()) {
-                auto value = exception->value();
-                if (value.is_object()) {
-                    auto& object = value.as_object();
-                    auto name = object.get_without_side_effects(vm.names.name).value_or(JS::js_undefined());
-                    auto message = object.get_without_side_effects(vm.names.message).value_or(JS::js_undefined());
-                    if (name.is_accessor() || message.is_accessor()) {
-                        // The result is not going to be useful, let's just print the value. This affects DOMExceptions, for example.
-                        dbgln("\033[31;1mUnhandled JavaScript exception:\033[0m {}", value);
-                    } else {
-                        dbgln("\033[31;1mUnhandled JavaScript exception:\033[0m [{}] {}", name, message);
-                    }
-                } else {
-                    dbgln("\033[31;1mUnhandled JavaScript exception:\033[0m {}", value);
-                }
-                for (auto& traceback_frame : exception->traceback()) {
-                    auto& function_name = traceback_frame.function_name;
-                    auto& source_range = traceback_frame.source_range;
-                    dbgln("  {} at {}:{}:{}", function_name, source_range.filename, source_range.start.line, source_range.start.column);
-                }
-            }
+        // FIXME: 4. Let realm be realm execution context's Realm component.
+        // FIXME: 5. Set realm's agent to agent.
 
-            vm.finish_execution_generation();
-        };
+        // FIXME: 6. If agent's agent cluster's cross-origin isolation mode is "none", then:
+        //          1. Let global be realm's global object.
+        //          2. Let status be ! global.[[Delete]]("SharedArrayBuffer").
+        //          3. Assert: status is true.
+
+        // FIXME: 7. Return realm execution context. (Requires being in it's own function as mentioned above)
+
+        // == End of "create a JavaScript realm" ==
+
+        // FIXME: 6. Let topLevelCreationURL be creationURL.
+        // FIXME: 7. Let topLevelOrigin be navigationParams's origin.
+        // FIXME: 8. If browsingContext is not a top-level browsing context, then:
+        //          1. Let parentEnvironment be browsingContext's container's relevant settings object.
+        //          2. Set topLevelCreationURL to parentEnvironment's top-level creation URL.
+        //          3. Set topLevelOrigin to parentEnvironment's top-level origin.
+
+        // FIXME: 9. Set up a window environment settings object with creationURL, realm execution context, navigationParams's reserved environment, topLevelCreationURL, and topLevelOrigin.
+        //        (This is missing reserved environment, topLevelCreationURL and topLevelOrigin. It also assumes creationURL is the document's URL, when it's really "navigationParams's response's URL.")
+        HTML::WindowEnvironmentSettingsObject::setup(m_url, realm_execution_context);
     }
     return *m_interpreter;
 }
 
 JS::Value Document::run_javascript(StringView source, StringView filename)
 {
-    auto parser = JS::Parser(JS::Lexer(source, filename));
-    auto program = parser.parse_program();
-    if (parser.has_errors()) {
-        parser.print_errors(false);
+    // FIXME: The only user of this function now is javascript: URLs. Refactor them to follow the spec: https://html.spec.whatwg.org/multipage/browsing-the-web.html#javascript-protocol
+    auto& interpreter = document().interpreter();
+    auto script_or_error = JS::Script::parse(source, interpreter.realm(), filename);
+    if (script_or_error.is_error()) {
+        // FIXME: Add error logging back.
         return JS::js_undefined();
     }
-    auto& interpreter = document().interpreter();
-    auto& vm = interpreter.vm();
-    interpreter.run(interpreter.global_object(), *program);
-    if (vm.exception())
-        vm.clear_exception();
-    return vm.last_value();
+
+    auto result = interpreter.run(script_or_error.value());
+
+    if (result.is_error()) {
+        // FIXME: I'm sure the spec could tell us something about error propagation here!
+        HTML::report_exception(result);
+
+        return {};
+    }
+    return result.value();
 }
 
 // https://dom.spec.whatwg.org/#dom-document-createelement
 // FIXME: This only implements step 6 of the algorithm and does not take in options.
-NonnullRefPtr<Element> Document::create_element(const String& tag_name)
+DOM::ExceptionOr<NonnullRefPtr<Element>> Document::create_element(String const& tag_name)
 {
+    if (!is_valid_name(tag_name))
+        return DOM::InvalidCharacterError::create("Invalid character in tag name.");
+
     // FIXME: Let namespace be the HTML namespace, if this is an HTML document or this’s content type is "application/xhtml+xml", and null otherwise.
     return DOM::create_element(*this, tag_name, Namespace::HTML);
 }
 
+// https://dom.spec.whatwg.org/#dom-document-createelementns
 // https://dom.spec.whatwg.org/#internal-createelementns-steps
 // FIXME: This only implements step 4 of the algorithm and does not take in options.
-NonnullRefPtr<Element> Document::create_element_ns(const String& namespace_, const String& qualified_name)
+DOM::ExceptionOr<NonnullRefPtr<Element>> Document::create_element_ns(String const& namespace_, String const& qualified_name)
 {
-    return DOM::create_element(*this, qualified_name, namespace_);
+    // 1. Let namespace, prefix, and localName be the result of passing namespace and qualifiedName to validate and extract.
+    auto extracted_qualified_name = TRY(validate_and_extract(namespace_, qualified_name));
+
+    // FIXME: 2. Let is be null.
+    // FIXME: 3. If options is a dictionary and options["is"] exists, then set is to it.
+
+    // 4. Return the result of creating an element given document, localName, namespace, prefix, is, and with the synchronous custom elements flag set.
+    return DOM::create_element(*this, extracted_qualified_name.local_name(), extracted_qualified_name.namespace_(), extracted_qualified_name.prefix());
 }
 
 NonnullRefPtr<DocumentFragment> Document::create_document_fragment()
@@ -712,12 +936,12 @@ NonnullRefPtr<DocumentFragment> Document::create_document_fragment()
     return adopt_ref(*new DocumentFragment(*this));
 }
 
-NonnullRefPtr<Text> Document::create_text_node(const String& data)
+NonnullRefPtr<Text> Document::create_text_node(String const& data)
 {
     return adopt_ref(*new Text(*this, data));
 }
 
-NonnullRefPtr<Comment> Document::create_comment(const String& data)
+NonnullRefPtr<Comment> Document::create_comment(String const& data)
 {
     return adopt_ref(*new Comment(*this, data));
 }
@@ -728,7 +952,7 @@ NonnullRefPtr<Range> Document::create_range()
 }
 
 // https://dom.spec.whatwg.org/#dom-document-createevent
-NonnullRefPtr<Event> Document::create_event(const String& interface)
+NonnullRefPtr<Event> Document::create_event(String const& interface)
 {
     auto interface_lowercase = interface.to_lowercase();
     RefPtr<Event> event;
@@ -747,7 +971,7 @@ NonnullRefPtr<Event> Document::create_event(const String& interface)
     } else if (interface_lowercase.is_one_of("event", "events")) {
         event = Event::create("");
     } else if (interface_lowercase == "focusevent") {
-        event = Event::create(""); // FIXME: Create FocusEvent
+        event = UIEvents::FocusEvent::create("");
     } else if (interface_lowercase == "hashchangeevent") {
         event = Event::create(""); // FIXME: Create HashChangeEvent
     } else if (interface_lowercase == "htmlevents") {
@@ -757,7 +981,7 @@ NonnullRefPtr<Event> Document::create_event(const String& interface)
     } else if (interface_lowercase == "messageevent") {
         event = HTML::MessageEvent::create("");
     } else if (interface_lowercase.is_one_of("mouseevent", "mouseevents")) {
-        event = UIEvents::MouseEvent::create("", 0, 0, 0, 0);
+        event = UIEvents::MouseEvent::create("");
     } else if (interface_lowercase == "storageevent") {
         event = Event::create(""); // FIXME: Create StorageEvent
     } else if (interface_lowercase == "svgevents") {
@@ -847,6 +1071,17 @@ void Document::adopt_node(Node& node)
             inclusive_descendant.adopted_from(old_document);
             return IterationDecision::Continue;
         });
+
+        // Transfer NodeIterators rooted at `node` from old_document to this document.
+        Vector<NodeIterator&> node_iterators_to_transfer;
+        for (auto* node_iterator : old_document.m_node_iterators) {
+            if (node_iterator->root() == &node)
+                node_iterators_to_transfer.append(*node_iterator);
+        }
+        for (auto& node_iterator : node_iterators_to_transfer) {
+            old_document.m_node_iterators.remove(&node_iterator);
+            m_node_iterators.set(&node_iterator);
+        }
     }
 }
 
@@ -867,12 +1102,12 @@ ExceptionOr<NonnullRefPtr<Node>> Document::adopt_node_binding(NonnullRefPtr<Node
     return node;
 }
 
-const DocumentType* Document::doctype() const
+DocumentType const* Document::doctype() const
 {
     return first_child_of_type<DocumentType>();
 }
 
-const String& Document::compat_mode() const
+String const& Document::compat_mode() const
 {
     static String back_compat = "BackCompat";
     static String css1_compat = "CSS1Compat";
@@ -893,7 +1128,17 @@ void Document::set_focused_element(Element* element)
     if (m_focused_element == element)
         return;
 
+    if (m_focused_element) {
+        m_focused_element->did_lose_focus();
+        m_focused_element->set_needs_style_update(true);
+    }
+
     m_focused_element = element;
+
+    if (m_focused_element) {
+        m_focused_element->did_receive_focus();
+        m_focused_element->set_needs_style_update(true);
+    }
 
     if (m_layout_root)
         m_layout_root->set_needs_display();
@@ -948,12 +1193,12 @@ Page* Document::page()
     return m_browsing_context ? m_browsing_context->page() : nullptr;
 }
 
-const Page* Document::page() const
+Page const* Document::page() const
 {
     return m_browsing_context ? m_browsing_context->page() : nullptr;
 }
 
-EventTarget* Document::get_parent(const Event& event)
+EventTarget* Document::get_parent(Event const& event)
 {
     if (event.type() == HTML::EventNames::load)
         return nullptr;
@@ -993,7 +1238,7 @@ String Document::cookie(Cookie::Source source)
     return {};
 }
 
-void Document::set_cookie(String cookie_string, Cookie::Source source)
+void Document::set_cookie(String const& cookie_string, Cookie::Source source)
 {
     auto cookie = Cookie::parse_cookie(cookie_string);
     if (!cookie.has_value())
@@ -1006,10 +1251,10 @@ void Document::set_cookie(String cookie_string, Cookie::Source source)
 String Document::dump_dom_tree_as_json() const
 {
     StringBuilder builder;
-    JsonObjectSerializer json(builder);
+    auto json = MUST(JsonObjectSerializer<>::try_create(builder));
     serialize_tree_as_json(json);
 
-    json.finish();
+    MUST(json.finish());
     return builder.to_string();
 }
 
@@ -1088,7 +1333,7 @@ void Document::run_the_resize_steps()
         return;
     m_last_viewport_size = viewport_size;
 
-    dispatch_event(DOM::Event::create(UIEvents::EventNames::resize));
+    window().dispatch_event(DOM::Event::create(UIEvents::EventNames::resize));
 
     update_layout();
 }
@@ -1109,11 +1354,11 @@ void Document::evaluate_media_queries_and_report_changes()
     // 1. For each MediaQueryList object target that has doc as its document,
     //    in the order they were created, oldest first, run these substeps:
     for (auto& media_query_list_ptr : m_media_query_lists) {
-        // 1.1. If target’s matches state has changed since the last time these steps
-        //      were run, fire an event at target using the MediaQueryListEvent constructor,
-        //      with its type attribute initialized to change, its isTrusted attribute
-        //      initialized to true, its media attribute initialized to target’s media,
-        //      and its matches attribute initialized to target’s matches state.
+        // 1. If target’s matches state has changed since the last time these steps
+        //    were run, fire an event at target using the MediaQueryListEvent constructor,
+        //    with its type attribute initialized to change, its isTrusted attribute
+        //    initialized to true, its media attribute initialized to target’s media,
+        //    and its matches attribute initialized to target’s matches state.
         if (media_query_list_ptr.is_null())
             continue;
         auto media_query_list = media_query_list_ptr.strong_ref();
@@ -1131,9 +1376,233 @@ void Document::evaluate_media_queries_and_report_changes()
     }
 
     // Also not in the spec, but this is as good a place as any to evaluate @media rules!
+    evaluate_media_rules();
+}
+
+void Document::evaluate_media_rules()
+{
+    bool any_media_queries_changed_match_state = false;
     for (auto& style_sheet : style_sheets().sheets()) {
-        style_sheet.evaluate_media_queries(window());
+        if (style_sheet.evaluate_media_queries(window()))
+            any_media_queries_changed_match_state = true;
     }
+
+    if (any_media_queries_changed_match_state) {
+        style_computer().invalidate_rule_cache();
+        invalidate_style();
+    }
+}
+
+NonnullRefPtr<DOMImplementation> Document::implementation() const
+{
+    return *m_implementation;
+}
+
+bool Document::has_focus() const
+{
+    // FIXME: Return whether we actually have focus.
+    return true;
+}
+
+void Document::set_parser(Badge<HTML::HTMLParser>, HTML::HTMLParser& parser)
+{
+    m_parser = parser;
+}
+
+void Document::detach_parser(Badge<HTML::HTMLParser>)
+{
+    m_parser = nullptr;
+}
+
+// https://www.w3.org/TR/xml/#NT-NameStartChar
+static bool is_valid_name_start_character(u32 code_point)
+{
+    return code_point == ':'
+        || (code_point >= 'A' && code_point <= 'Z')
+        || code_point == '_'
+        || (code_point >= 'a' && code_point <= 'z')
+        || (code_point >= 0xc0 && code_point <= 0xd6)
+        || (code_point >= 0xd8 && code_point <= 0xf6)
+        || (code_point >= 0xf8 && code_point <= 0x2ff)
+        || (code_point >= 0x370 && code_point <= 0x37d)
+        || (code_point >= 0x37f && code_point <= 0x1fff)
+        || (code_point >= 0x200c && code_point <= 0x200d)
+        || (code_point >= 0x2070 && code_point <= 0x218f)
+        || (code_point >= 0x2c00 && code_point <= 0x2fef)
+        || (code_point >= 0x3001 && code_point <= 0xD7ff)
+        || (code_point >= 0xf900 && code_point <= 0xfdcf)
+        || (code_point >= 0xfdf0 && code_point <= 0xfffd)
+        || (code_point >= 0x10000 && code_point <= 0xeffff);
+}
+
+// https://www.w3.org/TR/xml/#NT-NameChar
+static inline bool is_valid_name_character(u32 code_point)
+{
+    return is_valid_name_start_character(code_point)
+        || code_point == '-'
+        || code_point == '.'
+        || (code_point >= '0' && code_point <= '9')
+        || code_point == 0xb7
+        || (code_point >= 0x300 && code_point <= 0x36f)
+        || (code_point >= 0x203f && code_point <= 0x2040);
+}
+
+bool Document::is_valid_name(String const& name)
+{
+    if (name.is_empty())
+        return false;
+
+    if (!is_valid_name_start_character(name[0]))
+        return false;
+
+    for (size_t i = 1; i < name.length(); ++i) {
+        if (!is_valid_name_character(name[i]))
+            return false;
+    }
+
+    return true;
+}
+
+// https://dom.spec.whatwg.org/#validate
+ExceptionOr<Document::PrefixAndTagName> Document::validate_qualified_name(String const& qualified_name)
+{
+    if (qualified_name.is_empty())
+        return InvalidCharacterError::create("Empty string is not a valid qualified name.");
+
+    Utf8View utf8view { qualified_name };
+    if (!utf8view.validate())
+        return InvalidCharacterError::create("Invalid qualified name.");
+
+    Optional<size_t> colon_offset;
+
+    bool at_start_of_name = true;
+
+    for (auto it = utf8view.begin(); it != utf8view.end(); ++it) {
+        auto code_point = *it;
+        if (code_point == ':') {
+            if (colon_offset.has_value())
+                return InvalidCharacterError::create("More than one colon (:) in qualified name.");
+            colon_offset = utf8view.byte_offset_of(it);
+            at_start_of_name = true;
+            continue;
+        }
+        if (at_start_of_name) {
+            if (!is_valid_name_start_character(code_point))
+                return InvalidCharacterError::create("Invalid start of qualified name.");
+            at_start_of_name = false;
+            continue;
+        }
+        if (!is_valid_name_character(code_point))
+            return InvalidCharacterError::create("Invalid character in qualified name.");
+    }
+
+    if (!colon_offset.has_value())
+        return Document::PrefixAndTagName {
+            .prefix = {},
+            .tag_name = qualified_name,
+        };
+
+    if (*colon_offset == 0)
+        return InvalidCharacterError::create("Qualified name can't start with colon (:).");
+
+    if (*colon_offset >= (qualified_name.length() - 1))
+        return InvalidCharacterError::create("Qualified name can't end with colon (:).");
+
+    return Document::PrefixAndTagName {
+        .prefix = qualified_name.substring_view(0, *colon_offset),
+        .tag_name = qualified_name.substring_view(*colon_offset + 1),
+    };
+}
+
+// https://dom.spec.whatwg.org/#dom-document-createnodeiterator
+NonnullRefPtr<NodeIterator> Document::create_node_iterator(Node& root, unsigned what_to_show, RefPtr<NodeFilter> filter)
+{
+    return NodeIterator::create(root, what_to_show, move(filter));
+}
+
+// https://dom.spec.whatwg.org/#dom-document-createtreewalker
+NonnullRefPtr<TreeWalker> Document::create_tree_walker(Node& root, unsigned what_to_show, RefPtr<NodeFilter> filter)
+{
+    return TreeWalker::create(root, what_to_show, move(filter));
+}
+
+void Document::register_node_iterator(Badge<NodeIterator>, NodeIterator& node_iterator)
+{
+    auto result = m_node_iterators.set(&node_iterator);
+    VERIFY(result == AK::HashSetResult::InsertedNewEntry);
+}
+
+void Document::unregister_node_iterator(Badge<NodeIterator>, NodeIterator& node_iterator)
+{
+    bool was_removed = m_node_iterators.remove(&node_iterator);
+    VERIFY(was_removed);
+}
+
+void Document::increment_number_of_things_delaying_the_load_event(Badge<DocumentLoadEventDelayer>)
+{
+    ++m_number_of_things_delaying_the_load_event;
+
+    if (auto* page = this->page())
+        page->client().page_did_update_resource_count(m_number_of_things_delaying_the_load_event);
+}
+
+void Document::decrement_number_of_things_delaying_the_load_event(Badge<DocumentLoadEventDelayer>)
+{
+    VERIFY(m_number_of_things_delaying_the_load_event);
+    --m_number_of_things_delaying_the_load_event;
+
+    if (auto* page = this->page())
+        page->client().page_did_update_resource_count(m_number_of_things_delaying_the_load_event);
+}
+
+void Document::invalidate_stacking_context_tree()
+{
+    if (auto* paint_box = this->paint_box())
+        const_cast<Painting::PaintableBox*>(paint_box)->invalidate_stacking_context();
+}
+
+void Document::check_favicon_after_loading_link_resource()
+{
+    // https://html.spec.whatwg.org/multipage/links.html#rel-icon
+    // NOTE: firefox also load favicons outside the head tag, which is against spec (see table 4.6.7)
+    auto head_element = head();
+    auto favicon_link_elements = HTMLCollection::create(*head_element, [](Element const& element) {
+        if (!is<HTML::HTMLLinkElement>(element))
+            return false;
+
+        return static_cast<HTML::HTMLLinkElement const&>(element).has_loaded_icon();
+    });
+
+    if (favicon_link_elements->length() == 0) {
+        dbgln_if(SPAM_DEBUG, "No favicon found to be used");
+        return;
+    }
+
+    // 4.6.7.8 Link type "icon"
+    //
+    // If there are multiple equally appropriate icons, user agents must use the last one declared
+    // in tree order at the time that the user agent collected the list of icons.
+    //
+    // If multiple icons are provided, the user agent must select the most appropriate icon
+    // according to the type, media, and sizes attributes.
+    //
+    // FIXME: There is no selective behavior yet for favicons.
+    for (auto i = favicon_link_elements->length(); i-- > 0;) {
+        auto favicon_element = favicon_link_elements->item(i);
+
+        if (favicon_element == m_active_element)
+            return;
+
+        // If the user agent tries to use an icon but that icon is determined, upon closer examination,
+        // to in fact be inappropriate (...), then the user agent must try the next-most-appropriate icon
+        // as determined by the attributes.
+        if (static_cast<HTML::HTMLLinkElement*>(favicon_element)->load_favicon_and_use_if_window_is_active()) {
+            m_active_favicon = favicon_element;
+            return;
+        }
+    }
+
+    dbgln_if(SPAM_DEBUG, "No favicon found to be used");
 }
 
 }

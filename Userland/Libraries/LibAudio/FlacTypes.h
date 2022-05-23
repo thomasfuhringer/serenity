@@ -1,12 +1,13 @@
 /*
- * Copyright (c) 2021, kleines Filmröllchen <malu.bertsch@gmail.com>
+ * Copyright (c) 2021, kleines Filmröllchen <filmroellchen@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #pragma once
 
-#include "Buffer.h"
+#include "Queue.h"
+#include "SampleFormats.h"
 #include <AK/ByteBuffer.h>
 #include <AK/Types.h>
 #include <AK/Variant.h>
@@ -21,7 +22,7 @@ namespace Audio {
 #define FLAC_SAMPLERATE_AT_END_OF_HEADER_16X10 0xfffffffd
 
 // Metadata block type, 7 bits.
-enum FlacMetadataBlockType : u8 {
+enum class FlacMetadataBlockType : u8 {
     STREAMINFO = 0,     // Important data about the audio format
     PADDING = 1,        // Non-data block to be ignored
     APPLICATION = 2,    // Ignored
@@ -33,7 +34,7 @@ enum FlacMetadataBlockType : u8 {
 };
 
 // follows FLAC codes
-enum FlacFrameChannelType : u8 {
+enum class FlacFrameChannelType : u8 {
     Mono = 0,
     Stereo = 1,
     StereoCenter = 2,    // left, right, center
@@ -49,7 +50,7 @@ enum FlacFrameChannelType : u8 {
 };
 
 // follows FLAC codes
-enum FlacSubframeType : u8 {
+enum class FlacSubframeType : u8 {
     Constant = 0,
     Verbatim = 1,
     Fixed = 0b001000,
@@ -58,7 +59,7 @@ enum FlacSubframeType : u8 {
 };
 
 // follows FLAC codes
-enum FlacResidualMode : u8 {
+enum class FlacResidualMode : u8 {
     Rice4Bit = 0,
     Rice5Bit = 1,
 };
@@ -85,6 +86,12 @@ struct FlacSubframeHeader {
     u8 order;
     u8 wasted_bits_per_sample;
     u8 bits_per_sample;
+};
+
+struct FlacSeekPoint {
+    u64 sample_index;
+    u64 byte_offset;
+    u16 num_samples;
 };
 
 }

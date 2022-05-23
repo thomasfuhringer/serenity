@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2021, Idan Horowitz <idan.horowitz@serenityos.org>
- * Copyright (c) 2021, Linus Groh <linusg@serenityos.org>
+ * Copyright (c) 2021-2022, Linus Groh <linusg@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -62,8 +62,8 @@ ThrowCompletionOr<Value> await(GlobalObject& global_object, Value value)
         return js_undefined();
     };
 
-    // 4. Let onFulfilled be ! CreateBuiltinFunction(fulfilledClosure, 1, "", « »).
-    auto on_fulfilled = NativeFunction::create(global_object, "", move(fulfilled_closure));
+    // 4. Let onFulfilled be CreateBuiltinFunction(fulfilledClosure, 1, "", « »).
+    auto* on_fulfilled = NativeFunction::create(global_object, move(fulfilled_closure), 1, "");
 
     // 5. Let rejectedClosure be a new Abstract Closure with parameters (reason) that captures asyncContext and performs the following steps when called:
     auto rejected_closure = [&success, &result](VM& vm, GlobalObject&) -> ThrowCompletionOr<Value> {
@@ -86,10 +86,10 @@ ThrowCompletionOr<Value> await(GlobalObject& global_object, Value value)
         return js_undefined();
     };
 
-    // 6. Let onRejected be ! CreateBuiltinFunction(rejectedClosure, 1, "", « »).
-    auto on_rejected = NativeFunction::create(global_object, "", move(rejected_closure));
+    // 6. Let onRejected be CreateBuiltinFunction(rejectedClosure, 1, "", « »).
+    auto* on_rejected = NativeFunction::create(global_object, move(rejected_closure), 1, "");
 
-    // 7. Perform ! PerformPromiseThen(promise, onFulfilled, onRejected).
+    // 7. Perform PerformPromiseThen(promise, onFulfilled, onRejected).
     auto* promise = verify_cast<Promise>(promise_object);
     promise->perform_then(on_fulfilled, on_rejected, {});
 
@@ -98,13 +98,13 @@ ThrowCompletionOr<Value> await(GlobalObject& global_object, Value value)
     //        running all queued promise jobs.
     // Note: This is not used by LibJS itself, and is performed for the embedder (i.e. LibWeb).
     if (Core::EventLoop::has_been_instantiated())
-        Core::EventLoop::current().spin_until([&] { return promise->state() != Promise::State::Pending; });
+        Core::EventLoop::current().spin_until([&] { return success.has_value(); });
 
     // 8. Remove asyncContext from the execution context stack and restore the execution context that is at the top of the execution context stack as the running execution context.
     // NOTE: Since we don't push any EC, this step is not performed.
 
-    // 9. Set the code evaluation state of asyncContext such that when evaluation is resumed with a Completion completion, the following steps of the algorithm that invoked Await will be performed, with completion available.
-    // 10. Return.
+    // 9. Set the code evaluation state of asyncContext such that when evaluation is resumed with a Completion Record completion, the following steps of the algorithm that invoked Await will be performed, with completion available.
+    // 10. Return NormalCompletion(unused).
     // 11. NOTE: This returns to the evaluation of the operation that had most previously resumed evaluation of asyncContext.
 
     vm.run_queued_promise_jobs();

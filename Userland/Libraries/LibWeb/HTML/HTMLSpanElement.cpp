@@ -8,13 +8,11 @@
 
 namespace Web::HTML {
 
-HTMLSpanElement::HTMLSpanElement(DOM::Document& document, QualifiedName qualified_name)
+HTMLSpanElement::HTMLSpanElement(DOM::Document& document, DOM::QualifiedName qualified_name)
     : HTMLElement(document, move(qualified_name))
 {
 }
 
-HTMLSpanElement::~HTMLSpanElement()
-{
-}
+HTMLSpanElement::~HTMLSpanElement() = default;
 
 }

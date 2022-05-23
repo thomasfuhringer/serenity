@@ -2,6 +2,7 @@
  * Copyright (c) 2019-2020, Andrew Kaster <akaster@serenityos.org>
  * Copyright (c) 2020, Itamar S. <itamar8910@gmail.com>
  * Copyright (c) 2021, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2022, Daniel Bertalan <dani@danielbertalan.dev>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -26,7 +27,7 @@
 #include <unistd.h>
 
 #ifndef __serenity__
-static void* mmap_with_name(void* addr, size_t length, int prot, int flags, int fd, off_t offset, const char*)
+static void* mmap_with_name(void* addr, size_t length, int prot, int flags, int fd, off_t offset, char const*)
 {
     return mmap(addr, length, prot, flags, fd, offset);
 }
@@ -36,7 +37,7 @@ static void* mmap_with_name(void* addr, size_t length, int prot, int flags, int 
 
 namespace ELF {
 
-Result<NonnullRefPtr<DynamicLoader>, DlErrorMessage> DynamicLoader::try_create(int fd, String filename)
+Result<NonnullRefPtr<DynamicLoader>, DlErrorMessage> DynamicLoader::try_create(int fd, String filename, String filepath)
 {
     struct stat stat;
     if (fstat(fd, &stat) < 0) {
@@ -48,20 +49,21 @@ Result<NonnullRefPtr<DynamicLoader>, DlErrorMessage> DynamicLoader::try_create(i
     if (size < sizeof(ElfW(Ehdr)))
         return DlErrorMessage { String::formatted("File {} has invalid ELF header", filename) };
 
-    String file_mmap_name = String::formatted("ELF_DYN: {}", filename);
-    auto* data = mmap_with_name(nullptr, size, PROT_READ, MAP_PRIVATE, fd, 0, file_mmap_name.characters());
+    String file_mmap_name = String::formatted("ELF_DYN: {}", filepath);
+    auto* data = mmap_with_name(nullptr, size, PROT_READ, MAP_SHARED, fd, 0, file_mmap_name.characters());
     if (data == MAP_FAILED) {
         return DlErrorMessage { "DynamicLoader::try_create mmap" };
     }
 
-    auto loader = adopt_ref(*new DynamicLoader(fd, move(filename), data, size));
+    auto loader = adopt_ref(*new DynamicLoader(fd, move(filename), data, size, filepath));
     if (!loader->is_valid())
         return DlErrorMessage { "ELF image validation failed" };
     return loader;
 }
 
-DynamicLoader::DynamicLoader(int fd, String filename, void* data, size_t size)
+DynamicLoader::DynamicLoader(int fd, String filename, void* data, size_t size, String filepath)
     : m_filename(move(filename))
+    , m_filepath(move(filepath))
     , m_file_size(size)
     , m_image_fd(fd)
     , m_file_data(data)
@@ -86,7 +88,7 @@ DynamicLoader::~DynamicLoader()
     }
 }
 
-const DynamicObject& DynamicLoader::dynamic_object() const
+DynamicObject const& DynamicLoader::dynamic_object() const
 {
     if (!m_cached_dynamic_object) {
         VirtualAddress dynamic_section_address;
@@ -122,7 +124,8 @@ bool DynamicLoader::validate()
     auto* elf_header = (ElfW(Ehdr)*)m_file_data;
     if (!validate_elf_header(*elf_header, m_file_size))
         return false;
-    if (!validate_program_headers(*elf_header, m_file_size, (u8*)m_file_data, m_file_size, &m_program_interpreter))
+    auto result_or_error = validate_program_headers(*elf_header, m_file_size, { m_file_data, m_file_size });
+    if (result_or_error.is_error() || !result_or_error.value())
         return false;
     return true;
 }
@@ -160,6 +163,7 @@ bool DynamicLoader::load_stage_2(unsigned flags)
     VERIFY(flags & RTLD_GLOBAL);
 
     if (m_dynamic_object->has_text_relocations()) {
+        dbgln("\033[33mWarning:\033[0m Dynamic object {} has text relocations", m_dynamic_object->filename());
         for (auto& text_segment : m_text_segments) {
             VERIFY(text_segment.address().get() != 0);
 
@@ -173,6 +177,15 @@ bool DynamicLoader::load_stage_2(unsigned flags)
 
             if (0 > mprotect(text_segment.address().as_ptr(), text_segment.size(), PROT_READ | PROT_WRITE)) {
                 perror("mprotect .text: PROT_READ | PROT_WRITE"); // FIXME: dlerror?
+                return false;
+            }
+        }
+    } else {
+        // .text needs to be executable while we process relocations because it might contain IFUNC resolvers.
+        // We don't allow IFUNC resolvers in objects with textrels.
+        for (auto& text_segment : m_text_segments) {
+            if (mprotect(text_segment.address().as_ptr(), text_segment.size(), PROT_READ | PROT_EXEC) < 0) {
+                perror("mprotect .text: PROT_READ | PROT_EXEC");
                 return false;
             }
         }
@@ -195,6 +208,8 @@ void DynamicLoader::do_main_relocations()
             break;
         }
     };
+
+    do_relr_relocations();
     m_dynamic_object->relocation_section().for_each_relocation(do_single_relocation);
     m_dynamic_object->plt_relocation_section().for_each_relocation(do_single_relocation);
 }
@@ -207,9 +222,12 @@ Result<NonnullRefPtr<DynamicObject>, DlErrorMessage> DynamicLoader::load_stage_3
             setup_plt_trampoline();
     }
 
-    for (auto& text_segment : m_text_segments) {
-        if (mprotect(text_segment.address().as_ptr(), text_segment.size(), PROT_READ | PROT_EXEC) < 0) {
-            return DlErrorMessage { String::formatted("mprotect .text: PROT_READ | PROT_EXEC: {}", strerror(errno)) };
+    if (m_dynamic_object->has_text_relocations()) {
+        // If we don't have textrels, .text has already been made executable by this point in load_stage_2.
+        for (auto& text_segment : m_text_segments) {
+            if (mprotect(text_segment.address().as_ptr(), text_segment.size(), PROT_READ | PROT_EXEC) < 0) {
+                return DlErrorMessage { String::formatted("mprotect .text: PROT_READ | PROT_EXEC: {}", strerror(errno)) };
+            }
         }
     }
 
@@ -219,7 +237,7 @@ Result<NonnullRefPtr<DynamicObject>, DlErrorMessage> DynamicLoader::load_stage_3
         }
 
 #ifdef __serenity__
-        if (set_mmap_name(m_relro_segment_address.as_ptr(), m_relro_segment_size, String::formatted("{}: .relro", m_filename).characters()) < 0) {
+        if (set_mmap_name(m_relro_segment_address.as_ptr(), m_relro_segment_size, String::formatted("{}: .relro", m_filepath).characters()) < 0) {
             return DlErrorMessage { String::formatted("set_mmap_name .relro: {}", strerror(errno)) };
         }
 #endif
@@ -235,7 +253,7 @@ void DynamicLoader::load_stage_4()
 
 void DynamicLoader::do_lazy_relocations()
 {
-    for (const auto& relocation : m_unresolved_relocations) {
+    for (auto const& relocation : m_unresolved_relocations) {
         if (auto res = do_relocation(relocation, ShouldInitializeWeak::Yes); res != RelocationResult::Success) {
             dbgln("Loader.so: {} unresolved symbol '{}'", m_filename, relocation.symbol().name());
             VERIFY_NOT_REACHED();
@@ -253,7 +271,7 @@ void DynamicLoader::load_program_headers()
 
     VirtualAddress dynamic_region_desired_vaddr;
 
-    m_elf_image.for_each_program_header([&](const Image::ProgramHeader& program_header) {
+    m_elf_image.for_each_program_header([&](Image::ProgramHeader const& program_header) {
         ProgramHeaderRegion region {};
         region.set_program_header(program_header.raw_header());
         if (region.is_tls_template()) {
@@ -292,8 +310,10 @@ void DynamicLoader::load_program_headers()
     int reservation_mmap_flags = MAP_ANON | MAP_PRIVATE | MAP_NORESERVE;
     if (m_elf_image.is_dynamic())
         reservation_mmap_flags |= MAP_RANDOMIZED;
+#ifdef MAP_FIXED_NOREPLACE
     else
-        reservation_mmap_flags |= MAP_FIXED;
+        reservation_mmap_flags |= MAP_FIXED_NOREPLACE;
+#endif
 
     // First, we make a dummy reservation mapping, in order to allocate enough VM
     // to hold all regions contiguously in the address space.
@@ -309,6 +329,8 @@ void DynamicLoader::load_program_headers()
         VERIFY_NOT_REACHED();
     }
 
+    VERIFY(requested_load_address == nullptr || reservation == requested_load_address);
+
     m_base_address = VirtualAddress { reservation };
 
     // Then we unmap the reservation.
@@ -323,7 +345,7 @@ void DynamicLoader::load_program_headers()
         FlatPtr ph_end = ph_base + round_up_to_power_of_two(region.size_in_memory() + region.desired_load_address().get() - ph_base, PAGE_SIZE);
 
         StringBuilder builder;
-        builder.append(m_filename);
+        builder.append(m_filepath);
         if (region.is_executable())
             builder.append(": .text");
         else
@@ -375,7 +397,7 @@ void DynamicLoader::load_program_headers()
             MAP_ANONYMOUS | MAP_PRIVATE | MAP_FIXED,
             0,
             0,
-            String::formatted("{}: .data", m_filename).characters());
+            String::formatted("{}: .data", m_filepath).characters());
 
         if (MAP_FAILED == data_segment) {
             perror("mmap writable");
@@ -404,6 +426,10 @@ DynamicLoader::RelocationResult DynamicLoader::do_relocation(const ELF::DynamicO
     else
         patch_ptr = (FlatPtr*)(FlatPtr)relocation.offset();
 
+    auto call_ifunc_resolver = [](VirtualAddress address) {
+        return VirtualAddress { reinterpret_cast<DynamicObject::IfuncResolver>(address.get())() };
+    };
+
     switch (relocation.type()) {
 #if ARCH(I386)
     case R_386_NONE:
@@ -431,6 +457,8 @@ DynamicLoader::RelocationResult DynamicLoader::do_relocation(const ELF::DynamicO
             *patch_ptr = symbol_address.get() + relocation.addend();
         else
             *patch_ptr += symbol_address.get();
+        if (res.value().type == STT_GNU_IFUNC)
+            *patch_ptr = call_ifunc_resolver(VirtualAddress { *patch_ptr }).get();
         break;
     }
 #if ARCH(I386)
@@ -460,8 +488,16 @@ DynamicLoader::RelocationResult DynamicLoader::do_relocation(const ELF::DynamicO
             }
 
             symbol_location = VirtualAddress { (FlatPtr)0 };
-        } else
+        } else {
             symbol_location = res.value().address;
+            if (res.value().type == STT_GNU_IFUNC) {
+                if (res.value().dynamic_object != nullptr && res.value().dynamic_object->has_text_relocations()) {
+                    dbgln("\033[31mError:\033[0m Refusing to call IFUNC resolver defined in an object with text relocations.");
+                    return RelocationResult::Failed;
+                }
+                symbol_location = call_ifunc_resolver(symbol_location);
+            }
+        }
         VERIFY(symbol_location != m_dynamic_object->base_address());
         *patch_ptr = symbol_location.get();
         break;
@@ -493,6 +529,7 @@ DynamicLoader::RelocationResult DynamicLoader::do_relocation(const ELF::DynamicO
             auto res = lookup_symbol(symbol);
             if (!res.has_value())
                 break;
+            VERIFY(symbol.type() != STT_GNU_IFUNC);
             symbol_value = res.value().value;
             dynamic_object_of_symbol = res.value().dynamic_object;
         } else {
@@ -522,12 +559,39 @@ DynamicLoader::RelocationResult DynamicLoader::do_relocation(const ELF::DynamicO
         }
         break;
     }
+#if ARCH(I386)
+    case R_386_IRELATIVE: {
+#else
+    case R_X86_64_IRELATIVE: {
+#endif
+        VirtualAddress resolver;
+        if (relocation.addend_used())
+            resolver = m_dynamic_object->base_address().offset(relocation.addend());
+        else
+            resolver = m_dynamic_object->base_address().offset(*patch_ptr);
+
+        if (m_dynamic_object->has_text_relocations()) {
+            dbgln("\033[31mError:\033[0m Refusing to call IFUNC resolver defined in an object with text relocations.");
+            return RelocationResult::Failed;
+        }
+
+        *patch_ptr = call_ifunc_resolver(resolver).get();
+        break;
+    }
     default:
         // Raise the alarm! Someone needs to implement this relocation type
         dbgln("Found a new exciting relocation type {}", relocation.type());
         VERIFY_NOT_REACHED();
     }
     return RelocationResult::Success;
+}
+
+void DynamicLoader::do_relr_relocations()
+{
+    auto base_address = m_dynamic_object->base_address().get();
+    m_dynamic_object->for_each_relr_relocation([base_address](FlatPtr address) {
+        *(FlatPtr*)address += base_address;
+    });
 }
 
 ssize_t DynamicLoader::negative_offset_from_tls_block_end(ssize_t tls_offset, size_t value_of_symbol) const
@@ -540,7 +604,7 @@ ssize_t DynamicLoader::negative_offset_from_tls_block_end(ssize_t tls_offset, si
 
 void DynamicLoader::copy_initial_tls_data_into(ByteBuffer& buffer) const
 {
-    const u8* tls_data = nullptr;
+    u8 const* tls_data = nullptr;
     size_t tls_size_in_image = 0;
 
     m_elf_image.for_each_program_header([this, &tls_data, &tls_size_in_image](ELF::Image::ProgramHeader program_header) {
@@ -620,7 +684,7 @@ Optional<DynamicObject::SymbolLookupResult> DynamicLoader::lookup_symbol(const E
     if (symbol.is_undefined() || symbol.bind() == STB_WEAK)
         return DynamicLinker::lookup_global_symbol(symbol.name());
 
-    return DynamicObject::SymbolLookupResult { symbol.value(), symbol.size(), symbol.address(), symbol.bind(), &symbol.object() };
+    return DynamicObject::SymbolLookupResult { symbol.value(), symbol.size(), symbol.address(), symbol.bind(), symbol.type(), &symbol.object() };
 }
 
 } // end namespace ELF

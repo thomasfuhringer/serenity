@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2018-2021, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2022, the SerenityOS developers.
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -30,10 +31,6 @@ AbstractButton::AbstractButton(String text)
     REGISTER_BOOL_PROPERTY("checked", is_checked, set_checked);
     REGISTER_BOOL_PROPERTY("checkable", is_checkable, set_checkable);
     REGISTER_BOOL_PROPERTY("exclusive", is_exclusive, set_exclusive);
-}
-
-AbstractButton::~AbstractButton()
-{
 }
 
 void AbstractButton::set_text(String text)
@@ -221,13 +218,13 @@ void AbstractButton::keyup_event(KeyEvent& event)
     Widget::keyup_event(event);
 }
 
-void AbstractButton::paint_text(Painter& painter, const Gfx::IntRect& rect, const Gfx::Font& font, Gfx::TextAlignment text_alignment, Gfx::TextWrapping text_wrapping)
+void AbstractButton::paint_text(Painter& painter, Gfx::IntRect const& rect, Gfx::Font const& font, Gfx::TextAlignment text_alignment, Gfx::TextWrapping text_wrapping)
 {
     auto clipped_rect = rect.intersected(this->rect());
 
     if (!is_enabled()) {
-        painter.draw_text(clipped_rect.translated(1, 1), text(), font, text_alignment, Color::White, Gfx::TextElision::Right, text_wrapping);
-        painter.draw_text(clipped_rect, text(), font, text_alignment, Color::from_rgb(0x808080), Gfx::TextElision::Right, text_wrapping);
+        painter.draw_text(clipped_rect.translated(1, 1), text(), font, text_alignment, palette().disabled_text_back(), Gfx::TextElision::Right, text_wrapping);
+        painter.draw_text(clipped_rect, text(), font, text_alignment, palette().disabled_text_front(), Gfx::TextElision::Right, text_wrapping);
         return;
     }
 

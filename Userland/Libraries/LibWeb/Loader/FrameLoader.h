@@ -39,9 +39,11 @@ private:
     virtual void resource_did_load() override;
     virtual void resource_did_fail() override;
 
-    void load_error_page(const AK::URL& failed_url, const String& error_message);
+    void load_error_page(const AK::URL& failed_url, String const& error_message);
     void load_favicon(RefPtr<Gfx::Bitmap> bitmap = nullptr);
-    bool parse_document(DOM::Document&, const ByteBuffer& data);
+    bool parse_document(DOM::Document&, ByteBuffer const& data);
+
+    void store_response_cookies(AK::URL const& url, String const& cookies);
 
     HTML::BrowsingContext& m_browsing_context;
     size_t m_redirects_count { 0 };

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2021, Sam Atkins <atkinssj@serenityos.org>
+ * Copyright (c) 2021-2022, Sam Atkins <atkinssj@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -9,16 +9,12 @@
 #include <LibWeb/CSS/CSSMediaRule.h>
 #include <LibWeb/CSS/CSSRuleList.h>
 #include <LibWeb/CSS/CSSSupportsRule.h>
-#include <LibWeb/DOM/ExceptionOr.h>
+#include <LibWeb/CSS/Parser/Parser.h>
 
 namespace Web::CSS {
 
 CSSRuleList::CSSRuleList(NonnullRefPtrVector<CSSRule>&& rules)
     : m_rules(move(rules))
-{
-}
-
-CSSRuleList::~CSSRuleList()
 {
 }
 
@@ -30,7 +26,7 @@ bool CSSRuleList::is_supported_property_index(u32 index) const
 }
 
 // https://www.w3.org/TR/cssom/#insert-a-css-rule
-DOM::ExceptionOr<unsigned> CSSRuleList::insert_a_css_rule(NonnullRefPtr<CSSRule> rule, u32 index)
+DOM::ExceptionOr<unsigned> CSSRuleList::insert_a_css_rule(Variant<StringView, NonnullRefPtr<CSSRule>> rule, u32 index)
 {
     // 1. Set length to the number of items in list.
     auto length = m_rules.size();
@@ -39,16 +35,27 @@ DOM::ExceptionOr<unsigned> CSSRuleList::insert_a_css_rule(NonnullRefPtr<CSSRule>
     if (index > length)
         return DOM::IndexSizeError::create("CSS rule index out of bounds.");
 
-    // NOTE: These steps don't apply since we're receiving a parsed rule.
     // 3. Set new rule to the results of performing parse a CSS rule on argument rule.
+    // NOTE: The insert-a-css-rule spec expects `rule` to be a string, but the CSSStyleSheet.insertRule()
+    //       spec calls this algorithm with an already-parsed CSSRule. So, we use a Variant and skip step 3
+    //       if that variant holds a CSSRule already.
+    RefPtr<CSSRule> new_rule;
+    if (rule.has<StringView>()) {
+        new_rule = parse_css_rule(CSS::Parser::ParsingContext {}, rule.get<StringView>());
+    } else {
+        new_rule = rule.get<NonnullRefPtr<CSSRule>>();
+    }
+
     // 4. If new rule is a syntax error, throw a SyntaxError exception.
+    if (!new_rule)
+        return DOM::SyntaxError::create("Unable to parse CSS rule.");
 
     // FIXME: 5. If new rule cannot be inserted into list at the zero-index position index due to constraints specified by CSS, then throw a HierarchyRequestError exception. [CSS21]
 
     // FIXME: 6. If new rule is an @namespace at-rule, and list contains anything other than @import at-rules, and @namespace at-rules, throw an InvalidStateError exception.
 
     // 7. Insert new rule into list at the zero-indexed position index.
-    m_rules.insert(index, move(rule));
+    m_rules.insert(index, new_rule.release_nonnull());
 
     // 8. Return index.
     return index;
@@ -73,64 +80,74 @@ DOM::ExceptionOr<void> CSSRuleList::remove_a_css_rule(u32 index)
     // 5. Remove rule old rule from list at the zero-indexed position index.
     m_rules.remove(index);
 
-    // FIXME: 6. Set old rule’s parent CSS rule and parent CSS style sheet to null.
+    // 6. Set old rule’s parent CSS rule and parent CSS style sheet to null.
+    old_rule.set_parent_rule(nullptr);
+    old_rule.set_parent_style_sheet(nullptr);
 
     return {};
 }
 
 void CSSRuleList::for_each_effective_style_rule(Function<void(CSSStyleRule const&)> const& callback) const
 {
-    for (auto& rule : m_rules) {
+    for (auto const& rule : m_rules) {
         switch (rule.type()) {
-        case CSSRule::Type::Style:
-            callback(verify_cast<CSSStyleRule>(rule));
+        case CSSRule::Type::FontFace:
             break;
         case CSSRule::Type::Import: {
-            auto const& import_rule = verify_cast<CSSImportRule>(rule);
+            auto const& import_rule = static_cast<CSSImportRule const&>(rule);
             if (import_rule.has_import_result())
                 import_rule.loaded_style_sheet()->for_each_effective_style_rule(callback);
             break;
         }
         case CSSRule::Type::Media:
-            verify_cast<CSSMediaRule>(rule).for_each_effective_style_rule(callback);
+            static_cast<CSSMediaRule const&>(rule).for_each_effective_style_rule(callback);
+            break;
+        case CSSRule::Type::Style:
+            callback(static_cast<CSSStyleRule const&>(rule));
             break;
         case CSSRule::Type::Supports:
-            verify_cast<CSSSupportsRule>(rule).for_each_effective_style_rule(callback);
+            static_cast<CSSSupportsRule const&>(rule).for_each_effective_style_rule(callback);
             break;
-        case CSSRule::Type::__Count:
-            VERIFY_NOT_REACHED();
         }
     }
 }
 
-void CSSRuleList::evaluate_media_queries(DOM::Window const& window)
+bool CSSRuleList::evaluate_media_queries(HTML::Window const& window)
 {
+    bool any_media_queries_changed_match_state = false;
+
     for (auto& rule : m_rules) {
         switch (rule.type()) {
-        case CSSRule::Type::Style:
+        case CSSRule::Type::FontFace:
             break;
         case CSSRule::Type::Import: {
             auto& import_rule = verify_cast<CSSImportRule>(rule);
-            if (import_rule.has_import_result())
-                import_rule.loaded_style_sheet()->evaluate_media_queries(window);
+            if (import_rule.has_import_result() && import_rule.loaded_style_sheet()->evaluate_media_queries(window))
+                any_media_queries_changed_match_state = true;
             break;
         }
         case CSSRule::Type::Media: {
             auto& media_rule = verify_cast<CSSMediaRule>(rule);
-            if (media_rule.evaluate(window))
-                media_rule.css_rules().evaluate_media_queries(window);
+            bool did_match = media_rule.condition_matches();
+            bool now_matches = media_rule.evaluate(window);
+            if (did_match != now_matches)
+                any_media_queries_changed_match_state = true;
+            if (now_matches && media_rule.css_rules().evaluate_media_queries(window))
+                any_media_queries_changed_match_state = true;
             break;
         }
+        case CSSRule::Type::Style:
+            break;
         case CSSRule::Type::Supports: {
             auto& supports_rule = verify_cast<CSSSupportsRule>(rule);
-            if (supports_rule.condition_matches())
-                supports_rule.css_rules().evaluate_media_queries(window);
+            if (supports_rule.condition_matches() && supports_rule.css_rules().evaluate_media_queries(window))
+                any_media_queries_changed_match_state = true;
             break;
         }
-        case CSSRule::Type::__Count:
-            VERIFY_NOT_REACHED();
         }
     }
+
+    return any_media_queries_changed_match_state;
 }
 
 }

@@ -34,7 +34,7 @@ public:
         return adopt_ref(*new MediaQueryList(document, move(media_queries)));
     }
 
-    virtual ~MediaQueryList() override;
+    virtual ~MediaQueryList() override = default;
 
     String media() const;
     bool matches() const;
@@ -45,16 +45,16 @@ public:
     virtual void unref_event_target() override { unref(); }
     virtual JS::Object* create_wrapper(JS::GlobalObject&) override;
 
-    void add_listener(RefPtr<DOM::EventListener> listener);
-    void remove_listener(RefPtr<DOM::EventListener> listener);
+    void add_listener(RefPtr<DOM::IDLEventListener> listener);
+    void remove_listener(RefPtr<DOM::IDLEventListener> listener);
 
-    void set_onchange(HTML::EventHandler);
-    HTML::EventHandler onchange();
+    void set_onchange(Optional<Bindings::CallbackType>);
+    Bindings::CallbackType* onchange();
 
 private:
     MediaQueryList(DOM::Document&, NonnullRefPtrVector<MediaQuery>&&);
 
-    DOM::Document& m_document;
+    WeakPtr<DOM::Document> m_document;
     NonnullRefPtrVector<MediaQuery> m_media;
 };
 

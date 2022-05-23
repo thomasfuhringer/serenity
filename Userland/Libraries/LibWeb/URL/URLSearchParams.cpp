@@ -12,13 +12,13 @@
 
 namespace Web::URL {
 
-String url_encode(const Vector<QueryParam>& pairs, AK::URL::PercentEncodeSet percent_encode_set)
+String url_encode(Vector<QueryParam> const& pairs, AK::URL::PercentEncodeSet percent_encode_set)
 {
     StringBuilder builder;
     for (size_t i = 0; i < pairs.size(); ++i) {
-        builder.append(AK::URL::percent_encode(pairs[i].name, percent_encode_set));
+        builder.append(AK::URL::percent_encode(pairs[i].name, percent_encode_set, AK::URL::SpaceAsPlus::Yes));
         builder.append('=');
-        builder.append(AK::URL::percent_encode(pairs[i].value, percent_encode_set));
+        builder.append(AK::URL::percent_encode(pairs[i].value, percent_encode_set, AK::URL::SpaceAsPlus::Yes));
         if (i != pairs.size() - 1)
             builder.append('&');
     }
@@ -66,24 +66,57 @@ Vector<QueryParam> url_decode(StringView input)
     return output;
 }
 
-DOM::ExceptionOr<NonnullRefPtr<URLSearchParams>> URLSearchParams::create_with_global_object(Bindings::WindowObject&, String const& init)
+// https://url.spec.whatwg.org/#dom-urlsearchparams-urlsearchparams
+// https://url.spec.whatwg.org/#urlsearchparams-initialize
+DOM::ExceptionOr<NonnullRefPtr<URLSearchParams>> URLSearchParams::create_with_global_object(Bindings::WindowObject&, Variant<Vector<Vector<String>>, OrderedHashMap<String, String>, String> const& init)
 {
     // 1. If init is a string and starts with U+003F (?), then remove the first code point from init.
-    StringView stripped_init = init.substring_view(init.starts_with('?'));
+    // NOTE: We do this when we know that it's a string on step 3 of initialization.
+
     // 2. Initialize this with init.
 
     // URLSearchParams init from this point forward
 
-    // TODO
     // 1. If init is a sequence, then for each pair in init:
-    // a. If pair does not contain exactly two items, then throw a TypeError.
-    // b. Append a new name-value pair whose name is pair’s first item, and value is pair’s second item, to query’s list.
+    if (init.has<Vector<Vector<String>>>()) {
+        auto const& init_sequence = init.get<Vector<Vector<String>>>();
 
-    // TODO
+        Vector<QueryParam> list;
+        list.ensure_capacity(init_sequence.size());
+
+        for (auto const& pair : init_sequence) {
+            // a. If pair does not contain exactly two items, then throw a TypeError.
+            if (pair.size() != 2)
+                return DOM::SimpleException { DOM::SimpleExceptionType::TypeError, String::formatted("Expected only 2 items in pair, got {}", pair.size()) };
+
+            // b. Append a new name-value pair whose name is pair’s first item, and value is pair’s second item, to query’s list.
+            list.append(QueryParam { .name = pair[0], .value = pair[1] });
+        }
+
+        return URLSearchParams::create(move(list));
+    }
+
     // 2. Otherwise, if init is a record, then for each name → value of init, append a new name-value pair whose name is name and value is value, to query’s list.
+    if (init.has<OrderedHashMap<String, String>>()) {
+        auto const& init_record = init.get<OrderedHashMap<String, String>>();
+
+        Vector<QueryParam> list;
+        list.ensure_capacity(init_record.size());
+
+        for (auto const& pair : init_record)
+            list.append(QueryParam { .name = pair.key, .value = pair.value });
+
+        return URLSearchParams::create(move(list));
+    }
 
     // 3. Otherwise:
     // a. Assert: init is a string.
+    // NOTE: `get` performs `VERIFY(has<T>())`
+    auto const& init_string = init.get<String>();
+
+    // See NOTE at the start of this function.
+    StringView stripped_init = init_string.substring_view(init_string.starts_with('?'));
+
     // b. Set query’s list to the result of parsing init.
     return URLSearchParams::create(url_decode(stripped_init));
 }
@@ -152,7 +185,7 @@ bool URLSearchParams::has(String const& name)
                 .is_end();
 }
 
-void URLSearchParams::set(const String& name, const String& value)
+void URLSearchParams::set(String const& name, String const& value)
 {
     // 1. If this’s list contains any name-value pairs whose name is name, then set the value of the first such name-value pair to value and remove the others.
     auto existing = m_list.find_if([&name](auto& entry) {

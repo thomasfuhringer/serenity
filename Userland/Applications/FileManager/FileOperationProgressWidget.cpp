@@ -18,7 +18,7 @@
 
 namespace FileManager {
 
-FileOperationProgressWidget::FileOperationProgressWidget(FileOperation operation, NonnullRefPtr<Core::File> helper_pipe)
+FileOperationProgressWidget::FileOperationProgressWidget(FileOperation operation, NonnullOwnPtr<Core::Stream::BufferedFile> helper_pipe, int helper_pipe_fd)
     : m_operation(operation)
     , m_helper_pipe(move(helper_pipe))
 {
@@ -26,7 +26,6 @@ FileOperationProgressWidget::FileOperationProgressWidget(FileOperation operation
 
     auto& button = *find_descendant_of_type_named<GUI::Button>("button");
 
-    // FIXME: Show a different animation for deletions
     auto& file_copy_animation = *find_descendant_of_type_named<GUI::ImageWidget>("file_copy_animation");
     file_copy_animation.load_from_file("/res/graphics/file-flying-animation.gif");
     file_copy_animation.animate();
@@ -35,7 +34,15 @@ FileOperationProgressWidget::FileOperationProgressWidget(FileOperation operation
     source_folder_icon.load_from_file("/res/icons/32x32/filetype-folder-open.png");
 
     auto& destination_folder_icon = *find_descendant_of_type_named<GUI::ImageWidget>("destination_folder_icon");
-    destination_folder_icon.load_from_file("/res/icons/32x32/filetype-folder-open.png");
+
+    switch (m_operation) {
+    case FileOperation::Delete:
+        destination_folder_icon.load_from_file("/res/icons/32x32/recycle-bin.png");
+        break;
+    default:
+        destination_folder_icon.load_from_file("/res/icons/32x32/filetype-folder-open.png");
+        break;
+    }
 
     button.on_click = [this](auto) {
         close_pipe();
@@ -62,13 +69,16 @@ FileOperationProgressWidget::FileOperationProgressWidget(FileOperation operation
         VERIFY_NOT_REACHED();
     }
 
-    m_notifier = Core::Notifier::construct(m_helper_pipe->fd(), Core::Notifier::Read);
+    m_notifier = Core::Notifier::construct(helper_pipe_fd, Core::Notifier::Read);
     m_notifier->on_ready_to_read = [this] {
-        auto line = m_helper_pipe->read_line();
-        if (line.is_null()) {
+        auto line_buffer = ByteBuffer::create_zeroed(1 * KiB).release_value_but_fixme_should_propagate_errors();
+        auto line_or_error = m_helper_pipe->read_line(line_buffer.bytes());
+        if (line_or_error.is_error() || line_or_error.value().is_empty()) {
             did_error("Read from pipe returned null."sv);
             return;
         }
+
+        auto line = line_or_error.release_value();
 
         auto parts = line.split_view(' ');
         VERIFY(!parts.is_empty());

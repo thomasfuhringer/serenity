@@ -18,6 +18,7 @@
 #include <AK/Tuple.h>
 #include <LibCore/DirIterator.h>
 #include <LibCore/File.h>
+#include <LibCore/Stream.h>
 #include <LibJS/Bytecode/Interpreter.h>
 #include <LibJS/Interpreter.h>
 #include <LibJS/Lexer.h>
@@ -89,15 +90,25 @@
 #define TEST_ROOT(path) \
     String Test::JS::g_test_root_fragment = path
 
-#define TESTJS_RUN_FILE_FUNCTION(...)                                                       \
-    struct __TestJS_run_file {                                                              \
-        __TestJS_run_file()                                                                 \
-        {                                                                                   \
-            ::Test::JS::g_run_file = hook;                                                  \
-        }                                                                                   \
-        static ::Test::JS::IntermediateRunFileResult hook(const String&, JS::Interpreter&); \
-    } __testjs_common_run_file {};                                                          \
+#define TESTJS_RUN_FILE_FUNCTION(...)                                                                              \
+    struct __TestJS_run_file {                                                                                     \
+        __TestJS_run_file()                                                                                        \
+        {                                                                                                          \
+            ::Test::JS::g_run_file = hook;                                                                         \
+        }                                                                                                          \
+        static ::Test::JS::IntermediateRunFileResult hook(String const&, JS::Interpreter&, JS::ExecutionContext&); \
+    } __testjs_common_run_file {};                                                                                 \
     ::Test::JS::IntermediateRunFileResult __TestJS_run_file::hook(__VA_ARGS__)
+
+#define TESTJS_CREATE_INTERPRETER_HOOK(...)               \
+    struct __TestJS_create_interpreter_hook {             \
+        __TestJS_create_interpreter_hook()                \
+        {                                                 \
+            ::Test::JS::g_create_interpreter_hook = hook; \
+        }                                                 \
+        static NonnullOwnPtr<JS::Interpreter> hook();     \
+    } __testjs_create_interpreter_hook {};                \
+    NonnullOwnPtr<JS::Interpreter> __TestJS_create_interpreter_hook::hook(__VA_ARGS__)
 
 namespace Test::JS {
 
@@ -107,14 +118,15 @@ template<typename... Args>
 static consteval size_t __testjs_count(Args...) { return sizeof...(Args); }
 
 template<auto... Values>
-static consteval size_t __testjs_last() { return (AK::Detail::IntegralConstant<size_t, Values> {}, ...).value; }
+static consteval size_t __testjs_last()
+{
+    Array values { Values... };
+    return values[values.size() - 1U];
+}
 
 static constexpr auto TOP_LEVEL_TEST_NAME = "__$$TOP_LEVEL$$__";
 extern RefPtr<JS::VM> g_vm;
 extern bool g_collect_on_every_allocation;
-#ifdef JS_TRACK_ZOMBIE_CELLS
-extern bool g_zombify_dead_cells;
-#endif
 extern bool g_run_bytecode;
 extern String g_currently_running_test;
 struct FunctionWithLength {
@@ -127,6 +139,7 @@ extern String g_test_root;
 extern int g_test_argc;
 extern char** g_test_argv;
 extern Function<void()> g_main_hook;
+extern Function<NonnullOwnPtr<JS::Interpreter>()> g_create_interpreter_hook;
 extern HashMap<bool*, Tuple<String, String, char>> g_extra_args;
 
 struct ParserError {
@@ -151,12 +164,12 @@ enum class RunFileHookResult {
 };
 
 using IntermediateRunFileResult = AK::Result<JSFileResult, RunFileHookResult>;
-extern IntermediateRunFileResult (*g_run_file)(const String&, JS::Interpreter&);
+extern IntermediateRunFileResult (*g_run_file)(String const&, JS::Interpreter&, JS::ExecutionContext&);
 
 class TestRunner : public ::Test::TestRunner {
 public:
-    TestRunner(String test_root, String common_path, bool print_times, bool print_progress, bool print_json)
-        : ::Test::TestRunner(move(test_root), print_times, print_progress, print_json)
+    TestRunner(String test_root, String common_path, bool print_times, bool print_progress, bool print_json, bool detailed_json)
+        : ::Test::TestRunner(move(test_root), print_times, print_progress, print_json, detailed_json)
         , m_common_path(move(common_path))
     {
         g_test_root = m_test_root;
@@ -165,13 +178,12 @@ public:
     virtual ~TestRunner() = default;
 
 protected:
-    virtual void do_run_single_test(const String& test_path, size_t, size_t) override;
+    virtual void do_run_single_test(String const& test_path, size_t, size_t) override;
     virtual Vector<String> get_test_paths() const override;
-    virtual JSFileResult run_file_test(const String& test_path);
-    void print_file_result(const JSFileResult& file_result) const;
+    virtual JSFileResult run_file_test(String const& test_path);
+    void print_file_result(JSFileResult const& file_result) const;
 
     String m_common_path;
-    RefPtr<JS::Script> m_test_script;
 };
 
 class TestRunnerGlobalObject final : public JS::GlobalObject {
@@ -199,14 +211,20 @@ inline void TestRunnerGlobalObject::initialize_global_object()
 
 inline ByteBuffer load_entire_file(StringView path)
 {
-    auto file_or_error = Core::File::open(path, Core::OpenMode::ReadOnly);
-    if (file_or_error.is_error()) {
-        warnln("Failed to open the following file: \"{}\"", path);
+    auto try_load_entire_file = [](StringView const& path) -> ErrorOr<ByteBuffer> {
+        auto file = TRY(Core::Stream::File::open(path, Core::Stream::OpenMode::Read));
+        auto file_size = TRY(file->size());
+        auto content = TRY(ByteBuffer::create_uninitialized(file_size));
+        TRY(file->read(content.bytes()));
+        return content;
+    };
+
+    auto buffer_or_error = try_load_entire_file(path);
+    if (buffer_or_error.is_error()) {
+        warnln("Failed to open the following file: \"{}\", error: {}", path, buffer_or_error.release_error());
         cleanup_and_exit();
     }
-
-    auto file = file_or_error.release_value();
-    return file->read_all();
+    return buffer_or_error.release_value();
 }
 
 inline AK::Result<NonnullRefPtr<JS::Script>, ParserError> parse_script(StringView path, JS::Realm& realm)
@@ -235,29 +253,28 @@ inline AK::Result<NonnullRefPtr<JS::SourceTextModule>, ParserError> parse_module
     return script_or_errors.release_value();
 }
 
-inline Optional<JsonValue> get_test_results(JS::Interpreter& interpreter)
+inline ErrorOr<JsonValue> get_test_results(JS::Interpreter& interpreter)
 {
     auto results = MUST(interpreter.global_object().get("__TestResults__"));
-    auto json_string = TRY_OR_DISCARD(JS::JSONObject::stringify_impl(interpreter.global_object(), results, JS::js_undefined(), JS::js_undefined()));
+    auto json_string = MUST(JS::JSONObject::stringify_impl(interpreter.global_object(), results, JS::js_undefined(), JS::js_undefined()));
 
-    auto json = JsonValue::from_string(json_string);
-    if (json.is_error())
-        return {};
-
-    return json.value();
+    return JsonValue::from_string(json_string);
 }
 
-inline void TestRunner::do_run_single_test(const String& test_path, size_t, size_t)
+inline void TestRunner::do_run_single_test(String const& test_path, size_t, size_t)
 {
     auto file_result = run_file_test(test_path);
     if (!m_print_json)
         print_file_result(file_result);
+
+    if (needs_detailed_suites())
+        ensure_suites().extend(file_result.suites);
 }
 
 inline Vector<String> TestRunner::get_test_paths() const
 {
     Vector<String> paths;
-    iterate_directory_recursively(m_test_root, [&](const String& file_path) {
+    iterate_directory_recursively(m_test_root, [&](String const& file_path) {
         if (!file_path.ends_with(".js"))
             return;
         if (!file_path.ends_with("test-common.js"))
@@ -267,7 +284,7 @@ inline Vector<String> TestRunner::get_test_paths() const
     return paths;
 }
 
-inline JSFileResult TestRunner::run_file_test(const String& test_path)
+inline JSFileResult TestRunner::run_file_test(String const& test_path)
 {
     g_currently_running_test = test_path;
 
@@ -279,17 +296,21 @@ inline JSFileResult TestRunner::run_file_test(const String& test_path)
     double start_time = get_time_in_ms();
     auto interpreter = JS::Interpreter::create<TestRunnerGlobalObject>(*g_vm);
 
+    // Since g_vm is reused for each new interpreter, Interpreter::create will end up pushing multiple
+    // global execution contexts onto the VM's execution context stack. To prevent this, we immediately
+    // pop the global execution context off the execution context stack and manually handle pushing
+    // and popping it. Since the global execution context should be the only thing on the stack
+    // at interpreter creation, let's assert there is only one.
+    VERIFY(g_vm->execution_context_stack().size() == 1);
+    auto& global_execution_context = *g_vm->execution_context_stack().take_first();
+
     // FIXME: This is a hack while we're refactoring Interpreter/VM stuff.
     JS::VM::InterpreterExecutionScope scope(*interpreter);
 
     interpreter->heap().set_should_collect_on_every_allocation(g_collect_on_every_allocation);
 
-#ifdef JS_TRACK_ZOMBIE_CELLS
-    interpreter->heap().set_zombify_dead_cells(g_zombify_dead_cells);
-#endif
-
     if (g_run_file) {
-        auto result = g_run_file(test_path, *interpreter);
+        auto result = g_run_file(test_path, *interpreter, global_execution_context);
         if (result.is_error() && result.error() == RunFileHookResult::SkipFile) {
             return {
                 test_path,
@@ -323,49 +344,51 @@ inline JSFileResult TestRunner::run_file_test(const String& test_path)
         }
     }
 
-    if (!m_test_script) {
-        auto result = parse_script(m_common_path, interpreter->realm());
-        if (result.is_error()) {
-            warnln("Unable to parse test-common.js");
-            warnln("{}", result.error().error.to_string());
-            warnln("{}", result.error().hint);
-            cleanup_and_exit();
-        }
-        m_test_script = result.release_value();
+    // FIXME: Since a new interpreter is created every time with a new realm, we no longer cache the test-common.js file as scripts are parsed for the current realm only.
+    //        Find a way to cache this.
+    auto result = parse_script(m_common_path, interpreter->realm());
+    if (result.is_error()) {
+        warnln("Unable to parse test-common.js");
+        warnln("{}", result.error().error.to_string());
+        warnln("{}", result.error().hint);
+        cleanup_and_exit();
     }
+    auto test_script = result.release_value();
 
     if (g_run_bytecode) {
-        auto executable = JS::Bytecode::Generator::generate(m_test_script->parse_node());
-        executable.name = test_path;
+        auto executable = MUST(JS::Bytecode::Generator::generate(test_script->parse_node()));
+        executable->name = test_path;
         if (JS::Bytecode::g_dump_bytecode)
-            executable.dump();
+            executable->dump();
         JS::Bytecode::Interpreter bytecode_interpreter(interpreter->global_object(), interpreter->realm());
-        TRY_OR_DISCARD(bytecode_interpreter.run(executable));
+        MUST(bytecode_interpreter.run(*executable));
     } else {
-        interpreter->run(interpreter->global_object(), m_test_script->parse_node());
+        g_vm->push_execution_context(global_execution_context);
+        MUST(interpreter->run(*test_script));
+        g_vm->pop_execution_context();
     }
-
-    VERIFY(!g_vm->exception());
 
     auto file_script = parse_script(test_path, interpreter->realm());
     if (file_script.is_error())
         return { test_path, file_script.error() };
     if (g_run_bytecode) {
-        auto executable = JS::Bytecode::Generator::generate(file_script.value()->parse_node());
-        executable.name = test_path;
-        if (JS::Bytecode::g_dump_bytecode)
-            executable.dump();
-        JS::Bytecode::Interpreter bytecode_interpreter(interpreter->global_object(), interpreter->realm());
-        TRY_OR_DISCARD(bytecode_interpreter.run(executable));
+        auto executable_result = JS::Bytecode::Generator::generate(file_script.value()->parse_node());
+        if (!executable_result.is_error()) {
+            auto executable = executable_result.release_value();
+            executable->name = test_path;
+            if (JS::Bytecode::g_dump_bytecode)
+                executable->dump();
+            JS::Bytecode::Interpreter bytecode_interpreter(interpreter->global_object(), interpreter->realm());
+            (void)bytecode_interpreter.run(*executable);
+        }
     } else {
-        interpreter->run(interpreter->global_object(), file_script.value()->parse_node());
+        g_vm->push_execution_context(global_execution_context);
+        (void)interpreter->run(file_script.value());
+        g_vm->pop_execution_context();
     }
 
-    if (g_vm->exception())
-        g_vm->clear_exception();
-
     auto test_json = get_test_results(*interpreter);
-    if (!test_json.has_value()) {
+    if (test_json.is_error()) {
         warnln("Received malformed JSON from test \"{}\"", test_path);
         cleanup_and_exit();
     }
@@ -381,13 +404,13 @@ inline JSFileResult TestRunner::run_file_test(const String& test_path)
         file_result.logged_messages.append(message.to_string_without_side_effects());
     }
 
-    test_json.value().as_object().for_each_member([&](const String& suite_name, const JsonValue& suite_value) {
-        Test::Suite suite { suite_name };
+    test_json.value().as_object().for_each_member([&](String const& suite_name, JsonValue const& suite_value) {
+        Test::Suite suite { test_path, suite_name };
 
         VERIFY(suite_value.is_object());
 
         suite_value.as_object().for_each_member([&](const String& test_name, const JsonValue& test_value) {
-            Test::Case test { test_name, Test::Result::Fail, "" };
+            Test::Case test { test_name, Test::Result::Fail, "", 0 };
 
             VERIFY(test_value.is_object());
             VERIFY(test_value.as_object().has("result"));
@@ -413,6 +436,8 @@ inline JSFileResult TestRunner::run_file_test(const String& test_path)
                 m_counts.tests_skipped++;
             }
 
+            test.duration_us = test_value.as_object().get("duration").to_u64(0);
+
             suite.tests.append(test);
         });
 
@@ -436,7 +461,7 @@ inline JSFileResult TestRunner::run_file_test(const String& test_path)
     return file_result;
 }
 
-inline void TestRunner::print_file_result(const JSFileResult& file_result) const
+inline void TestRunner::print_file_result(JSFileResult const& file_result) const
 {
     if (file_result.most_severe_test_result == Test::Result::Fail || file_result.error.has_value()) {
         print_modifiers({ BG_RED, FG_BLACK, FG_BOLD });

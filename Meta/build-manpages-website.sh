@@ -69,7 +69,7 @@ for d in output/*/; do
         2) section_title="System Calls";;
         3) section_title="Library Functions";;
         4) section_title="Special Files";;
-        5) section_title="User Programs";;
+        5) section_title="File Formats";;
         6) section_title="Games";; # TODO: Populate this section
         7) section_title="Miscellanea";;
         8) section_title="Sysadmin Tools";;
@@ -97,6 +97,20 @@ pandoc -f gfm -t html5 -s \
     --metadata title="SerenityOS man pages" \
     -o output/index.html \
     Meta/Websites/man.serenityos.org/index.md
+pandoc -f gfm -t html5 -s \
+    -B Meta/Websites/man.serenityos.org/banner-preamble.inc \
+    --metadata title="Can't run applications" \
+    -o output/cant-run-application.html \
+    Meta/Websites/man.serenityos.org/cant-run-application.md
 
 # Copy pre-made files
 cp Meta/Websites/man.serenityos.org/banner.png output/
+
+# Copy icons
+mkdir output/icons
+
+while read -r p; do
+  rsync -a --relative Base/res/icons/./"$p" output/icons/
+done < icons.txt
+
+rm icons.txt

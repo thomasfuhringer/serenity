@@ -24,14 +24,14 @@ struct Sample {
 };
 
 // HACK: needs to increase with device sample rate, but all of the sample_count stuff is static for now
-constexpr int sample_count = 1 << 12;
+constexpr int sample_count = 1 << 10;
 
 constexpr int buffer_size = sample_count * sizeof(Sample);
 
 constexpr double sample_rate = 44100;
 
 // Headroom for the synth
-constexpr double volume_factor = 0.1;
+constexpr double volume_factor = 0.8;
 
 enum Switch {
     Off,
@@ -160,7 +160,7 @@ constexpr int beats_per_bar = 4;
 constexpr int notes_per_beat = 4;
 constexpr int roll_length = (sample_rate / (beats_per_minute / 60)) * beats_per_bar;
 
-constexpr const char* note_names[] = {
+constexpr char const* note_names[] = {
     "C",
     "C#",
     "D",

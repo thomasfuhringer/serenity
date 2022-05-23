@@ -4,7 +4,6 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-#include <AK/String.h>
 #include <Kernel/Devices/KCOVInstance.h>
 
 namespace Kernel {
@@ -21,7 +20,7 @@ ErrorOr<void> KCOVInstance::buffer_allocate(size_t buffer_size_in_entries)
 
     // first entry contains index of last PC
     m_buffer_size_in_entries = buffer_size_in_entries - 1;
-    m_buffer_size_in_bytes = Memory::page_round_up(buffer_size_in_entries * KCOV_ENTRY_SIZE);
+    m_buffer_size_in_bytes = TRY(Memory::page_round_up(buffer_size_in_entries * KCOV_ENTRY_SIZE));
 
     // one single vmobject is representing the buffer
     // - we allocate one kernel region using that vmobject

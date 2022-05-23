@@ -1,11 +1,13 @@
 /*
  * Copyright (c) 2020, Itamar S. <itamar8910@gmail.com>
+ * Copyright (c) 2022, the SerenityOS developers.
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #pragma once
 
+#include <AK/ByteReader.h>
 #include <AK/HashMap.h>
 #include <AK/Noncopyable.h>
 #include <AK/OwnPtr.h>
@@ -15,13 +17,31 @@
 
 namespace Coredump {
 
+struct MemoryRegionInfo {
+    ELF::Core::NotesEntryHeader header;
+    uint64_t region_start;
+    uint64_t region_end;
+    uint16_t program_header_index;
+    StringView region_name;
+
+    StringView object_name() const
+    {
+        if (region_name.contains("Loader.so"))
+            return "Loader.so"sv;
+        auto maybe_colon_index = region_name.find(':');
+        if (!maybe_colon_index.has_value())
+            return {};
+        return region_name.substring_view(0, *maybe_colon_index);
+    }
+};
+
 class Reader {
     AK_MAKE_NONCOPYABLE(Reader);
     AK_MAKE_NONMOVABLE(Reader);
 
 public:
     static OwnPtr<Reader> create(StringView);
-    ~Reader();
+    ~Reader() = default;
 
     template<typename Func>
     void for_each_memory_region_info(Func func) const;
@@ -40,8 +60,8 @@ public:
     const ELF::Image& image() const { return m_coredump_image; }
 
     Optional<FlatPtr> peek_memory(FlatPtr address) const;
-    ELF::Core::MemoryRegionInfo const* first_region_for_object(StringView object_name) const;
-    const ELF::Core::MemoryRegionInfo* region_containing(FlatPtr address) const;
+    Optional<MemoryRegionInfo> first_region_for_object(StringView object_name) const;
+    Optional<MemoryRegionInfo> region_containing(FlatPtr address) const;
 
     struct LibraryData {
         String name;
@@ -49,7 +69,9 @@ public:
         NonnullRefPtr<Core::MappedFile> file;
         ELF::Image lib_elf;
     };
-    const LibraryData* library_containing(FlatPtr address) const;
+    LibraryData const* library_containing(FlatPtr address) const;
+
+    String resolve_object_path(StringView object_name) const;
 
     int process_pid() const;
     u8 process_termination_signal() const;
@@ -67,7 +89,7 @@ private:
 
     class NotesEntryIterator {
     public:
-        NotesEntryIterator(const u8* notes_data);
+        NotesEntryIterator(u8 const* notes_data);
 
         ELF::Core::NotesEntryHeader::Type type() const;
         const ELF::Core::NotesEntry* current() const;
@@ -77,7 +99,7 @@ private:
 
     private:
         const ELF::Core::NotesEntry* m_current { nullptr };
-        const u8* start { nullptr };
+        u8 const* start { nullptr };
     };
 
     // Private as we don't need anyone poking around in this JsonObject
@@ -100,10 +122,24 @@ private:
 template<typename Func>
 void Reader::for_each_memory_region_info(Func func) const
 {
-    for (NotesEntryIterator it((const u8*)m_coredump_image.program_header(m_notes_segment_index).raw_data()); !it.at_end(); it.next()) {
+    NotesEntryIterator it(bit_cast<u8 const*>(m_coredump_image.program_header(m_notes_segment_index).raw_data()));
+    for (; !it.at_end(); it.next()) {
         if (it.type() != ELF::Core::NotesEntryHeader::Type::MemoryRegionInfo)
             continue;
-        auto& memory_region_info = reinterpret_cast<const ELF::Core::MemoryRegionInfo&>(*it.current());
+        ELF::Core::MemoryRegionInfo raw_memory_region_info;
+        ReadonlyBytes raw_data {
+            it.current(),
+            sizeof(raw_memory_region_info),
+        };
+        ByteReader::load(raw_data.data(), raw_memory_region_info);
+
+        MemoryRegionInfo memory_region_info {
+            raw_memory_region_info.header,
+            raw_memory_region_info.region_start,
+            raw_memory_region_info.region_end,
+            raw_memory_region_info.program_header_index,
+            { bit_cast<char const*>(raw_data.offset_pointer(raw_data.size())) },
+        };
         IterationDecision decision = func(memory_region_info);
         if (decision == IterationDecision::Break)
             return;
@@ -113,10 +149,13 @@ void Reader::for_each_memory_region_info(Func func) const
 template<typename Func>
 void Reader::for_each_thread_info(Func func) const
 {
-    for (NotesEntryIterator it((const u8*)m_coredump_image.program_header(m_notes_segment_index).raw_data()); !it.at_end(); it.next()) {
+    NotesEntryIterator it(bit_cast<u8 const*>(m_coredump_image.program_header(m_notes_segment_index).raw_data()));
+    for (; !it.at_end(); it.next()) {
         if (it.type() != ELF::Core::NotesEntryHeader::Type::ThreadInfo)
             continue;
-        auto& thread_info = reinterpret_cast<const ELF::Core::ThreadInfo&>(*it.current());
+        ELF::Core::ThreadInfo thread_info;
+        ByteReader::load(bit_cast<u8 const*>(it.current()), thread_info);
+
         IterationDecision decision = func(thread_info);
         if (decision == IterationDecision::Break)
             return;

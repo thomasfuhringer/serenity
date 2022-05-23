@@ -1,13 +1,14 @@
 /*
- * Copyright (c) 2021, the SerenityOS developers.
+ * Copyright (c) 2021-2022, the SerenityOS developers.
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #include "FindDialog.h"
+#include <AK/Array.h>
 #include <AK/Hex.h>
 #include <AK/String.h>
-#include <AK/Vector.h>
+#include <AK/StringView.h>
 #include <Applications/HexEditor/FindDialogGML.h>
 #include <LibGUI/BoxLayout.h>
 #include <LibGUI/Button.h>
@@ -17,18 +18,20 @@
 #include <LibGUI/Widget.h>
 
 struct Option {
-    String title;
+    StringView title;
     OptionId opt;
     bool enabled;
     bool default_action;
 };
 
-static const Vector<Option> options = {
-    { "ASCII String", OPTION_ASCII_STRING, true, true },
-    { "Hex value", OPTION_HEX_VALUE, true, false },
+static constexpr Array<Option, 2> options = {
+    {
+        { "ASCII String", OPTION_ASCII_STRING, true, true },
+        { "Hex value", OPTION_HEX_VALUE, true, false },
+    }
 };
 
-int FindDialog::show(GUI::Window* parent_window, String& out_text, ByteBuffer& out_buffer, bool& find_all)
+GUI::Dialog::ExecResult FindDialog::show(GUI::Window* parent_window, String& out_text, ByteBuffer& out_buffer, bool& find_all)
 {
     auto dialog = FindDialog::construct();
 
@@ -43,7 +46,7 @@ int FindDialog::show(GUI::Window* parent_window, String& out_text, ByteBuffer& o
 
     auto result = dialog->exec();
 
-    if (result != GUI::Dialog::ExecOK)
+    if (result != ExecResult::OK)
         return result;
 
     auto selected_option = dialog->selected_option();
@@ -53,7 +56,7 @@ int FindDialog::show(GUI::Window* parent_window, String& out_text, ByteBuffer& o
 
     if (processed.is_error()) {
         GUI::MessageBox::show_error(parent_window, processed.error());
-        result = GUI::Dialog::ExecAborted;
+        result = ExecResult::Aborted;
     } else {
         out_buffer = move(processed.value());
     }
@@ -77,8 +80,8 @@ Result<ByteBuffer, String> FindDialog::process_input(String text_value, OptionId
 
     case OPTION_HEX_VALUE: {
         auto decoded = decode_hex(text_value.replace(" ", "", true));
-        if (!decoded.has_value())
-            return String("Input contains invalid hex values.");
+        if (decoded.is_error())
+            return String::formatted("Input is invalid: {}", decoded.error().string_literal());
 
         return decoded.value();
     }
@@ -135,7 +138,7 @@ FindDialog::FindDialog()
         auto text = m_text_editor->text();
         if (!text.is_empty()) {
             m_text_value = text;
-            done(ExecResult::ExecOK);
+            done(ExecResult::OK);
         }
     };
 
@@ -145,10 +148,6 @@ FindDialog::FindDialog()
     };
 
     m_cancel_button->on_click = [this](auto) {
-        done(ExecResult::ExecCancel);
+        done(ExecResult::Cancel);
     };
-}
-
-FindDialog::~FindDialog()
-{
 }

@@ -2,12 +2,13 @@ parameters:
   os: 'Linux'
   arch: 'i686'
   toolchain: 'gcc'
+  coverage: 'OFF'
   build_directory: ''
   ccache_version: 1 # Increment this number if CI has trouble with ccache.
   serenity_ccache_path: ''
   toolchain_ccache_path: ''
   toolchain_ccache_size: $(CCACHE_MAXSIZE)
-  with_unicode_caches: true
+  with_remote_data_caches: true
 
 steps:
   - script: |
@@ -18,13 +19,13 @@ steps:
     - ${{ if eq(parameters.toolchain, 'clang') }}:
       - task: Cache@2
         inputs:
-          key: '"toolchain" | "x86_64" | Toolchain/BuildClang.sh | Toolchain/Patches/*[!gcc].patch | Userland/Libraries/LibC/**/*.h | Userland/Libraries/LibPthread/**/*.h'
+          key: '"toolchain" | "x86_64" | Toolchain/BuildClang.sh | Toolchain/Patches/llvm/*.patch | Toolchain/CMake/*.cmake | Userland/Libraries/LibC/**/*.h | Userland/Libraries/LibPthread/**/*.h'
           path: $(Build.SourcesDirectory)/Toolchain/Cache
         displayName: 'Toolchain Prebuilt Cache'
     - ${{ if eq(parameters.toolchain, 'gcc') }}:
       - task: Cache@2
         inputs:
-          key: '"toolchain" | "${{ parameters.arch }}" | Toolchain/BuildIt.sh | Toolchain/Patches/*[!llvm].patch | Userland/Libraries/LibC/**/*.h | Userland/Libraries/LibPthread/**/*.h'
+          key: '"toolchain" | "${{ parameters.arch }}" | Toolchain/BuildIt.sh | Toolchain/Patches/binutils.patch | Toolchain/Patches/gcc/*.patch | Userland/Libraries/LibC/**/*.h | Userland/Libraries/LibPthread/**/*.h'
           path: $(Build.SourcesDirectory)/Toolchain/Cache
         displayName: 'Toolchain Prebuilt Cache'
 
@@ -45,9 +46,9 @@ steps:
   - ${{ if ne(parameters.serenity_ccache_path, '') }}:
     - task: Cache@2
       inputs:
-        key: '"ccache" | "${{ parameters.os }}" | "${{ parameters.arch }}" | "${{ parameters.toolchain }}" | "${{ parameters.ccache_version }}" | "$(timestamp)"'
+        key: '"ccache" | "${{ parameters.os }}" | "${{ parameters.arch }}" | "${{ parameters.toolchain }}" | "${{ parameters.coverage }}" | "${{ parameters.ccache_version }}" | "$(timestamp)"'
         restoreKeys: |
-          "ccache" | "${{ parameters.os }}" | "${{ parameters.arch }}" | "${{ parameters.toolchain }}" | "${{ parameters.ccache_version }}"
+          "ccache" | "${{ parameters.os }}" | "${{ parameters.arch }}" | "${{ parameters.toolchain }}" | "${{ parameters.coverage }}" | "${{ parameters.ccache_version }}"
         path: ${{ parameters.serenity_ccache_path }}
       displayName: 'Serenity Compiler Cache'
 
@@ -56,7 +57,13 @@ steps:
         CCACHE_DIR=${{ parameters.serenity_ccache_path }} ccache -s
       displayName: 'Configure Serenity ccache'
 
-  - ${{ if eq(parameters.with_unicode_caches, true) }}:
+  - ${{ if eq(parameters.with_remote_data_caches, true) }}:
+    - task: Cache@2
+      inputs:
+        key: '"time_zone_data" | Meta/CMake/time_zone_data.cmake'
+        path: $(Build.SourcesDirectory)/${{ parameters.build_directory }}/TZDB
+      displayName: 'TimeZoneData Cache'
+
     - task: Cache@2
       inputs:
         key: '"unicode_data" | Meta/CMake/unicode_data.cmake'

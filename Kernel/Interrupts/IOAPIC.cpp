@@ -25,7 +25,7 @@ enum DeliveryMode {
 
 UNMAP_AFTER_INIT IOAPIC::IOAPIC(PhysicalAddress address, u32 gsi_base)
     : m_address(address)
-    , m_regs(Memory::map_typed_writable<ioapic_mmio_regs>(m_address))
+    , m_regs(Memory::map_typed_writable<ioapic_mmio_regs>(m_address).release_value_but_fixme_should_propagate_errors())
     , m_gsi_base(gsi_base)
     , m_id((read_register(0x0) >> 24) & 0xFF)
     , m_version(read_register(0x1) & 0xFF)
@@ -102,7 +102,7 @@ bool IOAPIC::is_enabled() const
     return !is_hard_disabled();
 }
 
-void IOAPIC::spurious_eoi(const GenericInterruptHandler& handler) const
+void IOAPIC::spurious_eoi(GenericInterruptHandler const& handler) const
 {
     InterruptDisabler disabler;
     VERIFY(handler.type() == HandlerType::SpuriousInterruptHandler);
@@ -241,7 +241,7 @@ Optional<int> IOAPIC::find_redirection_entry_by_vector(u8 vector) const
     return {};
 }
 
-void IOAPIC::disable(const GenericInterruptHandler& handler)
+void IOAPIC::disable(GenericInterruptHandler const& handler)
 {
     InterruptDisabler disabler;
     VERIFY(!is_hard_disabled());
@@ -256,7 +256,7 @@ void IOAPIC::disable(const GenericInterruptHandler& handler)
     mask_redirection_entry(found_index.value());
 }
 
-void IOAPIC::enable(const GenericInterruptHandler& handler)
+void IOAPIC::enable(GenericInterruptHandler const& handler)
 {
     InterruptDisabler disabler;
     VERIFY(!is_hard_disabled());
@@ -271,7 +271,7 @@ void IOAPIC::enable(const GenericInterruptHandler& handler)
     unmask_redirection_entry(found_index.value());
 }
 
-void IOAPIC::eoi(const GenericInterruptHandler& handler) const
+void IOAPIC::eoi(GenericInterruptHandler const& handler) const
 {
     InterruptDisabler disabler;
     VERIFY(!is_hard_disabled());

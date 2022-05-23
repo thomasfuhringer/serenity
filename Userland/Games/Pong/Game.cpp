@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2020, the SerenityOS developers.
+ * Copyright (c) 2020-2022, the SerenityOS developers.
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -15,8 +15,10 @@ Game::Game()
     reset();
 }
 
-Game::~Game()
+void Game::reset_keys()
 {
+    m_up_key_held = false;
+    m_down_key_held = false;
 }
 
 void Game::reset_paddles()
@@ -40,7 +42,17 @@ void Game::reset_paddles()
 
 void Game::reset()
 {
+    if (m_game_over) {
+        m_game_over = false;
+        start_timer(16);
+    }
+
+    // Make sure the current ball disappears.
+    update(enclosing_int_rect(m_ball.rect()));
+
+    reset_scores();
     reset_ball(1);
+    reset_keys();
     reset_paddles();
 }
 
@@ -72,10 +84,12 @@ void Game::paint_event(GUI::PaintEvent& event)
 void Game::keyup_event(GUI::KeyEvent& event)
 {
     switch (event.key()) {
+    case Key_W:
     case Key_Up:
         m_up_key_held = false;
         m_player1_paddle.moving_up = false;
         break;
+    case Key_S:
     case Key_Down:
         m_down_key_held = false;
         m_player1_paddle.moving_down = false;
@@ -91,12 +105,14 @@ void Game::keydown_event(GUI::KeyEvent& event)
     case Key_Escape:
         GUI::Application::the()->quit();
         break;
+    case Key_W:
     case Key_Up:
         m_up_key_held = true;
         m_player1_paddle.moving_up = true;
         m_player1_paddle.moving_down = false;
         m_cursor_paddle_target_y.clear();
         break;
+    case Key_S:
     case Key_Down:
         m_down_key_held = true;
         m_player1_paddle.moving_up = false;
@@ -130,6 +146,16 @@ void Game::track_mouse_move(Gfx::IntPoint const& point)
     update(cursor_paddle_target_rect());
 }
 
+void Game::reset_scores()
+{
+    // Clearing the scores first would lead to overly narrow rects for multi-digit scores.
+    update(player_1_score_rect());
+    update(player_2_score_rect());
+
+    m_player_1_score = 0;
+    m_player_2_score = 0;
+}
+
 void Game::reset_ball(int serve_to_player)
 {
     int position_y_min = (game_width / 2) - 50;
@@ -148,7 +174,7 @@ void Game::reset_ball(int serve_to_player)
     m_ball.velocity = { velocity_x, velocity_y };
 }
 
-void Game::game_over(int winner)
+void Game::show_game_over_message(int winner)
 {
     GUI::MessageBox::show(window(), String::formatted("Player {} wins!", winner), "Pong", GUI::MessageBox::Type::Warning, GUI::MessageBox::InputType::OK);
 }
@@ -169,7 +195,8 @@ void Game::round_over(int winner)
     }
 
     if (m_player_1_score == m_score_to_win || m_player_2_score == m_score_to_win) {
-        game_over(winner);
+        m_game_over = true;
+        show_game_over_message(winner);
         return;
     }
 

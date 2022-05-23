@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2020, the SerenityOS developers.
+ * Copyright (c) 2020-2022, the SerenityOS developers.
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -25,7 +25,7 @@ class SheetGlobalObject final : public JS::GlobalObject {
 public:
     SheetGlobalObject(Sheet&);
 
-    virtual ~SheetGlobalObject() override;
+    virtual ~SheetGlobalObject() override = default;
 
     virtual JS::ThrowCompletionOr<bool> internal_has_property(JS::PropertyKey const& name) const override;
     virtual JS::ThrowCompletionOr<JS::Value> internal_get(JS::PropertyKey const&, JS::Value receiver) const override;
@@ -38,6 +38,7 @@ public:
     JS_DECLARE_NATIVE_FUNCTION(current_cell_position);
     JS_DECLARE_NATIVE_FUNCTION(column_index);
     JS_DECLARE_NATIVE_FUNCTION(column_arithmetic);
+    JS_DECLARE_NATIVE_FUNCTION(get_column_bound);
 
 private:
     virtual void visit_edges(Visitor&) override;
@@ -48,9 +49,9 @@ class WorkbookObject final : public JS::Object {
     JS_OBJECT(WorkbookObject, JS::Object);
 
 public:
-    WorkbookObject(Workbook&);
+    WorkbookObject(Workbook&, JS::GlobalObject&);
 
-    virtual ~WorkbookObject() override;
+    virtual ~WorkbookObject() override = default;
 
     virtual void initialize(JS::GlobalObject&) override;
 

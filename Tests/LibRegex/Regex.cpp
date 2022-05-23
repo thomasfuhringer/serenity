@@ -498,6 +498,8 @@ TEST_CASE(posix_extended_nested_capture_group)
     EXPECT_EQ(result.capture_group_matches[0][2].view, "llo"sv);
 }
 
+auto parse_test_case_long_disjunction_chain = String::repeated("a|"sv, 100000);
+
 TEST_CASE(ECMA262_parse)
 {
     struct _test {
@@ -506,7 +508,7 @@ TEST_CASE(ECMA262_parse)
         regex::ECMAScriptFlags flags {};
     };
 
-    constexpr _test tests[] {
+    _test const tests[] {
         { "^hello.$"sv },
         { "^(hello.)$"sv },
         { "^h{0,1}ello.$"sv },
@@ -591,6 +593,16 @@ TEST_CASE(ECMA262_parse)
         { "a{9007199254740991,9007199254740992}"sv, regex::Error::InvalidBraceContent },
         { "a{9007199254740992,9007199254740991}"sv, regex::Error::InvalidBraceContent },
         { "a{9007199254740992,9007199254740992}"sv, regex::Error::InvalidBraceContent },
+        { "(?<a>a)(?<a>b)"sv, regex::Error::DuplicateNamedCapture },
+        { "(?<a>a)(?<b>b)(?<a>c)"sv, regex::Error::DuplicateNamedCapture },
+        { "(?<1a>a)"sv, regex::Error::InvalidNameForCaptureGroup },
+        { "(?<\\a>a)"sv, regex::Error::InvalidNameForCaptureGroup },
+        { "(?<\ta>a)"sv, regex::Error::InvalidNameForCaptureGroup },
+        { "(?<$$_$$>a)"sv },
+        { "(?<ÿ>a)"sv },
+        { "(?<𝓑𝓻𝓸𝔀𝓷>a)"sv },
+        { "((?=lg)?[vl]k\\-?\\d{3}) bui| 3\\.[-\\w; ]{10}lg?-([06cv9]{3,4})"sv, regex::Error::NoError, ECMAScriptFlags::BrowserExtended }, // #12373, quantifiable assertions.
+        { parse_test_case_long_disjunction_chain.view() },                                                                                 // A whole lot of disjunctions, should not overflow the stack.
     };
 
     for (auto& test : tests) {
@@ -674,6 +686,10 @@ TEST_CASE(ECMA262_match)
         { "[\\0]"sv, "\0"sv, true, combine_flags(ECMAScriptFlags::Unicode, ECMAScriptFlags::BrowserExtended) },
         { "[\\01]"sv, "\1"sv, true, ECMAScriptFlags::BrowserExtended },
         { "(\0|a)"sv, "a"sv, true }, // #9686, Should allow null bytes in pattern
+        { "(.*?)a(?!(a+)b\\2c)\\2(.*)"sv, "baaabaac"sv, true }, // #6042, Groups inside lookarounds may be referenced outside, but their contents appear empty if the pattern in the lookaround fails.
+        { "a|$"sv, "x"sv, true, (ECMAScriptFlags)regex::AllFlags::Global }, // #11940, Global (not the 'g' flag) regexps should attempt to match the zero-length end of the string too.
+        { "foo\nbar"sv, "foo\nbar"sv, true }, // #12126, ECMA262 regexp should match literal newlines without the 's' flag.
+        { "foo[^]bar"sv, "foo\nbar"sv, true }, // #12126, ECMA262 regexp should match newline with [^].
     };
     // clang-format on
 
@@ -694,6 +710,13 @@ TEST_CASE(ECMA262_match)
 
 TEST_CASE(ECMA262_unicode_match)
 {
+    constexpr auto space_and_line_terminator_code_points = Array { 0x0009, 0x000A, 0x000B, 0x000C, 0x000D, 0x0020, 0x00A0, 0x1680, 0x2000, 0x2001, 0x2002, 0x2003, 0x2004, 0x2005, 0x2006, 0x2007, 0x2008, 0x2009, 0x200A, 0x2028, 0x2029, 0x202F, 0x205F, 0x3000, 0xFEFF };
+
+    StringBuilder builder;
+    for (u32 code_point : space_and_line_terminator_code_points)
+        builder.append_code_point(code_point);
+    auto space_and_line_terminators = builder.build();
+
     struct _test {
         StringView pattern;
         StringView subject;
@@ -717,6 +740,8 @@ TEST_CASE(ECMA262_unicode_match)
         { "(?<𝓑𝓻𝓸𝔀𝓷>brown)"sv, "brown"sv, true, ECMAScriptFlags::Unicode },
         { "(?<\\u{1d4d1}\\u{1d4fb}\\u{1d4f8}\\u{1d500}\\u{1d4f7}>brown)"sv, "brown"sv, true, ECMAScriptFlags::Unicode },
         { "(?<\\ud835\\udcd1\\ud835\\udcfb\\ud835\\udcf8\\ud835\\udd00\\ud835\\udcf7>brown)"sv, "brown"sv, true, ECMAScriptFlags::Unicode },
+        { "^\\s+$"sv, space_and_line_terminators },
+        { "^\\s+$"sv, space_and_line_terminators, true, ECMAScriptFlags::Unicode },
     };
 
     for (auto& test : tests) {
@@ -899,11 +924,17 @@ TEST_CASE(optimizer_atomic_groups)
         // Alternative fuse
         Tuple { "(abcfoo|abcbar|abcbaz).*x"sv, "abcbarx"sv, true },
         Tuple { "(a|a)"sv, "a"sv, true },
-        Tuple { "(a|)"sv, ""sv, true }, // Ensure that empty alternatives are not outright removed
+        Tuple { "(a|)"sv, ""sv, true },                   // Ensure that empty alternatives are not outright removed
+        Tuple { "a{2,3}|a{5,8}"sv, "abc"sv, false },      // Optimizer should not mess up the instruction stream by ignoring inter-insn dependencies, see #11247.
+        Tuple { "^(a{2,3}|a{5,8})$"sv, "aaaa"sv, false }, // Optimizer should not mess up the instruction stream by ignoring inter-insn dependencies, see #11247.
+        // Optimizer should not chop off *half* of an instruction when fusing instructions.
+        Tuple { "cubic-bezier\\(\\s*(-?\\d+\\.?\\d*|-?\\.\\d+)\\s*,\\s*(-?\\d+\\.?\\d*|-?\\.\\d+)\\s*,\\s*(-?\\d+\\.?\\d*|-?\\.\\d+)\\s*,\\s*(-?\\d+\\.?\\d*|-?\\.\\d+)\\s*\\)"sv, "cubic-bezier(.05, 0, 0, 1)"sv, true },
         // ForkReplace shouldn't be applied where it would change the semantics
         Tuple { "(1+)\\1"sv, "11"sv, true },
         Tuple { "(1+)1"sv, "11"sv, true },
         Tuple { "(1+)0"sv, "10"sv, true },
+        // Rewrite should not skip over first required iteration of <x>+.
+        Tuple { "a+"sv, ""sv, false },
     };
 
     for (auto& test : tests) {
@@ -929,6 +960,21 @@ TEST_CASE(optimizer_char_class_lut)
     // This will go through _all_ alternatives in the character class, and then fail.
     for (size_t i = 0; i < 1'000'000; ++i)
         EXPECT_EQ(re.match("1635488940000"sv).success, false);
+}
+
+TEST_CASE(optimizer_alternation)
+{
+    Array tests {
+        // Pattern, Subject, Expected length
+        Tuple { "a|"sv, "a"sv, 1u },
+    };
+
+    for (auto& test : tests) {
+        Regex<ECMA262> re(test.get<0>());
+        auto result = re.match(test.get<1>());
+        EXPECT(result.success);
+        EXPECT_EQ(result.matches.first().view.length(), test.get<2>());
+    }
 }
 
 TEST_CASE(posix_basic_dollar_is_end_anchor)
@@ -962,4 +1008,40 @@ TEST_CASE(posix_basic_dollar_is_literal)
         EXPECT_EQ(re.match("123abc$def", PosixFlags::Global).success, true);
         EXPECT_EQ(re.match("123abc$", PosixFlags::Global).success, true);
     }
+}
+
+TEST_CASE(negative_lookahead)
+{
+    {
+        // Negative lookahead with more than 2 forks difference between lookahead init and finish.
+        auto options = ECMAScriptOptions { ECMAScriptFlags::Global };
+        options.reset_flag((ECMAScriptFlags)regex::AllFlags::Internal_Stateful);
+        Regex<ECMA262> re(":(?!\\^\\)|1)", options);
+        EXPECT_EQ(re.match(":^)").success, false);
+        EXPECT_EQ(re.match(":1").success, false);
+        EXPECT_EQ(re.match(":foobar").success, true);
+    }
+}
+
+TEST_CASE(single_match_flag)
+{
+    {
+        // Ensure that only a single match is produced and nothing past that.
+        Regex<ECMA262> re("[\\u0008-\\uffff]"sv, ECMAScriptFlags::Global | (ECMAScriptFlags)regex::AllFlags::SingleMatch);
+        auto result = re.match("ABC");
+        EXPECT_EQ(result.success, true);
+        EXPECT_EQ(result.matches.size(), 1u);
+        EXPECT_EQ(result.matches.first().view.to_string(), "A"sv);
+    }
+}
+
+TEST_CASE(inversion_state_in_char_class)
+{
+    // #13755, /[\S\s]/.exec("hello") should be [ "h" ], not null.
+    Regex<ECMA262> re("[\\S\\s]", ECMAScriptFlags::Global | (ECMAScriptFlags)regex::AllFlags::SingleMatch);
+
+    auto result = re.match("hello");
+    EXPECT_EQ(result.success, true);
+    EXPECT_EQ(result.matches.size(), 1u);
+    EXPECT_EQ(result.matches.first().view.to_string(), "h"sv);
 }

@@ -61,6 +61,7 @@ namespace AttributeNames {
     __ENUMERATE_HTML_ATTRIBUTE(event)                      \
     __ENUMERATE_HTML_ATTRIBUTE(face)                       \
     __ENUMERATE_HTML_ATTRIBUTE(for_)                       \
+    __ENUMERATE_HTML_ATTRIBUTE(form)                       \
     __ENUMERATE_HTML_ATTRIBUTE(formnovalidate)             \
     __ENUMERATE_HTML_ATTRIBUTE(formtarget)                 \
     __ENUMERATE_HTML_ATTRIBUTE(frame)                      \
@@ -70,6 +71,7 @@ namespace AttributeNames {
     __ENUMERATE_HTML_ATTRIBUTE(hidden)                     \
     __ENUMERATE_HTML_ATTRIBUTE(href)                       \
     __ENUMERATE_HTML_ATTRIBUTE(hreflang)                   \
+    __ENUMERATE_HTML_ATTRIBUTE(hspace)                     \
     __ENUMERATE_HTML_ATTRIBUTE(http_equiv)                 \
     __ENUMERATE_HTML_ATTRIBUTE(id)                         \
     __ENUMERATE_HTML_ATTRIBUTE(imagesizes)                 \
@@ -167,12 +169,14 @@ namespace AttributeNames {
     __ENUMERATE_HTML_ATTRIBUTE(placeholder)                \
     __ENUMERATE_HTML_ATTRIBUTE(playsinline)                \
     __ENUMERATE_HTML_ATTRIBUTE(poster)                     \
+    __ENUMERATE_HTML_ATTRIBUTE(preload)                    \
     __ENUMERATE_HTML_ATTRIBUTE(readonly)                   \
     __ENUMERATE_HTML_ATTRIBUTE(rel)                        \
     __ENUMERATE_HTML_ATTRIBUTE(required)                   \
     __ENUMERATE_HTML_ATTRIBUTE(rev)                        \
     __ENUMERATE_HTML_ATTRIBUTE(reversed)                   \
     __ENUMERATE_HTML_ATTRIBUTE(rows)                       \
+    __ENUMERATE_HTML_ATTRIBUTE(rowspan)                    \
     __ENUMERATE_HTML_ATTRIBUTE(rules)                      \
     __ENUMERATE_HTML_ATTRIBUTE(scheme)                     \
     __ENUMERATE_HTML_ATTRIBUTE(scrolling)                  \
@@ -198,6 +202,7 @@ namespace AttributeNames {
     __ENUMERATE_HTML_ATTRIBUTE(valuetype)                  \
     __ENUMERATE_HTML_ATTRIBUTE(version)                    \
     __ENUMERATE_HTML_ATTRIBUTE(vlink)                      \
+    __ENUMERATE_HTML_ATTRIBUTE(vspace)                     \
     __ENUMERATE_HTML_ATTRIBUTE(width)                      \
     __ENUMERATE_HTML_ATTRIBUTE(wrap)
 

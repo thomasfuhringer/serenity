@@ -14,9 +14,14 @@ class SortingProxyModel
     : public Model
     , private ModelClient {
 public:
-    static NonnullRefPtr<SortingProxyModel> create(NonnullRefPtr<Model> source) { return adopt_ref(*new SortingProxyModel(move(source))); }
+    static ErrorOr<NonnullRefPtr<SortingProxyModel>> create(NonnullRefPtr<Model> source)
+    {
+        return adopt_nonnull_ref_or_enomem(new (nothrow) SortingProxyModel(move(source)));
+    }
+
     virtual ~SortingProxyModel() override;
 
+    virtual int tree_column() const override { return m_source->tree_column(); }
     virtual int row_count(ModelIndex const& = ModelIndex()) const override;
     virtual int column_count(ModelIndex const& = ModelIndex()) const override;
     virtual String column_name(int) const override;

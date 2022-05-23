@@ -1,6 +1,5 @@
 @GUI::Frame {
     fill_with_background_color: true
-
     layout: @GUI::VerticalBoxLayout {
         margins: [10]
         spacing: 5
@@ -9,7 +8,6 @@
     @GUI::GroupBox {
         title: "Cursor speed"
         fixed_height: 106
-
         layout: @GUI::VerticalBoxLayout {
             margins: [6]
             spacing: 2
@@ -23,7 +21,7 @@
             @GUI::Label {
                 fixed_width: 32
                 fixed_height: 32
-                name: "cursor_speed_image_label"
+                icon: "/res/graphics/mouse-cursor-speed.png"
             }
 
             @GUI::Label {
@@ -58,7 +56,6 @@
     @GUI::GroupBox {
         title: "Scroll wheel step size"
         fixed_height: 106
-
         layout: @GUI::VerticalBoxLayout {
             margins: [6]
             spacing: 2
@@ -72,7 +69,7 @@
             @GUI::Label {
                 fixed_width: 32
                 fixed_height: 32
-                name: "scroll_step_size_image_label"
+                icon: "/res/graphics/scroll-wheel-step-size.png"
             }
 
             @GUI::Label {
@@ -104,15 +101,13 @@
                 fixed_width: 100
             }
 
-            @GUI::Widget {
-            }
+            @GUI::Widget {}
         }
     }
 
     @GUI::GroupBox {
         title: "Double-click speed"
         fixed_height: 106
-
         layout: @GUI::VerticalBoxLayout {
             margins: [6]
             spacing: 2
@@ -162,7 +157,6 @@
     @GUI::GroupBox {
         title: "Button configuration"
         fixed_height: 68
-
         layout: @GUI::VerticalBoxLayout {
             margins: [16, 8, 8]
             spacing: 2
@@ -176,21 +170,13 @@
             @GUI::Label {
                 fixed_width: 32
                 fixed_height: 32
-                name: "switch_buttons_image_label"
-            }
-
-            @GUI::Label {
-                text: "Switch primary and secondary buttons"
-                fixed_width: 201
-                text_alignment: "CenterLeft"
-                name: "switch_buttons_label"
+                icon: "/res/graphics/switch-mouse-buttons.png"
             }
 
             @GUI::CheckBox {
                 name: "switch_buttons_input"
-                fixed_width: 14
-
+                text: "Switch primary and secondary buttons"
             }
         }
-    }    
+    }
 }

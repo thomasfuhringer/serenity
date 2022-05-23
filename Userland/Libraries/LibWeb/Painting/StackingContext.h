@@ -7,36 +7,47 @@
 #pragma once
 
 #include <AK/Vector.h>
+#include <LibGfx/Matrix4x4.h>
 #include <LibWeb/Layout/Node.h>
+#include <LibWeb/Painting/Paintable.h>
 
-namespace Web::Layout {
+namespace Web::Painting {
 
 class StackingContext {
 public:
-    StackingContext(Box&, StackingContext* parent);
+    StackingContext(Layout::Box&, StackingContext* parent);
 
     StackingContext* parent() { return m_parent; }
-    const StackingContext* parent() const { return m_parent; }
+    StackingContext const* parent() const { return m_parent; }
+
+    PaintableBox const& paintable() const { return *m_box.paint_box(); }
 
     enum class StackingContextPaintPhase {
         BackgroundAndBorders,
         Floats,
+        BackgroundAndBordersForInlineLevelAndReplaced,
         Foreground,
         FocusAndOverlay,
     };
 
-    void paint_descendants(PaintContext&, Node&, StackingContextPaintPhase);
-    void paint(PaintContext&);
-    HitTestResult hit_test(const Gfx::IntPoint&, HitTestType) const;
+    void paint_descendants(PaintContext&, Layout::Node&, StackingContextPaintPhase) const;
+    void paint(PaintContext&) const;
+    Optional<HitTestResult> hit_test(Gfx::FloatPoint const&, HitTestType) const;
 
     void dump(int indent = 0) const;
 
+    void sort();
+
 private:
-    Box& m_box;
+    Layout::Box& m_box;
     StackingContext* const m_parent { nullptr };
     Vector<StackingContext*> m_children;
 
-    void paint_internal(PaintContext&);
+    void paint_internal(PaintContext&) const;
+    Gfx::FloatMatrix4x4 get_transformation_matrix(CSS::Transformation const& transformation) const;
+    Gfx::FloatMatrix4x4 combine_transformations(Vector<CSS::Transformation> const& transformations) const;
+    Gfx::AffineTransform combine_transformations_2d(Vector<CSS::Transformation> const& transformations) const;
+    Gfx::FloatPoint transform_origin() const;
 };
 
 }

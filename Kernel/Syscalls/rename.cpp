@@ -10,10 +10,10 @@
 
 namespace Kernel {
 
-ErrorOr<FlatPtr> Process::sys$rename(Userspace<const Syscall::SC_rename_params*> user_params)
+ErrorOr<FlatPtr> Process::sys$rename(Userspace<Syscall::SC_rename_params const*> user_params)
 {
-    VERIFY_PROCESS_BIG_LOCK_ACQUIRED(this)
-    REQUIRE_PROMISE(cpath);
+    VERIFY_NO_PROCESS_BIG_LOCK(this)
+    TRY(require_promise(Pledge::cpath));
     auto params = TRY(copy_typed_from_user(user_params));
     auto old_path = TRY(get_syscall_path_argument(params.old_path));
     auto new_path = TRY(get_syscall_path_argument(params.new_path));

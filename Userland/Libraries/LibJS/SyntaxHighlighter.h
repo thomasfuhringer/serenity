@@ -12,14 +12,14 @@ namespace JS {
 
 class SyntaxHighlighter : public Syntax::Highlighter {
 public:
-    SyntaxHighlighter() { }
-    virtual ~SyntaxHighlighter() override;
+    SyntaxHighlighter() = default;
+    virtual ~SyntaxHighlighter() override = default;
 
     virtual bool is_identifier(u64) const override;
     virtual bool is_navigatable(u64) const override;
 
     virtual Syntax::Language language() const override { return Syntax::Language::JavaScript; }
-    virtual void rehighlight(const Palette&) override;
+    virtual void rehighlight(Palette const&) override;
 
 protected:
     virtual Vector<MatchingTokenPair> matching_token_pairs_impl() const override;

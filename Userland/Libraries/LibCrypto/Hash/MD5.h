@@ -6,20 +6,15 @@
 
 #pragma once
 
-#include <AK/String.h>
 #include <AK/Types.h>
 #include <LibCrypto/Hash/HashFunction.h>
 
+#ifndef KERNEL
+#    include <AK/String.h>
+#endif
+
 namespace Crypto {
 namespace Hash {
-
-struct MD5Digest {
-    constexpr static size_t Size = 16;
-    u8 data[Size];
-
-    const u8* immutable_data() const { return data; }
-    size_t data_length() const { return Size; }
-};
 
 namespace MD5Constants {
 
@@ -53,25 +48,30 @@ constexpr u8 PADDING[] = {
 
 }
 
-class MD5 final : public HashFunction<512, MD5Digest> {
+class MD5 final : public HashFunction<512, 128> {
 public:
     using HashFunction::update;
 
-    virtual void update(const u8*, size_t) override;
+    virtual void update(u8 const*, size_t) override;
     virtual DigestType digest() override;
     virtual DigestType peek() override;
 
-    virtual String class_name() const override { return "MD5"; }
+#ifndef KERNEL
+    virtual String class_name() const override
+    {
+        return "MD5";
+    }
+#endif
 
-    inline static DigestType hash(const u8* data, size_t length)
+    inline static DigestType hash(u8 const* data, size_t length)
     {
         MD5 md5;
         md5.update(data, length);
         return md5.digest();
     }
 
-    inline static DigestType hash(const ByteBuffer& buffer) { return hash(buffer.data(), buffer.size()); }
-    inline static DigestType hash(StringView buffer) { return hash((const u8*)buffer.characters_without_null_termination(), buffer.length()); }
+    inline static DigestType hash(ByteBuffer const& buffer) { return hash(buffer.data(), buffer.size()); }
+    inline static DigestType hash(StringView buffer) { return hash((u8 const*)buffer.characters_without_null_termination(), buffer.length()); }
     inline virtual void reset() override
     {
         m_A = MD5Constants::init_A;
@@ -86,10 +86,10 @@ public:
     }
 
 private:
-    inline void transform(const u8*);
+    inline void transform(u8 const*);
 
-    static void encode(const u32* from, u8* to, size_t length);
-    static void decode(const u8* from, u32* to, size_t length);
+    static void encode(u32 const* from, u8* to, size_t length);
+    static void decode(u8 const* from, u32* to, size_t length);
 
     u32 m_A { MD5Constants::init_A }, m_B { MD5Constants::init_B }, m_C { MD5Constants::init_C }, m_D { MD5Constants::init_D };
     u32 m_count[2] { 0, 0 };

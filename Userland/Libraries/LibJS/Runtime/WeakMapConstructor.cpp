@@ -29,10 +29,6 @@ void WeakMapConstructor::initialize(GlobalObject& global_object)
     define_direct_property(vm.names.length, Value(0), Attribute::Configurable);
 }
 
-WeakMapConstructor::~WeakMapConstructor()
-{
-}
-
 // 24.3.1.1 WeakMap ( [ iterable ] ), https://tc39.es/ecma262/#sec-weakmap-iterable
 ThrowCompletionOr<Value> WeakMapConstructor::call()
 {
@@ -55,13 +51,13 @@ ThrowCompletionOr<Object*> WeakMapConstructor::construct(FunctionObject& new_tar
     if (!adder.is_function())
         return vm.throw_completion<TypeError>(global_object, ErrorType::NotAFunction, "'set' property of WeakMap");
 
-    TRY(get_iterator_values(global_object, vm.argument(0), [&](Value iterator_value) -> Optional<Completion> {
+    (void)TRY(get_iterator_values(global_object, vm.argument(0), [&](Value iterator_value) -> Optional<Completion> {
         if (!iterator_value.is_object())
             return vm.throw_completion<TypeError>(global_object, ErrorType::NotAnObject, String::formatted("Iterator value {}", iterator_value.to_string_without_side_effects()));
 
         auto key = TRY(iterator_value.as_object().get(0));
         auto value = TRY(iterator_value.as_object().get(1));
-        TRY(vm.call(adder.as_function(), Value(weak_map), key, value));
+        TRY(JS::call(global_object, adder.as_function(), weak_map, key, value));
 
         return {};
     }));

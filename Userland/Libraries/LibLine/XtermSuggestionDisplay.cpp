@@ -14,7 +14,7 @@
 
 namespace Line {
 
-void XtermSuggestionDisplay::display(const SuggestionManager& manager)
+void XtermSuggestionDisplay::display(SuggestionManager const& manager)
 {
     did_display();
 
@@ -22,11 +22,13 @@ void XtermSuggestionDisplay::display(const SuggestionManager& manager)
 
     size_t longest_suggestion_length = 0;
     size_t longest_suggestion_byte_length = 0;
+    size_t longest_suggestion_byte_length_without_trivia = 0;
 
     manager.set_start_index(0);
     manager.for_each_suggestion([&](auto& suggestion, auto) {
-        longest_suggestion_length = max(longest_suggestion_length, suggestion.text_view.length());
-        longest_suggestion_byte_length = max(longest_suggestion_byte_length, suggestion.text_string.length());
+        longest_suggestion_length = max(longest_suggestion_length, suggestion.text_view.length() + suggestion.display_trivia_view.length());
+        longest_suggestion_byte_length = max(longest_suggestion_byte_length, suggestion.text_string.length() + suggestion.display_trivia_string.length());
+        longest_suggestion_byte_length_without_trivia = max(longest_suggestion_byte_length_without_trivia, suggestion.text_string.length());
         return IterationDecision::Continue;
     });
 
@@ -114,8 +116,10 @@ void XtermSuggestionDisplay::display(const SuggestionManager& manager)
         if (spans_entire_line) {
             num_printed += m_num_columns;
             stderr_stream.write(suggestion.text_string.bytes());
+            stderr_stream.write(suggestion.display_trivia_string.bytes());
         } else {
-            stderr_stream.write(String::formatted("{: <{}}", suggestion.text_string, longest_suggestion_byte_length + 2).bytes());
+            auto field = String::formatted("{: <{}}  {}", suggestion.text_string, longest_suggestion_byte_length_without_trivia, suggestion.display_trivia_string);
+            stderr_stream.write(String::formatted("{: <{}}", field, longest_suggestion_byte_length + 2).bytes());
             num_printed += longest_suggestion_length + 2;
         }
 
@@ -125,6 +129,9 @@ void XtermSuggestionDisplay::display(const SuggestionManager& manager)
     });
 
     m_lines_used_for_last_suggestions = lines_used;
+
+    // The last line of the prompt is the same line as the first line of the buffer, so we need to subtract one here.
+    lines_used += m_prompt_lines_at_suggestion_initiation - 1;
 
     // If we filled the screen, move back the origin.
     if (m_origin_row + lines_used >= m_num_lines) {

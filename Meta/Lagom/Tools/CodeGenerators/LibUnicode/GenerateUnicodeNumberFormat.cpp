@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2021, Tim Flynn <trflynn89@pm.me>
+ * Copyright (c) 2021, Tim Flynn <trflynn89@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -10,6 +10,7 @@
 #include <AK/CharacterTypes.h>
 #include <AK/Find.h>
 #include <AK/Format.h>
+#include <AK/HashFunctions.h>
 #include <AK/HashMap.h>
 #include <AK/JsonObject.h>
 #include <AK/JsonParser.h>
@@ -19,16 +20,34 @@
 #include <AK/SourceGenerator.h>
 #include <AK/String.h>
 #include <AK/StringBuilder.h>
+#include <AK/Traits.h>
 #include <AK/Utf8View.h>
 #include <LibCore/ArgsParser.h>
 #include <LibCore/DirIterator.h>
 #include <LibCore/File.h>
+#include <LibCore/Stream.h>
+#include <LibJS/Runtime/Intl/AbstractOperations.h>
 #include <LibUnicode/Locale.h>
 #include <LibUnicode/NumberFormat.h>
 #include <math.h>
 
 using StringIndexType = u16;
 constexpr auto s_string_index_type = "u16"sv;
+
+using NumberFormatIndexType = u16;
+constexpr auto s_number_format_index_type = "u16"sv;
+
+using NumberFormatListIndexType = u16;
+constexpr auto s_number_format_list_index_type = "u16"sv;
+
+using NumericSymbolListIndexType = u8;
+constexpr auto s_numeric_symbol_list_index_type = "u8"sv;
+
+using NumberSystemIndexType = u8;
+constexpr auto s_number_system_index_type = "u8"sv;
+
+using UnitIndexType = u16;
+constexpr auto s_unit_index_type = "u16"sv;
 
 enum class NumberFormatType {
     Standard,
@@ -57,54 +76,240 @@ struct NumberFormat : public Unicode::NumberFormat {
         VERIFY_NOT_REACHED();
     }
 
+    unsigned hash() const
+    {
+        auto hash = pair_int_hash(magnitude, exponent);
+        hash = pair_int_hash(hash, static_cast<u8>(plurality));
+        hash = pair_int_hash(hash, zero_format_index);
+        hash = pair_int_hash(hash, positive_format_index);
+        hash = pair_int_hash(hash, negative_format_index);
+
+        for (auto index : identifier_indices)
+            hash = pair_int_hash(hash, index);
+
+        return hash;
+    }
+
+    bool operator==(NumberFormat const& other) const
+    {
+        return (magnitude == other.magnitude)
+            && (exponent == other.exponent)
+            && (plurality == other.plurality)
+            && (zero_format_index == other.zero_format_index)
+            && (positive_format_index == other.positive_format_index)
+            && (negative_format_index == other.negative_format_index)
+            && (identifier_indices == other.identifier_indices);
+    }
+
     StringIndexType zero_format_index { 0 };
     StringIndexType positive_format_index { 0 };
     StringIndexType negative_format_index { 0 };
     Vector<StringIndexType> identifier_indices {};
 };
 
+template<>
+struct AK::Formatter<NumberFormat> : Formatter<FormatString> {
+    ErrorOr<void> format(FormatBuilder& builder, NumberFormat const& format)
+    {
+        StringBuilder identifier_indices;
+        identifier_indices.join(", "sv, format.identifier_indices);
+
+        return Formatter<FormatString>::format(builder,
+            "{{ {}, {}, {}, {}, {}, {}, {{ {} }} }}",
+            format.magnitude,
+            format.exponent,
+            static_cast<u8>(format.plurality),
+            format.zero_format_index,
+            format.positive_format_index,
+            format.negative_format_index,
+            identifier_indices.build());
+    }
+};
+
+template<>
+struct AK::Traits<NumberFormat> : public GenericTraits<NumberFormat> {
+    static unsigned hash(NumberFormat const& f) { return f.hash(); }
+};
+
+using NumberFormatList = Vector<NumberFormatIndexType>;
+using NumericSymbolList = Vector<StringIndexType>;
+
 struct NumberSystem {
-    StringIndexType system { 0 };
-    HashMap<String, StringIndexType> symbols {};
+    unsigned hash() const
+    {
+        auto hash = int_hash(symbols);
+        hash = pair_int_hash(hash, primary_grouping_size);
+        hash = pair_int_hash(hash, secondary_grouping_size);
+        hash = pair_int_hash(hash, decimal_format);
+        hash = pair_int_hash(hash, decimal_long_formats);
+        hash = pair_int_hash(hash, decimal_short_formats);
+        hash = pair_int_hash(hash, currency_format);
+        hash = pair_int_hash(hash, accounting_format);
+        hash = pair_int_hash(hash, currency_unit_formats);
+        hash = pair_int_hash(hash, currency_short_formats);
+        hash = pair_int_hash(hash, percent_format);
+        hash = pair_int_hash(hash, scientific_format);
+        return hash;
+    }
+
+    bool operator==(NumberSystem const& other) const
+    {
+        return (symbols == other.symbols)
+            && (primary_grouping_size == other.primary_grouping_size)
+            && (secondary_grouping_size == other.secondary_grouping_size)
+            && (decimal_format == other.decimal_format)
+            && (decimal_long_formats == other.decimal_long_formats)
+            && (decimal_short_formats == other.decimal_short_formats)
+            && (currency_format == other.currency_format)
+            && (accounting_format == other.accounting_format)
+            && (currency_unit_formats == other.currency_unit_formats)
+            && (currency_short_formats == other.currency_short_formats)
+            && (percent_format == other.percent_format)
+            && (scientific_format == other.scientific_format);
+    }
+
+    NumericSymbolListIndexType symbols { 0 };
 
     u8 primary_grouping_size { 0 };
     u8 secondary_grouping_size { 0 };
 
-    NumberFormat decimal_format {};
-    Vector<NumberFormat> decimal_long_formats {};
-    Vector<NumberFormat> decimal_short_formats {};
+    NumberFormatIndexType decimal_format { 0 };
+    NumberFormatListIndexType decimal_long_formats { 0 };
+    NumberFormatListIndexType decimal_short_formats { 0 };
 
-    NumberFormat currency_format {};
-    NumberFormat accounting_format {};
-    Vector<NumberFormat> currency_unit_formats {};
-    Vector<NumberFormat> currency_short_formats {};
+    NumberFormatIndexType currency_format { 0 };
+    NumberFormatIndexType accounting_format { 0 };
+    NumberFormatListIndexType currency_unit_formats { 0 };
+    NumberFormatListIndexType currency_short_formats { 0 };
 
-    NumberFormat percent_format {};
-    NumberFormat scientific_format {};
+    NumberFormatIndexType percent_format { 0 };
+    NumberFormatIndexType scientific_format { 0 };
+};
+
+template<>
+struct AK::Formatter<NumberSystem> : Formatter<FormatString> {
+    ErrorOr<void> format(FormatBuilder& builder, NumberSystem const& system)
+    {
+        return Formatter<FormatString>::format(builder,
+            "{{ {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {} }}",
+            system.symbols,
+            system.primary_grouping_size,
+            system.secondary_grouping_size,
+            system.decimal_format,
+            system.decimal_long_formats,
+            system.decimal_short_formats,
+            system.currency_format,
+            system.accounting_format,
+            system.currency_unit_formats,
+            system.currency_short_formats,
+            system.percent_format,
+            system.scientific_format);
+    }
+};
+
+template<>
+struct AK::Traits<NumberSystem> : public GenericTraits<NumberSystem> {
+    static unsigned hash(NumberSystem const& s) { return s.hash(); }
 };
 
 struct Unit {
+    unsigned hash() const
+    {
+        auto hash = int_hash(unit);
+        hash = pair_int_hash(hash, long_formats);
+        hash = pair_int_hash(hash, short_formats);
+        hash = pair_int_hash(hash, narrow_formats);
+        return hash;
+    }
+
+    bool operator==(Unit const& other) const
+    {
+        return (unit == other.unit)
+            && (long_formats == other.long_formats)
+            && (short_formats == other.short_formats)
+            && (narrow_formats == other.narrow_formats);
+    }
+
     StringIndexType unit { 0 };
-    Vector<NumberFormat> long_formats {};
-    Vector<NumberFormat> short_formats {};
-    Vector<NumberFormat> narrow_formats {};
+    NumberFormatListIndexType long_formats { 0 };
+    NumberFormatListIndexType short_formats { 0 };
+    NumberFormatListIndexType narrow_formats { 0 };
+};
+
+template<>
+struct AK::Formatter<Unit> : Formatter<FormatString> {
+    ErrorOr<void> format(FormatBuilder& builder, Unit const& system)
+    {
+        return Formatter<FormatString>::format(builder,
+            "{{ {}, {}, {}, {} }}",
+            system.unit,
+            system.long_formats,
+            system.short_formats,
+            system.narrow_formats);
+    }
+};
+
+template<>
+struct AK::Traits<Unit> : public GenericTraits<Unit> {
+    static unsigned hash(Unit const& u) { return u.hash(); }
 };
 
 struct Locale {
-    HashMap<String, NumberSystem> number_systems;
-    HashMap<String, Unit> units {};
+    Vector<NumberSystemIndexType> number_systems;
+    HashMap<String, UnitIndexType> units {};
+    u8 minimum_grouping_digits { 0 };
 };
 
 struct UnicodeLocaleData {
     UniqueStringStorage<StringIndexType> unique_strings;
+    UniqueStorage<NumberFormat, NumberFormatIndexType> unique_formats;
+    UniqueStorage<NumberFormatList, NumberFormatListIndexType> unique_format_lists;
+    UniqueStorage<NumericSymbolList, NumericSymbolListIndexType> unique_symbols;
+    UniqueStorage<NumberSystem, NumberSystemIndexType> unique_systems;
+    UniqueStorage<Unit, UnitIndexType> unique_units;
+
+    HashMap<String, Array<u32, 10>> number_system_digits;
+    Vector<String> number_systems;
+
     HashMap<String, Locale> locales;
-    Vector<String> numeric_symbols;
     size_t max_identifier_count { 0 };
 };
 
+static ErrorOr<void> parse_number_system_digits(String core_supplemental_path, UnicodeLocaleData& locale_data)
+{
+    LexicalPath number_systems_path(move(core_supplemental_path));
+    number_systems_path = number_systems_path.append("numberingSystems.json"sv);
+
+    auto number_systems = TRY(read_json_file(number_systems_path.string()));
+    auto const& supplemental_object = number_systems.as_object().get("supplemental"sv);
+    auto const& number_systems_object = supplemental_object.as_object().get("numberingSystems"sv);
+
+    number_systems_object.as_object().for_each_member([&](auto const& number_system, auto const& digits_object) {
+        auto type = digits_object.as_object().get("_type"sv).as_string();
+        if (type != "numeric"sv)
+            return;
+
+        auto digits = digits_object.as_object().get("_digits"sv).as_string();
+
+        Utf8View utf8_digits { digits };
+        VERIFY(utf8_digits.length() == 10);
+
+        auto& number_system_digits = locale_data.number_system_digits.ensure(number_system);
+        size_t index = 0;
+
+        for (u32 digit : utf8_digits)
+            number_system_digits[index++] = digit;
+
+        if (!locale_data.number_systems.contains_slow(number_system))
+            locale_data.number_systems.append(number_system);
+    });
+
+    return {};
+}
+
 static String parse_identifiers(String pattern, StringView replacement, UnicodeLocaleData& locale_data, NumberFormat& format)
 {
-    static Utf8View whitespace { "\u0020\u00a0\u200f"sv };
+    static constexpr Utf8View whitespace { "\u0020\u00a0\u200f"sv };
 
     while (true) {
         Utf8View utf8_pattern { pattern };
@@ -232,27 +437,41 @@ static void parse_number_pattern(Vector<String> patterns, UnicodeLocaleData& loc
     format.zero_format_index = locale_data.unique_strings.ensure(move(zero_format));
 }
 
+static void parse_number_pattern(Vector<String> patterns, UnicodeLocaleData& locale_data, NumberFormatType type, NumberFormatIndexType& format_index, NumberSystem* number_system_for_groupings = nullptr)
+{
+    NumberFormat format {};
+    parse_number_pattern(move(patterns), locale_data, type, format, number_system_for_groupings);
+
+    format_index = locale_data.unique_formats.ensure(move(format));
+}
+
 static ErrorOr<void> parse_number_systems(String locale_numbers_path, UnicodeLocaleData& locale_data, Locale& locale)
 {
     LexicalPath numbers_path(move(locale_numbers_path));
     numbers_path = numbers_path.append("numbers.json"sv);
 
-    auto numbers_file = TRY(Core::File::open(numbers_path.string(), Core::OpenMode::ReadOnly));
-    auto numbers = TRY(JsonValue::from_string(numbers_file->read_all()));
-
+    auto numbers = TRY(read_json_file(numbers_path.string()));
     auto const& main_object = numbers.as_object().get("main"sv);
     auto const& locale_object = main_object.as_object().get(numbers_path.parent().basename());
     auto const& locale_numbers_object = locale_object.as_object().get("numbers"sv);
+    auto const& minimum_grouping_digits = locale_numbers_object.as_object().get("minimumGroupingDigits"sv);
+
+    Vector<Optional<NumberSystem>> number_systems;
+    number_systems.resize(locale_data.number_systems.size());
 
     auto ensure_number_system = [&](auto const& system) -> NumberSystem& {
-        return locale.number_systems.ensure(system, [&]() {
-            auto system_index = locale_data.unique_strings.ensure(system);
-            return NumberSystem { .system = system_index };
-        });
+        auto system_index = locale_data.number_systems.find_first_index(system).value();
+        VERIFY(system_index < number_systems.size());
+
+        auto& number_system = number_systems.at(system_index);
+        if (!number_system.has_value())
+            number_system = NumberSystem {};
+
+        return number_system.value();
     };
 
     auto parse_number_format = [&](auto const& format_object) {
-        Vector<NumberFormat> result;
+        Vector<NumberFormatIndexType> result;
         result.ensure_capacity(format_object.size());
 
         format_object.for_each_member([&](auto const& key, JsonValue const& value) {
@@ -280,10 +499,31 @@ static ErrorOr<void> parse_number_systems(String locale_numbers_path, UnicodeLoc
             format.plurality = NumberFormat::plurality_from_string(split_key[2]);
             parse_number_pattern(move(patterns), locale_data, NumberFormatType::Compact, format);
 
-            result.append(move(format));
+            auto format_index = locale_data.unique_formats.ensure(move(format));
+            result.append(format_index);
         });
 
-        return result;
+        return locale_data.unique_format_lists.ensure(move(result));
+    };
+
+    auto numeric_symbol_from_string = [&](StringView numeric_symbol) -> Optional<Unicode::NumericSymbol> {
+        if (numeric_symbol == "decimal"sv)
+            return Unicode::NumericSymbol::Decimal;
+        if (numeric_symbol == "exponential"sv)
+            return Unicode::NumericSymbol::Exponential;
+        if (numeric_symbol == "group"sv)
+            return Unicode::NumericSymbol::Group;
+        if (numeric_symbol == "infinity"sv)
+            return Unicode::NumericSymbol::Infinity;
+        if (numeric_symbol == "minusSign"sv)
+            return Unicode::NumericSymbol::MinusSign;
+        if (numeric_symbol == "nan"sv)
+            return Unicode::NumericSymbol::NaN;
+        if (numeric_symbol == "percentSign"sv)
+            return Unicode::NumericSymbol::PercentSign;
+        if (numeric_symbol == "plusSign"sv)
+            return Unicode::NumericSymbol::PlusSign;
+        return {};
     };
 
     locale_numbers_object.as_object().for_each_member([&](auto const& key, JsonValue const& value) {
@@ -297,13 +537,21 @@ static ErrorOr<void> parse_number_systems(String locale_numbers_path, UnicodeLoc
             auto system = key.substring(symbols_prefix.length());
             auto& number_system = ensure_number_system(system);
 
-            value.as_object().for_each_member([&](auto const& symbol, JsonValue const& localization) {
-                auto symbol_index = locale_data.unique_strings.ensure(localization.as_string());
-                number_system.symbols.set(symbol, symbol_index);
+            NumericSymbolList symbols;
 
-                if (!locale_data.numeric_symbols.contains_slow(symbol))
-                    locale_data.numeric_symbols.append(symbol);
+            value.as_object().for_each_member([&](auto const& symbol, JsonValue const& localization) {
+                auto numeric_symbol = numeric_symbol_from_string(symbol);
+                if (!numeric_symbol.has_value())
+                    return;
+
+                if (to_underlying(*numeric_symbol) >= symbols.size())
+                    symbols.resize(to_underlying(*numeric_symbol) + 1);
+
+                auto symbol_index = locale_data.unique_strings.ensure(localization.as_string());
+                symbols[to_underlying(*numeric_symbol)] = symbol_index;
             });
+
+            number_system.symbols = locale_data.unique_symbols.ensure(move(symbols));
         } else if (key.starts_with(decimal_formats_prefix)) {
             auto system = key.substring(decimal_formats_prefix.length());
             auto& number_system = ensure_number_system(system);
@@ -347,6 +595,17 @@ static ErrorOr<void> parse_number_systems(String locale_numbers_path, UnicodeLoc
         }
     });
 
+    locale.number_systems.ensure_capacity(number_systems.size());
+
+    for (auto& number_system : number_systems) {
+        NumberSystemIndexType system_index = 0;
+        if (number_system.has_value())
+            system_index = locale_data.unique_systems.ensure(number_system.release_value());
+
+        locale.number_systems.append(system_index);
+    }
+
+    locale.minimum_grouping_digits = minimum_grouping_digits.as_string().template to_uint<u8>().value();
     return {};
 }
 
@@ -355,29 +614,27 @@ static ErrorOr<void> parse_units(String locale_units_path, UnicodeLocaleData& lo
     LexicalPath units_path(move(locale_units_path));
     units_path = units_path.append("units.json"sv);
 
-    auto units_file = TRY(Core::File::open(units_path.string(), Core::OpenMode::ReadOnly));
-    auto units = TRY(JsonValue::from_string(units_file->read_all()));
-
-    auto const& main_object = units.as_object().get("main"sv);
+    auto locale_units = TRY(read_json_file(units_path.string()));
+    auto const& main_object = locale_units.as_object().get("main"sv);
     auto const& locale_object = main_object.as_object().get(units_path.parent().basename());
     auto const& locale_units_object = locale_object.as_object().get("units"sv);
     auto const& long_object = locale_units_object.as_object().get("long"sv);
     auto const& short_object = locale_units_object.as_object().get("short"sv);
     auto const& narrow_object = locale_units_object.as_object().get("narrow"sv);
 
+    HashMap<String, Unit> units;
+
     auto ensure_unit = [&](auto const& unit) -> Unit& {
-        return locale.units.ensure(unit, [&]() {
+        return units.ensure(unit, [&]() {
             auto unit_index = locale_data.unique_strings.ensure(unit);
             return Unit { .unit = unit_index };
         });
     };
 
     auto is_sanctioned_unit = [](StringView unit_name) {
-        // This is a copy of the units sanctioned for use within ECMA-402. LibUnicode generally tries to
-        // avoid being directly dependent on ECMA-402, but this rather significantly reduces the amount
+        // LibUnicode generally tries to avoid being directly dependent on ECMA-402, but this rather significantly reduces the amount
         // of data generated here, and ECMA-402 is currently the only consumer of this data.
-        // https://tc39.es/ecma402/#table-sanctioned-simple-unit-identifiers
-        constexpr auto sanctioned_units = AK::Array { "acre"sv, "bit"sv, "byte"sv, "celsius"sv, "centimeter"sv, "day"sv, "degree"sv, "fahrenheit"sv, "fluid-ounce"sv, "foot"sv, "gallon"sv, "gigabit"sv, "gigabyte"sv, "gram"sv, "hectare"sv, "hour"sv, "inch"sv, "kilobit"sv, "kilobyte"sv, "kilogram"sv, "kilometer"sv, "liter"sv, "megabit"sv, "megabyte"sv, "meter"sv, "mile"sv, "mile-scandinavian"sv, "milliliter"sv, "millimeter"sv, "millisecond"sv, "minute"sv, "month"sv, "ounce"sv, "percent"sv, "petabyte"sv, "pound"sv, "second"sv, "stone"sv, "terabit"sv, "terabyte"sv, "week"sv, "yard"sv, "year"sv };
+        constexpr auto sanctioned_units = JS::Intl::sanctioned_single_unit_identifiers();
         return find(sanctioned_units.begin(), sanctioned_units.end(), unit_name) != sanctioned_units.end();
     };
 
@@ -403,11 +660,13 @@ static ErrorOr<void> parse_units(String locale_units_path, UnicodeLocaleData& lo
                     return;
             }
 
+            auto& unit = ensure_unit(unit_name);
+            NumberFormatList formats;
+
             value.as_object().for_each_member([&](auto const& unit_key, JsonValue const& pattern_value) {
                 if (!unit_key.starts_with(unit_pattern_prefix))
                     return;
 
-                auto& unit = ensure_unit(unit_name);
                 NumberFormat format {};
 
                 auto plurality = unit_key.substring_view(unit_pattern_prefix.length());
@@ -420,20 +679,24 @@ static ErrorOr<void> parse_units(String locale_units_path, UnicodeLocaleData& lo
                 format.negative_format_index = locale_data.unique_strings.ensure(zero_format.replace("{number}"sv, "{minusSign}{number}"sv));
                 format.zero_format_index = locale_data.unique_strings.ensure(move(zero_format));
 
-                switch (style) {
-                case Unicode::Style::Long:
-                    unit.long_formats.append(move(format));
-                    break;
-                case Unicode::Style::Short:
-                    unit.short_formats.append(move(format));
-                    break;
-                case Unicode::Style::Narrow:
-                    unit.narrow_formats.append(move(format));
-                    break;
-                default:
-                    VERIFY_NOT_REACHED();
-                }
+                formats.append(locale_data.unique_formats.ensure(move(format)));
             });
+
+            auto number_format_list_index = locale_data.unique_format_lists.ensure(move(formats));
+
+            switch (style) {
+            case Unicode::Style::Long:
+                unit.long_formats = number_format_list_index;
+                break;
+            case Unicode::Style::Short:
+                unit.short_formats = number_format_list_index;
+                break;
+            case Unicode::Style::Narrow:
+                unit.narrow_formats = number_format_list_index;
+                break;
+            default:
+                VERIFY_NOT_REACHED();
+            }
         });
     };
 
@@ -441,13 +704,24 @@ static ErrorOr<void> parse_units(String locale_units_path, UnicodeLocaleData& lo
     parse_units_object(short_object.as_object(), Unicode::Style::Short);
     parse_units_object(narrow_object.as_object(), Unicode::Style::Narrow);
 
+    for (auto& unit : units) {
+        auto unit_index = locale_data.unique_units.ensure(move(unit.value));
+        locale.units.set(unit.key, unit_index);
+    }
+
     return {};
 }
 
-static ErrorOr<void> parse_all_locales(String numbers_path, String units_path, UnicodeLocaleData& locale_data)
+static ErrorOr<void> parse_all_locales(String core_path, String numbers_path, String units_path, UnicodeLocaleData& locale_data)
 {
     auto numbers_iterator = TRY(path_to_dir_iterator(move(numbers_path)));
     auto units_iterator = TRY(path_to_dir_iterator(move(units_path)));
+
+    LexicalPath core_supplemental_path(move(core_path));
+    core_supplemental_path = core_supplemental_path.append("supplemental"sv);
+    VERIFY(Core::File::is_directory(core_supplemental_path.string()));
+
+    TRY(parse_number_system_digits(core_supplemental_path.string(), locale_data));
 
     auto remove_variants_from_path = [&](String path) -> ErrorOr<String> {
         auto parsed_locale = TRY(CanonicalLanguageID<StringIndexType>::parse(locale_data.unique_strings, LexicalPath::basename(path)));
@@ -481,83 +755,69 @@ static ErrorOr<void> parse_all_locales(String numbers_path, String units_path, U
     return {};
 }
 
-static String format_identifier(StringView owner, String identifier)
+static String format_identifier(StringView, String identifier)
 {
-    identifier = identifier.replace("-"sv, "_"sv, true);
-
-    if (all_of(identifier, is_ascii_digit))
-        return String::formatted("{}_{}", owner[0], identifier);
-    if (is_ascii_lower_alpha(identifier[0]))
-        return String::formatted("{:c}{}", to_ascii_uppercase(identifier[0]), identifier.substring_view(1));
-    return identifier;
+    return identifier.to_titlecase();
 }
 
-static void generate_unicode_locale_header(Core::File& file, UnicodeLocaleData& locale_data)
+static ErrorOr<void> generate_unicode_locale_header(Core::Stream::BufferedFile& file, UnicodeLocaleData& locale_data)
 {
     StringBuilder builder;
     SourceGenerator generator { builder };
 
     generator.append(R"~~~(
-#pragma once
-
-#include <AK/Optional.h>
-#include <AK/StringView.h>
 #include <AK/Types.h>
-#include <AK/Vector.h>
-#include <LibUnicode/Forward.h>
+
+#pragma once
 
 namespace Unicode {
 )~~~");
 
-    generate_enum(generator, format_identifier, "NumericSymbol"sv, {}, locale_data.numeric_symbols);
+    generate_enum(generator, format_identifier, "NumberSystem"sv, {}, locale_data.number_systems);
 
     generator.append(R"~~~(
-namespace Detail {
-
-Optional<StringView> get_number_system_symbol(StringView locale, StringView system, StringView numeric_symbol);
-Optional<NumberGroupings> get_number_system_groupings(StringView locale, StringView system);
-Optional<NumberFormat> get_standard_number_system_format(StringView locale, StringView system, StandardNumberFormatType type);
-Vector<NumberFormat> get_compact_number_system_formats(StringView locale, StringView system, CompactNumberFormatType type);
-Vector<Unicode::NumberFormat> get_unit_formats(StringView locale, StringView unit, Style style);
-Optional<NumericSymbol> numeric_symbol_from_string(StringView numeric_symbol);
-
-}
-
 }
 )~~~");
 
-    VERIFY(file.write(generator.as_string_view()));
+    TRY(file.write(generator.as_string_view().bytes()));
+    return {};
 }
 
-static void generate_unicode_locale_implementation(Core::File& file, UnicodeLocaleData& locale_data)
+static ErrorOr<void> generate_unicode_locale_implementation(Core::Stream::BufferedFile& file, UnicodeLocaleData& locale_data)
 {
     StringBuilder builder;
     SourceGenerator generator { builder };
     generator.set("string_index_type"sv, s_string_index_type);
-    generator.set("numeric_symbols_size", String::number(locale_data.numeric_symbols.size()));
+    generator.set("number_format_index_type"sv, s_number_format_index_type);
+    generator.set("number_format_list_index_type"sv, s_number_format_list_index_type);
+    generator.set("numeric_symbol_list_index_type"sv, s_numeric_symbol_list_index_type);
     generator.set("identifier_count", String::number(locale_data.max_identifier_count));
 
     generator.append(R"~~~(
 #include <AK/Array.h>
 #include <AK/BinarySearch.h>
+#include <AK/Optional.h>
 #include <AK/Span.h>
+#include <AK/StringView.h>
+#include <AK/Vector.h>
 #include <LibUnicode/Locale.h>
 #include <LibUnicode/NumberFormat.h>
+#include <LibUnicode/UnicodeLocale.h>
 #include <LibUnicode/UnicodeNumberFormat.h>
 
-namespace Unicode::Detail {
+namespace Unicode {
 )~~~");
 
     locale_data.unique_strings.generate(generator);
 
     generator.append(R"~~~(
-struct NumberFormat {
-    Unicode::NumberFormat to_unicode_number_format() const {
-        Unicode::NumberFormat number_format {};
+struct NumberFormatImpl {
+    NumberFormat to_unicode_number_format() const {
+        NumberFormat number_format {};
 
         number_format.magnitude = magnitude;
         number_format.exponent = exponent;
-        number_format.plurality = static_cast<Unicode::NumberFormat::Plurality>(plurality);
+        number_format.plurality = static_cast<NumberFormat::Plurality>(plurality);
         number_format.zero_format = s_string_list[zero_format];
         number_format.positive_format = s_string_list[positive_format];
         number_format.negative_format = s_string_list[negative_format];
@@ -578,210 +838,147 @@ struct NumberFormat {
     Array<@string_index_type@, @identifier_count@> identifiers {};
 };
 
-struct NumberSystem {
-    @string_index_type@ system { 0 };
-    Array<@string_index_type@, @numeric_symbols_size@> symbols {};
+struct NumberSystemData {
+    @numeric_symbol_list_index_type@ symbols { 0 };
 
     u8 primary_grouping_size { 0 };
     u8 secondary_grouping_size { 0 };
 
-    NumberFormat decimal_format {};
-    Span<NumberFormat const> decimal_long_formats {};
-    Span<NumberFormat const> decimal_short_formats {};
+    @number_format_index_type@ decimal_format { 0 };
+    @number_format_list_index_type@ decimal_long_formats { 0 };
+    @number_format_list_index_type@ decimal_short_formats { 0 };
 
-    NumberFormat currency_format {};
-    NumberFormat accounting_format {};
-    Span<NumberFormat const> currency_unit_formats {};
-    Span<NumberFormat const> currency_short_formats {};
+    @number_format_index_type@ currency_format { 0 };
+    @number_format_index_type@ accounting_format { 0 };
+    @number_format_list_index_type@ currency_unit_formats { 0 };
+    @number_format_list_index_type@ currency_short_formats { 0 };
 
-    NumberFormat percent_format {};
-    NumberFormat scientific_format {};
+    @number_format_index_type@ percent_format { 0 };
+    @number_format_index_type@ scientific_format { 0 };
 };
 
 struct Unit {
     @string_index_type@ unit { 0 };
-    Span<NumberFormat const> long_formats {};
-    Span<NumberFormat const> short_formats {};
-    Span<NumberFormat const> narrow_formats {};
+    @number_format_list_index_type@ long_formats { 0 };
+    @number_format_list_index_type@ short_formats { 0 };
+    @number_format_list_index_type@ narrow_formats { 0 };
 };
 )~~~");
 
-    auto append_number_format = [&](auto const& number_format) {
-        generator.set("magnitude"sv, String::number(number_format.magnitude));
-        generator.set("exponent"sv, String::number(number_format.exponent));
-        generator.set("plurality"sv, String::number(static_cast<u8>(number_format.plurality)));
-        generator.set("zero_format"sv, String::number(number_format.zero_format_index));
-        generator.set("positive_format"sv, String::number(number_format.positive_format_index));
-        generator.set("negative_format"sv, String::number(number_format.negative_format_index));
-        generator.append("{ @magnitude@, @exponent@, @plurality@, @zero_format@, @positive_format@, @negative_format@, { ");
+    locale_data.unique_formats.generate(generator, "NumberFormatImpl"sv, "s_number_formats"sv, 10);
+    locale_data.unique_format_lists.generate(generator, s_number_format_index_type, "s_number_format_lists"sv);
+    locale_data.unique_symbols.generate(generator, s_string_index_type, "s_numeric_symbol_lists"sv);
+    locale_data.unique_systems.generate(generator, "NumberSystemData"sv, "s_number_systems"sv, 10);
+    locale_data.unique_units.generate(generator, "Unit"sv, "s_units"sv, 10);
+
+    auto locales = locale_data.locales.keys();
+    quick_sort(locales);
+
+    generator.set("size", String::number(locales.size()));
+    generator.append(R"~~~(
+static constexpr Array<u8, @size@> s_minimum_grouping_digits { { )~~~");
+
+    bool first = true;
+    for (auto const& locale : locales) {
+        generator.append(first ? " " : ", ");
+        generator.append(String::number(locale_data.locales.find(locale)->value.minimum_grouping_digits));
+        first = false;
+    }
+    generator.append(" } };\n");
+
+    auto append_map = [&](String name, auto type, auto const& map) {
+        generator.set("name", name);
+        generator.set("type", type);
+        generator.set("size", String::number(map.size()));
+
+        generator.append(R"~~~(
+static constexpr Array<@type@, @size@> @name@ { {)~~~");
 
         bool first = true;
-        for (auto identifier_index : number_format.identifier_indices) {
-            if (!first)
-                generator.append(", ");
-
-            generator.append(String::number(identifier_index));
+        for (auto const& item : map) {
+            generator.append(first ? " " : ", ");
+            if constexpr (requires { item.value; })
+                generator.append(String::number(item.value));
+            else
+                generator.append(String::number(item));
             first = false;
         }
 
-        generator.append(" } },");
+        generator.append(" } };");
     };
 
-    auto append_number_formats = [&](String name, auto const& number_formats) {
-        generator.set("name"sv, move(name));
-        generator.set("size"sv, String::number(number_formats.size()));
-
-        generator.append(R"~~~(
-static constexpr Array<NumberFormat, @size@> @name@ { {
-    )~~~");
-
-        constexpr size_t max_values_per_row = 10;
-        size_t values_in_current_row = 0;
-
-        for (auto const& number_format : number_formats) {
-            if (values_in_current_row++ > 0)
-                generator.append(" ");
-
-            append_number_format(number_format);
-
-            if (values_in_current_row == max_values_per_row) {
-                values_in_current_row = 0;
-                generator.append("\n    ");
-            }
-        }
-
-        generator.append(R"~~~(
-} };
-)~~~");
-    };
-
-    auto append_number_systems = [&](String name, auto const& number_systems) {
-        auto format_name = [&](StringView system, StringView format) {
-            return String::formatted("{}_{}_{}", name, system, format);
-        };
-
-        for (auto const& number_system : number_systems) {
-            append_number_formats(format_name(number_system.key, "dl"sv), number_system.value.decimal_long_formats);
-            append_number_formats(format_name(number_system.key, "ds"sv), number_system.value.decimal_short_formats);
-            append_number_formats(format_name(number_system.key, "cu"sv), number_system.value.currency_unit_formats);
-            append_number_formats(format_name(number_system.key, "cs"sv), number_system.value.currency_short_formats);
-        }
-
-        generator.set("name", name);
-        generator.set("size", String::number(number_systems.size()));
-
-        generator.append(R"~~~(
-static constexpr Array<NumberSystem, @size@> @name@ { {)~~~");
-
-        for (auto const& number_system : number_systems) {
-            generator.set("system"sv, String::number(number_system.value.system));
-            generator.set("primary_grouping_size"sv, String::number(number_system.value.primary_grouping_size));
-            generator.set("secondary_grouping_size"sv, String::number(number_system.value.secondary_grouping_size));
-            generator.set("decimal_long_formats"sv, format_name(number_system.key, "dl"sv));
-            generator.set("decimal_short_formats"sv, format_name(number_system.key, "ds"sv));
-            generator.set("currency_unit_formats"sv, format_name(number_system.key, "cu"sv));
-            generator.set("currency_short_formats"sv, format_name(number_system.key, "cs"sv));
-            generator.append(R"~~~(
-    { @system@, {)~~~");
-
-            for (auto const& symbol : locale_data.numeric_symbols) {
-                auto index = number_system.value.symbols.get(symbol).value_or(0);
-                generator.set("index", String::number(index));
-                generator.append(" @index@,");
-            }
-
-            generator.append(" }, @primary_grouping_size@, @secondary_grouping_size@, ");
-            append_number_format(number_system.value.decimal_format);
-            generator.append(" @decimal_long_formats@.span(), @decimal_short_formats@.span(), ");
-            append_number_format(number_system.value.currency_format);
-            generator.append(" ");
-            append_number_format(number_system.value.accounting_format);
-            generator.append(" @currency_unit_formats@.span(), @currency_short_formats@.span(), ");
-            append_number_format(number_system.value.percent_format);
-            generator.append(" ");
-            append_number_format(number_system.value.scientific_format);
-            generator.append(" },");
-        }
-
-        generator.append(R"~~~(
-} };
-)~~~");
-    };
-
-    auto append_units = [&](String name, auto const& units) {
-        auto format_name = [&](String unit, StringView format) {
-            unit = unit.replace("-"sv, "_"sv, true);
-            return String::formatted("{}_{}_{}", name, unit, format);
-        };
-
-        for (auto const& unit : units) {
-            append_number_formats(format_name(unit.key, "l"sv), unit.value.long_formats);
-            append_number_formats(format_name(unit.key, "s"sv), unit.value.short_formats);
-            append_number_formats(format_name(unit.key, "n"sv), unit.value.narrow_formats);
-        }
-
-        generator.set("name", name);
-        generator.set("size", String::number(units.size()));
-
-        generator.append(R"~~~(
-static constexpr Array<Unit, @size@> @name@ { {)~~~");
-
-        for (auto const& unit : units) {
-            generator.set("unit"sv, String::number(unit.value.unit));
-            generator.set("long_formats"sv, format_name(unit.key, "l"sv));
-            generator.set("short_formats"sv, format_name(unit.key, "s"sv));
-            generator.set("narrow_formats"sv, format_name(unit.key, "n"sv));
-            generator.append(R"~~~(
-    { @unit@, @long_formats@.span(), @short_formats@.span(), @narrow_formats@.span() },)~~~");
-        }
-
-        generator.append(R"~~~(
-} };
-)~~~");
-    };
-
-    generate_mapping(generator, locale_data.locales, "NumberSystem"sv, "s_number_systems"sv, "s_number_systems_{}", [&](auto const& name, auto const& value) { append_number_systems(name, value.number_systems); });
-    generate_mapping(generator, locale_data.locales, "Unit"sv, "s_units"sv, "s_units_{}", [&](auto const& name, auto const& value) { append_units(name, value.units); });
-
-    auto append_from_string = [&](StringView enum_title, StringView enum_snake, auto const& values) {
-        HashValueMap<String> hashes;
-        hashes.ensure_capacity(values.size());
-
-        for (auto const& value : values)
-            hashes.set(value.hash(), format_identifier(enum_title, value));
-
-        generate_value_from_string(generator, "{}_from_string"sv, enum_title, enum_snake, move(hashes));
-    };
-
-    append_from_string("NumericSymbol"sv, "numeric_symbol"sv, locale_data.numeric_symbols);
+    generate_mapping(generator, locale_data.number_system_digits, "u32"sv, "s_number_systems_digits"sv, "s_number_systems_digits_{}", nullptr, [&](auto const& name, auto const& value) { append_map(name, "u32"sv, value); });
+    generate_mapping(generator, locale_data.locales, s_number_system_index_type, "s_locale_number_systems"sv, "s_number_systems_{}", nullptr, [&](auto const& name, auto const& value) { append_map(name, s_number_system_index_type, value.number_systems); });
+    generate_mapping(generator, locale_data.locales, s_unit_index_type, "s_locale_units"sv, "s_units_{}", nullptr, [&](auto const& name, auto const& value) { append_map(name, s_unit_index_type, value.units); });
 
     generator.append(R"~~~(
-static NumberSystem const* find_number_system(StringView locale, StringView system)
+static Optional<NumberSystem> keyword_to_number_system(KeywordNumbers keyword)
+{
+    switch (keyword) {)~~~");
+
+    for (auto const& number_system : locale_data.number_systems) {
+        generator.set("name"sv, format_identifier({}, number_system));
+        generator.append(R"~~~(
+    case KeywordNumbers::@name@:
+        return NumberSystem::@name@;)~~~");
+    }
+
+    generator.append(R"~~~(
+    default:
+        return {};
+    }
+}
+
+Optional<Span<u32 const>> get_digits_for_number_system(StringView system)
+{
+    auto number_system_keyword = keyword_nu_from_string(system);
+    if (!number_system_keyword.has_value())
+        return {};
+
+    auto number_system_value = keyword_to_number_system(*number_system_keyword);
+    if (!number_system_value.has_value())
+        return {};
+
+    auto number_system_index = to_underlying(*number_system_value);
+    return s_number_systems_digits[number_system_index];
+}
+
+static NumberSystemData const* find_number_system(StringView locale, StringView system)
 {
     auto locale_value = locale_from_string(locale);
     if (!locale_value.has_value())
         return nullptr;
 
-    auto locale_index = to_underlying(*locale_value) - 1; // Subtract 1 because 0 == Locale::None.
-    auto const& number_systems = s_number_systems.at(locale_index);
-
-    for (auto const& number_system : number_systems) {
-        if (system == s_string_list[number_system.system])
-            return &number_system;
-    };
-
-    return nullptr;
-}
-
-Optional<StringView> get_number_system_symbol(StringView locale, StringView system, StringView symbol)
-{
-    auto symbol_value = numeric_symbol_from_string(symbol);
-    if (!symbol_value.has_value())
+    auto number_system_keyword = keyword_nu_from_string(system);
+    if (!number_system_keyword.has_value())
         return {};
 
+    auto number_system_value = keyword_to_number_system(*number_system_keyword);
+    if (!number_system_value.has_value())
+        return {};
+
+    auto locale_index = to_underlying(*locale_value) - 1; // Subtract 1 because 0 == Locale::None.
+    auto number_system_index = to_underlying(*number_system_value);
+
+    auto const& number_systems = s_locale_number_systems.at(locale_index);
+    number_system_index = number_systems.at(number_system_index);
+
+    if (number_system_index == 0)
+        return nullptr;
+
+    return &s_number_systems.at(number_system_index);
+}
+
+Optional<StringView> get_number_system_symbol(StringView locale, StringView system, NumericSymbol symbol)
+{
     if (auto const* number_system = find_number_system(locale, system); number_system != nullptr) {
-        auto symbol_index = to_underlying(*symbol_value);
-        return s_string_list[number_system->symbols[symbol_index]];
+        auto symbols = s_numeric_symbol_lists.at(number_system->symbols);
+
+        auto symbol_index = to_underlying(symbol);
+        if (symbol_index >= symbols.size())
+            return {};
+
+        return s_string_list[symbols[symbol_index]];
     }
 
     return {};
@@ -789,57 +986,73 @@ Optional<StringView> get_number_system_symbol(StringView locale, StringView syst
 
 Optional<NumberGroupings> get_number_system_groupings(StringView locale, StringView system)
 {
+    auto locale_value = locale_from_string(locale);
+    if (!locale_value.has_value())
+        return {};
+
+    u8 minimum_grouping_digits = s_minimum_grouping_digits[to_underlying(*locale_value) - 1];
+
     if (auto const* number_system = find_number_system(locale, system); number_system != nullptr)
-        return NumberGroupings { number_system->primary_grouping_size, number_system->secondary_grouping_size };
+        return NumberGroupings { minimum_grouping_digits, number_system->primary_grouping_size, number_system->secondary_grouping_size };
     return {};
 }
 
-Optional<Unicode::NumberFormat> get_standard_number_system_format(StringView locale, StringView system, StandardNumberFormatType type)
+Optional<NumberFormat> get_standard_number_system_format(StringView locale, StringView system, StandardNumberFormatType type)
 {
     if (auto const* number_system = find_number_system(locale, system); number_system != nullptr) {
+        @number_format_index_type@ format_index = 0;
+
         switch (type) {
         case StandardNumberFormatType::Decimal:
-            return number_system->decimal_format.to_unicode_number_format();
+            format_index = number_system->decimal_format;
+            break;
         case StandardNumberFormatType::Currency:
-            return number_system->currency_format.to_unicode_number_format();
+            format_index = number_system->currency_format;
+            break;
         case StandardNumberFormatType::Accounting:
-            return number_system->accounting_format.to_unicode_number_format();
+            format_index = number_system->accounting_format;
+            break;
         case StandardNumberFormatType::Percent:
-            return number_system->percent_format.to_unicode_number_format();
+            format_index = number_system->percent_format;
+            break;
         case StandardNumberFormatType::Scientific:
-            return number_system->scientific_format.to_unicode_number_format();
+            format_index = number_system->scientific_format;
+            break;
         }
+
+        return s_number_formats[format_index].to_unicode_number_format();
     }
 
     return {};
 }
 
-Vector<Unicode::NumberFormat> get_compact_number_system_formats(StringView locale, StringView system, CompactNumberFormatType type)
+Vector<NumberFormat> get_compact_number_system_formats(StringView locale, StringView system, CompactNumberFormatType type)
 {
-    Vector<Unicode::NumberFormat> formats;
+    Vector<NumberFormat> formats;
 
     if (auto const* number_system = find_number_system(locale, system); number_system != nullptr) {
-        Span<NumberFormat const> number_formats;
+        @number_format_list_index_type@ number_format_list_index { 0 };
 
         switch (type) {
         case CompactNumberFormatType::DecimalLong:
-            number_formats = number_system->decimal_long_formats;
+            number_format_list_index = number_system->decimal_long_formats;
             break;
         case CompactNumberFormatType::DecimalShort:
-            number_formats = number_system->decimal_short_formats;
+            number_format_list_index = number_system->decimal_short_formats;
             break;
         case CompactNumberFormatType::CurrencyUnit:
-            number_formats = number_system->currency_unit_formats;
+            number_format_list_index = number_system->currency_unit_formats;
             break;
         case CompactNumberFormatType::CurrencyShort:
-            number_formats = number_system->currency_short_formats;
+            number_format_list_index = number_system->currency_short_formats;
             break;
         }
 
+        auto number_formats = s_number_format_lists.at(number_format_list_index);
         formats.ensure_capacity(number_formats.size());
 
-        for (auto const& number_format : number_formats)
-            formats.append(number_format.to_unicode_number_format());
+        for (auto number_format : number_formats)
+            formats.append(s_number_formats[number_format].to_unicode_number_format());
     }
 
     return formats;
@@ -852,9 +1065,11 @@ static Unit const* find_units(StringView locale, StringView unit)
         return nullptr;
 
     auto locale_index = to_underlying(*locale_value) - 1; // Subtract 1 because 0 == Locale::None.
-    auto const& locale_units = s_units.at(locale_index);
+    auto const& locale_units = s_locale_units.at(locale_index);
 
-    for (auto const& units : locale_units) {
+    for (auto unit_index : locale_units) {
+        auto const& units = s_units.at(unit_index);
+
         if (unit == s_string_list[units.unit])
             return &units;
     };
@@ -862,31 +1077,32 @@ static Unit const* find_units(StringView locale, StringView unit)
     return nullptr;
 }
 
-Vector<Unicode::NumberFormat> get_unit_formats(StringView locale, StringView unit, Style style)
+Vector<NumberFormat> get_unit_formats(StringView locale, StringView unit, Style style)
 {
-    Vector<Unicode::NumberFormat> formats;
+    Vector<NumberFormat> formats;
 
     if (auto const* units = find_units(locale, unit); units != nullptr) {
-        Span<NumberFormat const> number_formats;
+        @number_format_list_index_type@ number_format_list_index { 0 };
 
         switch (style) {
         case Style::Long:
-            number_formats = units->long_formats;
+            number_format_list_index = units->long_formats;
             break;
         case Style::Short:
-            number_formats = units->short_formats;
+            number_format_list_index = units->short_formats;
             break;
         case Style::Narrow:
-            number_formats = units->narrow_formats;
+            number_format_list_index = units->narrow_formats;
             break;
         default:
             VERIFY_NOT_REACHED();
         }
 
+        auto number_formats = s_number_format_lists.at(number_format_list_index);
         formats.ensure_capacity(number_formats.size());
 
-        for (auto const& number_format : number_formats)
-            formats.append(number_format.to_unicode_number_format());
+        for (auto number_format : number_formats)
+            formats.append(s_number_formats[number_format].to_unicode_number_format());
     }
 
     return formats;
@@ -895,40 +1111,34 @@ Vector<Unicode::NumberFormat> get_unit_formats(StringView locale, StringView uni
 }
 )~~~");
 
-    VERIFY(file.write(generator.as_string_view()));
+    TRY(file.write(generator.as_string_view().bytes()));
+    return {};
 }
 
 ErrorOr<int> serenity_main(Main::Arguments arguments)
 {
-    StringView generated_header_path = nullptr;
-    StringView generated_implementation_path = nullptr;
-    StringView numbers_path = nullptr;
-    StringView units_path = nullptr;
+    StringView generated_header_path;
+    StringView generated_implementation_path;
+    StringView core_path;
+    StringView numbers_path;
+    StringView units_path;
 
     Core::ArgsParser args_parser;
     args_parser.add_option(generated_header_path, "Path to the Unicode locale header file to generate", "generated-header-path", 'h', "generated-header-path");
     args_parser.add_option(generated_implementation_path, "Path to the Unicode locale implementation file to generate", "generated-implementation-path", 'c', "generated-implementation-path");
+    args_parser.add_option(core_path, "Path to cldr-core directory", "core-path", 'r', "core-path");
     args_parser.add_option(numbers_path, "Path to cldr-numbers directory", "numbers-path", 'n', "numbers-path");
     args_parser.add_option(units_path, "Path to cldr-units directory", "units-path", 'u', "units-path");
     args_parser.parse(arguments);
 
-    auto open_file = [&](StringView path) -> ErrorOr<NonnullRefPtr<Core::File>> {
-        if (path.is_empty()) {
-            args_parser.print_usage(stderr, arguments.argv[0]);
-            return Error::from_string_literal("Must provide all command line options"sv);
-        }
-
-        return Core::File::open(path, Core::OpenMode::ReadWrite);
-    };
-
-    auto generated_header_file = TRY(open_file(generated_header_path));
-    auto generated_implementation_file = TRY(open_file(generated_implementation_path));
+    auto generated_header_file = TRY(open_file(generated_header_path, Core::Stream::OpenMode::Write));
+    auto generated_implementation_file = TRY(open_file(generated_implementation_path, Core::Stream::OpenMode::Write));
 
     UnicodeLocaleData locale_data;
-    TRY(parse_all_locales(numbers_path, units_path, locale_data));
+    TRY(parse_all_locales(core_path, numbers_path, units_path, locale_data));
 
-    generate_unicode_locale_header(generated_header_file, locale_data);
-    generate_unicode_locale_implementation(generated_implementation_file, locale_data);
+    TRY(generate_unicode_locale_header(*generated_header_file, locale_data));
+    TRY(generate_unicode_locale_implementation(*generated_implementation_file, locale_data));
 
     return 0;
 }

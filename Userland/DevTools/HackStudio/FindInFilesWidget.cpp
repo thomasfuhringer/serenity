@@ -12,7 +12,7 @@
 #include <LibGUI/Button.h>
 #include <LibGUI/TableView.h>
 #include <LibGUI/TextBox.h>
-#include <LibGfx/FontDatabase.h>
+#include <LibGfx/Font/FontDatabase.h>
 
 namespace HackStudio {
 
@@ -31,7 +31,7 @@ public:
         __Count
     };
 
-    explicit SearchResultsModel(const Vector<Match>&& matches)
+    explicit SearchResultsModel(Vector<Match> const&& matches)
         : m_matches(move(matches))
     {
     }
@@ -118,7 +118,7 @@ FindInFilesWidget::FindInFilesWidget()
 
     auto& top_container = add<Widget>();
     top_container.set_layout<GUI::HorizontalBoxLayout>();
-    top_container.set_fixed_height(20);
+    top_container.set_fixed_height(22);
 
     m_textbox = top_container.add<GUI::TextBox>();
 

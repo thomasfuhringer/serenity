@@ -15,11 +15,11 @@ namespace Web::DOM {
 ShadowRoot::ShadowRoot(Document& document, Element& host)
     : DocumentFragment(document)
 {
-    set_host(host);
+    set_host(&host);
 }
 
 // https://dom.spec.whatwg.org/#ref-for-get-the-parent%E2%91%A6
-EventTarget* ShadowRoot::get_parent(const Event& event)
+EventTarget* ShadowRoot::get_parent(Event const& event)
 {
     if (!event.composed()) {
         auto& events_first_invocation_target = verify_cast<Node>(*event.path().first().invocation_target);
@@ -28,11 +28,6 @@ EventTarget* ShadowRoot::get_parent(const Event& event)
     }
 
     return host();
-}
-
-RefPtr<Layout::Node> ShadowRoot::create_layout_node()
-{
-    return adopt_ref(*new Layout::BlockContainer(document(), this, CSS::ComputedValues {}));
 }
 
 // https://w3c.github.io/DOM-Parsing/#dom-innerhtml-innerhtml
@@ -44,9 +39,7 @@ String ShadowRoot::inner_html() const
 // https://w3c.github.io/DOM-Parsing/#dom-innerhtml-innerhtml
 ExceptionOr<void> ShadowRoot::set_inner_html(String const& markup)
 {
-    auto result = DOMParsing::inner_html_setter(*this, markup);
-    if (result.is_exception())
-        return result.exception();
+    TRY(DOMParsing::inner_html_setter(*this, markup));
 
     set_needs_style_update(true);
     return {};

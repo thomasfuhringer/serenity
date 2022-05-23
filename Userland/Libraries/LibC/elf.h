@@ -145,7 +145,7 @@ typedef struct elfhdr {
     Elf32_Half e_shentsize;           /* section header entry size */
     Elf32_Half e_shnum;               /* number of section header entries */
     Elf32_Half e_shstrndx;            /* section header table's "section
-					   header string table" entry offset */
+                                           header string table" entry offset */
 } Elf32_Ehdr;
 
 typedef struct {
@@ -223,7 +223,7 @@ typedef struct {
 /* Section Header */
 typedef struct {
     Elf32_Word sh_name;      /* name - index into section header
-					   string table section */
+                                           string table section */
     Elf32_Word sh_type;      /* type */
     Elf32_Word sh_flags;     /* flags */
     Elf32_Addr sh_addr;      /* address */
@@ -277,6 +277,7 @@ typedef struct {
 #define SHT_PREINIT_ARRAY 16        /* ptrs to funcs called before init */
 #define SHT_GROUP 17                /* defines a section group */
 #define SHT_SYMTAB_SHNDX 18         /* Section indices (see SHN_XINDEX). */
+#define SHT_RELR 19                 /* relative-only relocation section */
 #define SHT_LOOS 0x60000000         /* reserved range for OS specific */
 #define SHT_SUNW_dof 0x6ffffff4     /* used by dtrace */
 #define SHT_GNU_LIBLIST 0x6ffffff7  /* libraries to be prelinked */
@@ -380,6 +381,7 @@ typedef struct {
 #define STT_SECTION 3 /* section */
 #define STT_FILE 4    /* file */
 #define STT_TLS 6     /* thread local storage */
+#define STT_GNU_IFUNC 10
 #define STT_LOPROC 13 /* reserved range for processor */
 #define STT_HIPROC 15 /*  specific symbol types */
 
@@ -439,6 +441,9 @@ typedef struct {
 #    define ELF64_R_SYM(info) ((info)&0xFFFFFFFF)
 #    define ELF64_R_INFO(s, t) (((uint64_t)swap32(t) << 32) + (uint32_t)(s))
 #endif /* __mips64__ && __MIPSEL__ */
+
+typedef Elf32_Word Elf32_Relr;
+typedef Elf64_Xword Elf64_Relr;
 
 /* Program Header */
 typedef struct {
@@ -545,6 +550,9 @@ typedef struct {
 #define DT_ENCODING 31        /* further DT_* follow encoding rules */
 #define DT_PREINIT_ARRAY 32   /* address of array of preinit func */
 #define DT_PREINIT_ARRAYSZ 33 /* size of array of preinit func */
+#define DT_RELRSZ 35          /* size of DT_RELR relocation table */
+#define DT_RELR 36            /* addr of DT_RELR relocation table */
+#define DT_RELRENT 37         /* size of DT_RELR relocation entry */
 #define DT_LOOS 0x6000000d    /* reserved range for OS */
 #define DT_HIOS 0x6ffff000    /*  specific dynamic array tags */
 #define DT_LOPROC 0x70000000  /* reserved range for processor */
@@ -740,6 +748,7 @@ struct elf_args {
 #    define Elf_Sym Elf32_Sym
 #    define Elf_Rel Elf32_Rel
 #    define Elf_RelA Elf32_Rela
+#    define Elf_Relr Elf32_Relr
 #    define Elf_Dyn Elf32_Dyn
 #    define Elf_Half Elf32_Half
 #    define Elf_Word Elf32_Word
@@ -767,6 +776,7 @@ struct elf_args {
 #    define Elf_Sym Elf64_Sym
 #    define Elf_Rel Elf64_Rel
 #    define Elf_RelA Elf64_Rela
+#    define Elf_Relr Elf64_Relr
 #    define Elf_Dyn Elf64_Dyn
 #    define Elf_Half Elf64_Half
 #    define Elf_Word Elf64_Word
@@ -803,6 +813,7 @@ struct elf_args {
 #define R_386_RELATIVE 8   /* Base address + Addned */
 #define R_386_TLS_TPOFF 14 /* Negative offset into the static TLS storage */
 #define R_386_TLS_TPOFF32 37
+#define R_386_IRELATIVE 42 /* PLT entry resolved indirectly at runtime */
 
 #define R_X86_64_NONE 0
 #define R_X86_64_64 1
@@ -810,3 +821,4 @@ struct elf_args {
 #define R_X86_64_JUMP_SLOT 7
 #define R_X86_64_RELATIVE 8
 #define R_X86_64_TPOFF64 18
+#define R_X86_64_IRELATIVE 37

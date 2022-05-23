@@ -21,7 +21,7 @@ public:
     static WeakRef* create(GlobalObject&, Object*);
 
     explicit WeakRef(Object*, Object& prototype);
-    virtual ~WeakRef() override;
+    virtual ~WeakRef() override = default;
 
     Object* value() const { return m_value; };
 
@@ -31,13 +31,6 @@ public:
 
 private:
     virtual void visit_edges(Visitor&) override;
-
-#ifdef JS_TRACK_ZOMBIE_CELLS
-    virtual void did_become_zombie() override
-    {
-        deregister();
-    }
-#endif
 
     Object* m_value { nullptr };
     u32 m_last_execution_generation { 0 };

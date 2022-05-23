@@ -2,36 +2,17 @@
 set -eu
 
 SCRIPT="$(dirname "${0}")"
-export SERENITY_ARCH="${SERENITY_ARCH:-i686}"
-export SERENITY_TOOLCHAIN="${SERENITY_TOOLCHAIN:-GCC}"
 
-if [ -z "${HOST_CC:=}" ]; then
-    export HOST_CC="${CC:=cc}"
-    export HOST_CXX="${CXX:=c++}"
-    export HOST_AR="${AR:=ar}"
-    export HOST_RANLIB="${RANLIB:=ranlib}"
-    export HOST_PATH="${PATH:=}"
-    export HOST_PKG_CONFIG_DIR="${PKG_CONFIG_DIR:=}"
-    export HOST_PKG_CONFIG_SYSROOT_DIR="${PKG_CONFIG_SYSROOT_DIR:=}"
-    export HOST_PKG_CONFIG_LIBDIR="${PKG_CONFIG_LIBDIR:=}"
+if [ -z "${SERENITY_STRIPPED_ENV:-}" ]; then
+    exec "${SCRIPT}/.strip_env.sh" "${@}"
 fi
+unset SERENITY_STRIPPED_ENV
 
-DESTDIR="/"
+export MAKEJOBS="${MAKEJOBS:-$(nproc)}"
 
 maybe_source() {
     if [ -f "$1" ]; then
         . "$1"
-    fi
-}
-
-enable_ccache() {
-    if command -v ccache &>/dev/null; then
-        ccache_tooldir="${SERENITY_BUILD_DIR}/ccache"
-        mkdir -p "$ccache_tooldir"
-        for tool in gcc g++ c++; do
-            ln -sf "$(command -v ccache)" "${ccache_tooldir}/${SERENITY_ARCH}-pc-serenity-${tool}"
-        done
-        export PATH="${ccache_tooldir}:$PATH"
     fi
 }
 
@@ -41,12 +22,36 @@ target_env() {
 
 target_env
 
+DESTDIR="${SERENITY_INSTALL_ROOT}"
+
+enable_ccache() {
+    if command -v ccache &>/dev/null; then
+        ccache_tooldir="${SERENITY_BUILD_DIR}/ccache"
+        mkdir -p "$ccache_tooldir"
+        if [ "$SERENITY_TOOLCHAIN" = "Clang" ]; then
+            for tool in clang clang++; do
+                ln -sf "$(command -v ccache)" "${ccache_tooldir}/$tool"
+            done
+        else
+            for tool in gcc g++ c++; do
+                ln -sf "$(command -v ccache)" "${ccache_tooldir}/${SERENITY_ARCH}-pc-serenity-${tool}"
+            done
+        fi
+        export PATH="${ccache_tooldir}:$PATH"
+    fi
+}
+
+enable_ccache
+
 host_env() {
     export CC="${HOST_CC}"
     export CXX="${HOST_CXX}"
     export AR="${HOST_AR}"
     export RANLIB="${HOST_RANLIB}"
     export PATH="${HOST_PATH}"
+    export READELF="${HOST_READELF}"
+    export OBJCOPY="${HOST_OBJCOPY}"
+    export STRIP="${HOST_STRIP}"
     export PKG_CONFIG_DIR="${HOST_PKG_CONFIG_DIR}"
     export PKG_CONFIG_SYSROOT_DIR="${HOST_PKG_CONFIG_SYSROOT_DIR}"
     export PKG_CONFIG_LIBDIR="${HOST_PKG_CONFIG_LIBDIR}"
@@ -55,11 +60,15 @@ host_env() {
 
 packagesdb="${DESTDIR}/usr/Ports/packages.db"
 
-makeopts=("-j$(nproc)")
+makeopts=("-j${MAKEJOBS}")
 installopts=()
 configscript=configure
 configopts=()
 useconfigure=false
+config_sub_path=config.sub
+config_guess_path=config.guess
+use_fresh_config_sub=false
+use_fresh_config_guess=false
 depends=()
 patchlevel=1
 auth_type=
@@ -76,8 +85,23 @@ shift
 
 : "${workdir:=$port-$version}"
 
+cleanup_git() {
+    echo "WARNING: Reverting changes to $workdir as we are in dev mode!"
+    run git clean -xffd >/dev/null 2>&1
+}
+
+# Use the local git target repo as the workdir
+# Make sure to clean it up afterwards
+if [ -n "${IN_SERENITY_PORT_DEV:-}" ]; then
+    echo "WARNING: All changes to the workdir in the current state (inside ./package.sh dev) are temporary!"
+    echo "         They will be reverted once the command exits!"
+    nongit_workdir="$workdir"
+    workdir=".$workdir-git"
+    trap "run cleanup_git" EXIT
+fi
+
 run_nocd() {
-    echo "+ $@ (nocd)"
+    echo "+ $@ (nocd)" >&2
     ("$@")
 }
 
@@ -87,7 +111,41 @@ run() {
 }
 
 run_replace_in_file() {
-    run perl -p -i -e "$1" $2
+    if [ "$(uname -s)" = "SerenityOS" ]; then
+        run sed -i "$1" $2
+    else
+        run perl -p -i -e "$1" $2
+    fi
+}
+
+get_new_config_sub() {
+    config_sub="${1:-config.sub}"
+    if [ ! -f "$workdir/$config_sub" ]; then
+        >&2 echo "Error: Downloaded $config_sub does not replace an existing file!"
+        exit 1
+    fi
+    if ! run grep -q serenity "$config_sub"; then
+        run do_download_file "https://git.savannah.gnu.org/gitweb/?p=config.git;a=blob_plain;f=config.sub" "${1:-config.sub}" false
+    fi
+}
+
+get_new_config_guess() {
+    config_guess="${1:-config.guess}"
+    if [ ! -f "$workdir/$config_guess" ]; then
+        >&2 echo "Error: Downloaded $config_guess does not replace an existing file!"
+        exit 1
+    fi
+    if ! run grep -q SerenityOS "$config_guess"; then
+        run do_download_file "https://git.savannah.gnu.org/gitweb/?p=config.git;a=blob_plain;f=config.guess" "${1:-config_guess}" false
+    fi
+}
+
+ensure_new_config_sub() {
+    get_new_config_sub "$config_sub_path"
+}
+
+ensure_new_config_guess() {
+    get_new_config_guess "$config_guess_path"
 }
 
 ensure_build() {
@@ -134,8 +192,8 @@ install_icon() {
             run convert "$icon[0]" -resize $icon_size "app-${icon_size}.png"
         fi
     done
-    run objcopy --add-section serenity_icon_s="app-16x16.png" "${DESTDIR}${launcher}"
-    run objcopy --add-section serenity_icon_m="app-32x32.png" "${DESTDIR}${launcher}"
+    run $OBJCOPY --add-section serenity_icon_s="app-16x16.png" "${DESTDIR}${launcher}"
+    run $OBJCOPY --add-section serenity_icon_m="app-32x32.png" "${DESTDIR}${launcher}"
 }
 
 install_main_launcher() {
@@ -191,6 +249,31 @@ func_defined pre_fetch || pre_fetch() {
 func_defined post_fetch || post_fetch() {
     :
 }
+
+do_download_file() {
+    local url="$1"
+    local filename="$2"
+    local accept_existing="${3:-true}"
+
+    echo "Downloading URL: ${url}"
+
+    # FIXME: Serenity's curl port does not support https, even with openssl installed.
+    if which curl >/dev/null 2>&1 && ! curl https://example.com -so /dev/null; then
+        url=$(echo "$url" | sed "s/^https:\/\//http:\/\//")
+    fi
+
+    # download files
+    if $accept_existing && [ -f "$filename" ]; then
+        echo "$filename already exists"
+    else
+        if which curl; then
+            run_nocd curl ${curlopts:-} "$url" -L -o "$filename"
+        else
+            run_nocd pro "$url" > "$filename"
+        fi
+    fi
+}
+
 fetch() {
     pre_fetch
 
@@ -209,23 +292,7 @@ fetch() {
         for f in $files; do
             IFS=$OLDIFS
             read url filename auth_sum<<< $(echo "$f")
-            echo "Downloading URL: ${url}"
-
-            # FIXME: Serenity's curl port does not support https, even with openssl installed.
-            if which curl >/dev/null 2>&1 && ! curl https://example.com -so /dev/null; then
-                url=$(echo "$url" | sed "s/^https:\/\//http:\/\//")
-            fi
-
-            # download files
-            if [ -f "$filename" ]; then
-                echo "$filename already exists"
-            else
-                if which curl; then
-                    run_nocd curl ${curlopts:-} "$url" -L -o "$filename"
-                else
-                    run_nocd pro "$url" > "$filename"
-                fi
-            fi
+            do_download_file "$url" "$filename"
         done
 
         verification_failed=0
@@ -324,13 +391,17 @@ fetch() {
     post_fetch
 }
 
+func_defined pre_install || pre_install() {
+    :
+}
+
 func_defined pre_patch || pre_patch() {
     :
 }
 
 func_defined patch_internal || patch_internal() {
     # patch if it was not yet patched (applying patches multiple times doesn't work!)
-    if [ -d patches ]; then
+    if [ -z "${IN_SERENITY_PORT_DEV:-}" ] && [ -d patches ]; then
         for filepath in patches/*.patch; do
             filename=$(basename $filepath)
             if [ ! -f "$workdir"/.${filename}_applied ]; then
@@ -360,7 +431,11 @@ func_defined post_install || post_install() {
     echo
 }
 func_defined clean || clean() {
-    rm -rf "$workdir" *.out
+    if [ -z "${IN_SERENITY_PORT_DEV:-}" ]; then
+        rm -rf "$workdir" *.out
+    else
+        rm -rf "$nongit_workdir" *.out
+    fi
 }
 func_defined clean_dist || clean_dist() {
     OLDIFS=$IFS
@@ -372,7 +447,11 @@ func_defined clean_dist || clean_dist() {
     done
 }
 func_defined clean_all || clean_all() {
-    rm -rf "$workdir" *.out
+    if [ -z "${IN_SERENITY_PORT_DEV:-}" ]; then
+        rm -rf "$workdir" *.out
+    else
+        rm -rf "$nongit_workdir" *.out
+    fi
     OLDIFS=$IFS
     IFS=$'\n'
     for f in $files; do
@@ -456,6 +535,12 @@ do_configure() {
     ensure_build
     if [ "$useconfigure" = "true" ]; then
         echo "Configuring $port..."
+        if "$use_fresh_config_sub"; then
+            ensure_new_config_sub
+        fi
+        if "$use_fresh_config_guess"; then
+            ensure_new_config_guess
+        fi
         pre_configure
         configure
         post_configure
@@ -470,6 +555,7 @@ do_build() {
 }
 do_install() {
     ensure_build
+    pre_install
     echo "Installing $port..."
     install
     install_main_launcher
@@ -494,18 +580,22 @@ do_uninstall() {
     uninstall
 }
 do_showproperty() {
-    if ! declare -p "${1}" > /dev/null 2>&1; then
-        echo "Property '$1' is not set." >&2
-        exit 1
-    fi
-    property_declaration="$(declare -p "${1}")"
-    if [[ "$property_declaration" =~ "declare -a" ]]; then
-        prop_array="${1}[@]"
-        # Some magic to avoid empty arrays being considered unset.
-        echo "${!prop_array+"${!prop_array}"}"
-    else
-        echo ${!1}
-    fi
+    while [ $# -gt 0 ]; do
+        if ! declare -p "${1}" > /dev/null 2>&1; then
+            echo "Property '$1' is not set." >&2
+            exit 1
+        fi
+        property_declaration="$(declare -p "${1}")"
+        if [[ "$property_declaration" =~ "declare -a" ]]; then
+            prop_array="${1}[@]"
+            # Some magic to avoid empty arrays being considered unset.
+            echo "${!prop_array+"${!prop_array}"}"
+        else
+            echo ${!1}
+        fi
+        printf '\n'
+        shift
+    done
 }
 do_all() {
     do_installdepends
@@ -525,6 +615,224 @@ do_shell() {
     echo "End of package shell. Back to the User shell."
 }
 
+do_generate_patch_readme() {
+    if [ ! -d patches ]; then
+        >&2 echo "Error: Port $port does not have any patches"
+        exit 1
+    fi
+
+    if [ -f patches/ReadMe.md  ]; then
+        read -N1 -rp \
+            "A ReadMe.md already exists, overwrite? (N/y) " should_overwrite
+        echo
+        if [ "${should_overwrite,,}" != y ]; then
+            >&2 echo "Not overwriting Ports/$port/patches/ReadMe.md"
+            exit 0
+        fi
+    fi
+
+    local tempdir="$(pwd)/.patches.tmp"
+    rm -fr "$tempdir"
+    mkdir "$tempdir"
+
+    echo "# Patches for $port on SerenityOS" > patches/ReadMe.md
+    echo >> patches/ReadMe.md
+
+    pushd patches
+
+    local count=0
+    for patch in *.patch; do
+        git mailinfo \
+            "$tempdir/$patch.msg" \
+            /dev/null \
+            < "$patch" \
+            > "$tempdir/$patch.info" \
+            2> "$tempdir/$patch.error" \
+        || {
+            rc=$?
+            >&2 echo "Failed to extract patch info from $patch"
+            >&2 echo "git returned $rc and said:"
+            >&2 cat "$tempdir/$patch.error"
+            exit 1
+        }
+
+        (
+            grep 'Subject: ' "$tempdir/$patch.info" | sed -e 's/Subject: \(.*\)$/\1/'
+            echo
+            cat "$tempdir/$patch.msg"
+        ) > "$tempdir/$patch.desc"
+
+
+        if [ ! -s "$tempdir/$patch.desc" ]; then
+            >&2 echo "WARNING: $patch does not contain a valid git patch or is missing a commit message, and is going to be skipped!"
+            continue
+        fi
+
+        {
+            echo "## \`$patch\`"
+            echo
+            sed -e '/^Co-Authored-By: /d' < "$tempdir/$patch.desc"
+            echo
+        } >> ReadMe.md
+        count=$((count + 1))
+    done
+
+    popd
+
+    >&2 echo "Successfully generated entries for $count patch(es) in patches/ReadMe.md."
+}
+
+launch_user_shell() {
+    env \
+        IN_SERENITY_PORT_DEV="$port" \
+        "${SHELL:-bash}" || \
+    true
+}
+
+prompt_yes_no() {
+    read -N1 -rp \
+        "$1 (N/y) " result
+    2>&1 echo
+    if [ "${result,,}" == y ]; then
+        return 0
+    else
+        return 1
+    fi
+}
+
+prompt_yes_no_default_yes() {
+    read -N1 -rp \
+        "$1 (Y/n) " result
+    2>&1 echo
+    if [ "${result,,}" == n ]; then
+        return 1
+    else
+        return 0
+    fi
+}
+
+do_dev() {
+    if [ -n "${IN_SERENITY_PORT_DEV:-}"  ]; then
+        >&2 echo "Error: Already in dev environment for $IN_SERENITY_PORT_DEV"
+        exit 1
+    fi
+
+    git_repo=".${workdir////_}-git"
+    [ -d "$git_repo" ] || (
+        mv "$workdir" "$git_repo"
+        pushd "$git_repo"
+        if [ ! -d "$git_repo/.git" ]; then
+            git init .
+            git add .
+            git commit -a -m 'Initial import'
+        fi
+        # Make it allow pushes from other local checkouts
+        git config receive.denyCurrentBranch ignore
+        # Import patches as commits, or ask the user to commit them
+        # if they're not git patches already.
+        if [ -d ../patches ] && [ -n "$(find ../patches -maxdepth 1 -name '*.patch' -print -quit)" ]; then
+            for patch in ../patches/*.patch; do
+                if [ -f "$workdir/.$(basename $patch).applied" ]; then
+                    continue
+                fi
+
+                echo "Importing patch $patch..."
+                git am --keep-cr "$patch" >/dev/null 2>&1 || {
+                    git am --abort >/dev/null 2>&1 || true
+                    if git apply < $patch; then
+                        git add -A
+                        if prompt_yes_no "- This patch does not appear to be a git patch, would you like to modify its changes before continuing?"; then
+                            >&2 echo "Apply any changes you want, commit them into the current repo and quit this shell to continue."
+
+                            launch_user_shell
+                        fi
+                        main_author=''
+                        co_authors=()
+                        patch_name_in_parent_directory="patches/$(basename "$patch")"
+                        while read -r line; do
+                            author="$(echo "$line" | cut -f2 -d'	')"
+                            if [[ -z "$main_author" ]]; then
+                                main_author="$author"
+                            else
+                                co_authors+=("$author")
+                            fi
+                        done < <(git -C .. shortlog -esn -- "$patch_name_in_parent_directory")
+
+                        if [[ -n "$main_author" ]]; then
+                            date="$(git -C .. log --format=%ad -n1 -- "$patch_name_in_parent_directory")"
+                            >&2 echo -n "- This patch was authored by $main_author"
+                            if [[ ${#co_authors[@]} -ne 0 ]]; then
+                                >&2 echo -n " (and ${co_authors[*]})"
+                            fi
+                            >&2 echo " at $date"
+                            if prompt_yes_no_default_yes "- Would you like to preserve that information?"; then
+                                trailers=()
+                                for a in "${co_authors[@]}"; do
+                                    trailers+=("--trailer" "Co-Authored-By: $a")
+                                done
+                                git commit --verbose --author "$main_author" --date "$date" "${trailers[@]}"
+                            else
+                                >&2 echo " Okay, using your current git identity as the author."
+                                git commit --verbose
+                            fi
+                        else
+                            git commit --verbose
+                        fi
+                    else
+                        # The patch didn't apply, oh no!
+                        # Ask the user to figure it out :shrug:
+                        git am "$patch" || true
+                        >&2 echo "- This patch does not apply, you'll be dropped into a shell to investigate and fix this, quit the shell when the problem is resolved."
+                        >&2 echo "Note that the patch needs to be committed into the current repository!"
+                        launch_user_shell
+                    fi
+
+                    if ! git diff --quiet >/dev/null 2>&1; then
+                        >&2 echo "- It appears that there are uncommitted changes from applying the previous patch:"
+                        for line in $(git diff --color=always); do
+                            echo "|  $line"
+                        done
+                        if prompt_yes_no "- Would you like to drop them before moving on to the next patch?"; then
+                            git clean -xf
+                        else
+                            >&2 echo "- The uncommitted changes will be committed with the next patch or left in the tree."
+                        fi
+                    fi
+                }
+            done
+        fi
+        popd
+    )
+
+    [ -d "$git_repo" ] && [ ! -d "$workdir" ] && {
+        git clone "$git_repo" "$workdir"
+    }
+
+    [ -d "$workdir/.git" ] || {
+        >&2 echo "$workdir does not appear to be a git repository, if you did this manually, you're on your own"
+        if prompt_yes_no "Otherwise, press 'y' to remove that directory and clone it again"; then
+            rm -fr "$workdir"
+            git clone "$git_repo" "$workdir"
+        else
+            exit 1
+        fi
+    }
+
+    local first_hash="$(git -C "$git_repo" rev-list --max-parents=0 HEAD)"
+
+    launch_user_shell
+
+    local current_hash="$(git -C "$git_repo" rev-parse HEAD)"
+
+    # If the hashes are the same, we have no patches, otherwise generate patches
+    if [ "$first_hash" != "$current_hash" ]; then
+        >&2 echo "Note: Regenerating patches as there are some commits in the port repo (started at $first_hash, now is $current_hash)"
+        rm -fr patches/*.patch
+        git -C "$git_repo" format-patch "$first_hash" -o "$(realpath patches)"
+        do_generate_patch_readme
+    fi
+}
+
 NO_GPG=false
 parse_arguments() {
     if [ -z "${1:-}" ]; then
@@ -532,7 +840,7 @@ parse_arguments() {
         return
     fi
     case "$1" in
-        fetch|patch|shell|configure|build|install|installdepends|clean|clean_dist|clean_all|uninstall|showproperty)
+        fetch|patch|shell|configure|build|install|installdepends|clean|clean_dist|clean_all|uninstall|showproperty|generate_patch_readme)
             method=$1
             shift
             do_${method} "$@"
@@ -545,8 +853,25 @@ parse_arguments() {
             shift
             parse_arguments $@
             ;;
+        interactive)
+            export PS1="(serenity):\w$ "
+            bash --norc
+            ;;
+        dev)
+            shift
+            if [ "${1:-}" != "--no-depends" ]; then
+                do_installdepends
+            fi
+            if [ -d "$workdir" ] && [ ! -d "$workdir/.git" ]; then
+                if prompt_yes_no "- Would you like to clean the working direcory (i.e. ./package.sh clean)?"; then
+                    do_clean
+                fi
+            fi
+            do_fetch
+            do_dev
+            ;;
         *)
-            >&2 echo "I don't understand $1! Supported arguments: fetch, patch, configure, build, install, installdepends, clean, clean_dist, clean_all, uninstall, showproperty."
+            >&2 echo "I don't understand $1! Supported arguments: fetch, patch, configure, build, install, installdepends, interactive, clean, clean_dist, clean_all, uninstall, showproperty, generate_patch_readme, dev."
             exit 1
             ;;
     esac

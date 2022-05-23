@@ -9,19 +9,26 @@ Make sure you have all the dependencies installed:
 ```console
 sudo apt install build-essential cmake curl libmpfr-dev libmpc-dev libgmp-dev e2fsprogs ninja-build qemu-system-gui qemu-system-x86 qemu-utils ccache rsync unzip texinfo
 ```
+Optional: `fuse2fs` for [building images without root](https://github.com/SerenityOS/serenity/pull/11224).
 
-#### GCC 10
+#### GCC 11
 
-On Ubuntu gcc-10 is available in the repositories of 20.04 (Focal) and later - add the `ubuntu-toolchain-r/test` PPA if you're running an older version:
+On Ubuntu gcc-11 is available in the repositories of 21.04 (Hirsuite) and later - add the `ubuntu-toolchain-r/test` PPA if you're running an older version:
 
 ```console
 sudo add-apt-repository ppa:ubuntu-toolchain-r/test
 ```
 
-Now on Ubuntu or Debian you can install gcc-10 with apt like this:
+Next, update your local package information from this repository:
 
 ```console
-sudo apt install gcc-10 g++-10
+sudo apt update
+```
+
+Now on Ubuntu or Debian you can install gcc-11 with apt like this:
+
+```console
+sudo apt install gcc-11 g++-11
 ```
 
 #### QEMU 5 or later
@@ -41,8 +48,9 @@ for details.
 ### Arch Linux / Manjaro
 
 ```console
-sudo pacman -S --needed base-devel cmake curl mpfr libmpc gmp e2fsprogs ninja qemu qemu-arch-extra ccache rsync unzip
+sudo pacman -S --needed base-devel cmake curl mpfr libmpc gmp e2fsprogs ninja qemu-desktop qemu-system-x86 qemu-system-aarch64 ccache rsync unzip
 ```
+Optional: `fuse2fs` for [building images without root](https://github.com/SerenityOS/serenity/pull/11224).
 
 ### Other systems
 

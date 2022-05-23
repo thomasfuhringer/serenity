@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2020, Ali Mohammad Pur <mpfard@serenityos.org>
+ * Copyright (c) 2022, Michiel Visser <opensource@webmichiel.nl>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -71,11 +72,19 @@ ByteBuffer TLSv12::build_hello()
     if (!m_context.extensions.SNI.is_null() && m_context.options.use_sni)
         sni_length = m_context.extensions.SNI.length();
 
+    auto elliptic_curves_length = 2 * m_context.options.elliptic_curves.size();
+    auto supported_ec_point_formats_length = m_context.options.supported_ec_point_formats.size();
+    bool supports_elliptic_curves = elliptic_curves_length && supported_ec_point_formats_length;
+
     // signature_algorithms: 2b extension ID, 2b extension length, 2b vector length, 2xN signatures and hashes
     extension_length += 2 + 2 + 2 + 2 * m_context.options.supported_signature_algorithms.size();
 
     if (sni_length)
         extension_length += sni_length + 9;
+
+    // Only send elliptic_curves and ec_point_formats extensions if both are supported
+    if (supports_elliptic_curves)
+        extension_length += 6 + elliptic_curves_length + 5 + supported_ec_point_formats_length;
 
     builder.append((u16)extension_length);
 
@@ -90,7 +99,7 @@ ByteBuffer TLSv12::build_hello()
         builder.append((u8)0);
         // SNI host length + value
         builder.append((u16)sni_length);
-        builder.append((const u8*)m_context.extensions.SNI.characters(), sni_length);
+        builder.append((u8 const*)m_context.extensions.SNI.characters(), sni_length);
     }
 
     // signature_algorithms extension
@@ -103,6 +112,22 @@ ByteBuffer TLSv12::build_hello()
     for (auto& entry : m_context.options.supported_signature_algorithms) {
         builder.append((u8)entry.hash);
         builder.append((u8)entry.signature);
+    }
+
+    if (supports_elliptic_curves) {
+        // elliptic_curves extension
+        builder.append((u16)HandshakeExtension::EllipticCurves);
+        builder.append((u16)(2 + elliptic_curves_length));
+        builder.append((u16)elliptic_curves_length);
+        for (auto& curve : m_context.options.elliptic_curves)
+            builder.append((u16)curve);
+
+        // ec_point_formats extension
+        builder.append((u16)HandshakeExtension::ECPointFormats);
+        builder.append((u16)(1 + supported_ec_point_formats_length));
+        builder.append((u8)supported_ec_point_formats_length);
+        for (auto& format : m_context.options.supported_ec_point_formats)
+            builder.append((u8)format);
     }
 
     if (alpn_length) {
@@ -155,7 +180,7 @@ ByteBuffer TLSv12::build_handshake_finished()
 
     auto digest = m_context.handshake_hash.digest();
     auto hashbuf = ReadonlyBytes { digest.immutable_data(), m_context.handshake_hash.digest_size() };
-    pseudorandom_function(outbuffer, m_context.master_key, (const u8*)"client finished", 15, hashbuf, dummy);
+    pseudorandom_function(outbuffer, m_context.master_key, (u8 const*)"client finished", 15, hashbuf, dummy);
 
     builder.append(outbuffer);
     auto packet = builder.build();
@@ -202,8 +227,8 @@ ssize_t TLSv12::handle_handshake_finished(ReadonlyBytes buffer, WritePacketStage
         m_handshake_timeout_timer = nullptr;
     }
 
-    if (on_tls_ready_to_write)
-        on_tls_ready_to_write(*this);
+    if (on_connected)
+        on_connected();
 
     return index + size;
 }
@@ -288,21 +313,6 @@ ssize_t TLSv12::handle_handshake_payload(ReadonlyBytes vbuffer)
                     VERIFY_NOT_REACHED();
                 }
                 payload_res = handle_certificate(buffer.slice(1, payload_size));
-                if (m_context.certificates.size()) {
-                    auto it = m_context.certificates.find_if([](const auto& cert) { return cert.is_valid(); });
-
-                    if (it.is_end()) {
-                        // no valid certificates
-                        dbgln("No valid certificates found");
-                        payload_res = (i8)Error::BadCertificate;
-                        m_context.critical_error = payload_res;
-                        break;
-                    }
-
-                    // swap the first certificate with the valid one
-                    if (it.index() != 0)
-                        swap(m_context.certificates[0], m_context.certificates[it.index()]);
-                }
             } else {
                 payload_res = (i8)Error::UnexpectedMessage;
             }
@@ -448,7 +458,8 @@ ssize_t TLSv12::handle_handshake_payload(ReadonlyBytes vbuffer)
                 write_packet(packet);
                 break;
             }
-            case Error::NotUnderstood: {
+            case Error::NotUnderstood:
+            case Error::OutOfMemory: {
                 auto packet = build_alert(true, (u8)AlertDescription::InternalError);
                 write_packet(packet);
                 break;
@@ -460,6 +471,11 @@ ssize_t TLSv12::handle_handshake_payload(ReadonlyBytes vbuffer)
             }
             case Error::DecryptionFailed: {
                 auto packet = build_alert(true, (u8)AlertDescription::DecryptionFailed);
+                write_packet(packet);
+                break;
+            }
+            case Error::NotSafe: {
+                auto packet = build_alert(true, (u8)AlertDescription::DecryptError);
                 write_packet(packet);
                 break;
             }

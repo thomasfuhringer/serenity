@@ -8,10 +8,7 @@ echo
 rm -rf generated_manpages || exit 1
 
 for i in ( \
-            (Eyes 1) \
             (UserspaceEmulator 1) \
-            (TelnetServer 1) \
-            (WebServer 1) \
             (config 1) \
             (fortune 1) \
             (grep 1) \
@@ -34,9 +31,7 @@ for i in ( \
             (traceroute 1) \
             (tree 1) \
             (truncate 1) \
-            (usermod 8) \
             (utmpupdate 1) \
-            (wc 1) \
         ) {
     filename="generated_manpages/man$i[1]/$i[0].md"
     mkdir -p "generated_manpages/man$i[1]"

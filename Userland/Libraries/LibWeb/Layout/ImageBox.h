@@ -16,15 +16,18 @@ class ImageBox
     : public ReplacedBox
     , public HTML::BrowsingContext::ViewportClient {
 public:
-    ImageBox(DOM::Document&, DOM::Element&, NonnullRefPtr<CSS::StyleProperties>, const ImageLoader&);
+    ImageBox(DOM::Document&, DOM::Element&, NonnullRefPtr<CSS::StyleProperties>, ImageLoader const&);
     virtual ~ImageBox() override;
 
     virtual void prepare_for_replaced_layout() override;
-    virtual void paint(PaintContext&, PaintPhase) override;
 
     const DOM::Element& dom_node() const { return static_cast<const DOM::Element&>(ReplacedBox::dom_node()); }
 
     bool renders_as_alt_text() const;
+
+    virtual RefPtr<Painting::Paintable> create_paintable() const override;
+
+    auto const& image_loader() const { return m_image_loader; }
 
 private:
     // ^BrowsingContext::ViewportClient
@@ -33,7 +36,7 @@ private:
     int preferred_width() const;
     int preferred_height() const;
 
-    const ImageLoader& m_image_loader;
+    ImageLoader const& m_image_loader;
 };
 
 }

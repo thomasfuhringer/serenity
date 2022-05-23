@@ -7,19 +7,17 @@
 #include <LibWeb/CSS/StyleProperties.h>
 #include <LibWeb/CSS/StyleValue.h>
 #include <LibWeb/DOM/Document.h>
-#include <LibWeb/DOM/Window.h>
 #include <LibWeb/HTML/HTMLBodyElement.h>
+#include <LibWeb/HTML/Window.h>
 
 namespace Web::HTML {
 
-HTMLBodyElement::HTMLBodyElement(DOM::Document& document, QualifiedName qualified_name)
+HTMLBodyElement::HTMLBodyElement(DOM::Document& document, DOM::QualifiedName qualified_name)
     : HTMLElement(document, move(qualified_name))
 {
 }
 
-HTMLBodyElement::~HTMLBodyElement()
-{
-}
+HTMLBodyElement::~HTMLBodyElement() = default;
 
 void HTMLBodyElement::apply_presentational_hints(CSS::StyleProperties& style) const
 {
@@ -39,7 +37,7 @@ void HTMLBodyElement::apply_presentational_hints(CSS::StyleProperties& style) co
     });
 }
 
-void HTMLBodyElement::parse_attribute(const FlyString& name, const String& value)
+void HTMLBodyElement::parse_attribute(FlyString const& name, String const& value)
 {
     HTMLElement::parse_attribute(name, value);
     if (name.equals_ignoring_case("link")) {

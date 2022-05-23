@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2018-2020, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2022, the SerenityOS developers.
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -43,7 +44,7 @@ public:
     };
 
     struct Node {
-        ~Node() { }
+        ~Node() = default;
 
         String name;
         String symlink_target;
@@ -102,14 +103,14 @@ public:
     {
         return adopt_ref(*new FileSystemModel(root_path, mode));
     }
-    virtual ~FileSystemModel() override;
+    virtual ~FileSystemModel() override = default;
 
     String root_path() const { return m_root_path; }
     void set_root_path(String);
     String full_path(ModelIndex const&) const;
     ModelIndex index(String path, int column) const;
 
-    void update_node_on_selection(ModelIndex const&, const bool);
+    void update_node_on_selection(ModelIndex const&, bool const);
     ModelIndex m_previously_selected_index {};
 
     Node const& node(ModelIndex const& index) const;
@@ -150,7 +151,7 @@ private:
     String name_for_uid(uid_t) const;
     String name_for_gid(gid_t) const;
 
-    Node const* node_for_path(String const&) const;
+    Optional<Node const&> node_for_path(String const&) const;
 
     HashMap<uid_t, String> m_user_names;
     HashMap<gid_t, String> m_group_names;

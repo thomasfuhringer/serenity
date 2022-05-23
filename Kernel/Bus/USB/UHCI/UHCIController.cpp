@@ -47,7 +47,7 @@ static constexpr u16 UHCI_FRAMELIST_FRAME_INVALID = 0x0001;
 
 // Port stuff
 static constexpr u8 UHCI_ROOT_PORT_COUNT = 2;
-static constexpr u16 UHCI_PORTSC_CURRRENT_CONNECT_STATUS = 0x0001;
+static constexpr u16 UHCI_PORTSC_CURRENT_CONNECT_STATUS = 0x0001;
 static constexpr u16 UHCI_PORTSC_CONNECT_STATUS_CHANGED = 0x0002;
 static constexpr u16 UHCI_PORTSC_PORT_ENABLED = 0x0004;
 static constexpr u16 UHCI_PORTSC_PORT_ENABLE_CHANGED = 0x0008;
@@ -56,7 +56,7 @@ static constexpr u16 UHCI_PORTSC_RESUME_DETECT = 0x40;
 static constexpr u16 UHCI_PORTSC_LOW_SPEED_DEVICE = 0x0100;
 static constexpr u16 UHCI_PORTSC_PORT_RESET = 0x0200;
 static constexpr u16 UHCI_PORTSC_SUSPEND = 0x1000;
-static constexpr u16 UCHI_PORTSC_NON_WRITE_CLEAR_BIT_MASK = 0x1FF5; // This is used to mask out the Write Clear bits making sure we don't accidentally clear them.
+static constexpr u16 UHCI_PORTSC_NON_WRITE_CLEAR_BIT_MASK = 0x1FF5; // This is used to mask out the Write Clear bits making sure we don't accidentally clear them.
 
 // *BSD and a few other drivers seem to use this number
 static constexpr u8 UHCI_NUMBER_OF_ISOCHRONOUS_TDS = 128;
@@ -76,7 +76,7 @@ ErrorOr<void> UHCIController::initialize()
     dmesgln("UHCI: I/O base {}", m_io_base);
     dmesgln("UHCI: Interrupt line: {}", interrupt_number());
 
-    spawn_port_proc();
+    TRY(spawn_port_process());
 
     TRY(reset());
     return start();
@@ -89,9 +89,7 @@ UNMAP_AFTER_INIT UHCIController::UHCIController(PCI::DeviceIdentifier const& pci
 {
 }
 
-UNMAP_AFTER_INIT UHCIController::~UHCIController()
-{
-}
+UNMAP_AFTER_INIT UHCIController::~UHCIController() = default;
 
 ErrorOr<void> UHCIController::reset()
 {
@@ -107,9 +105,7 @@ ErrorOr<void> UHCIController::reset()
     }
 
     // Let's allocate the physical page for the Frame List (which is 4KiB aligned)
-    auto vmobject = TRY(Memory::AnonymousVMObject::try_create_physically_contiguous_with_size(PAGE_SIZE));
-
-    m_framelist = TRY(MM.allocate_kernel_region_with_vmobject(move(vmobject), PAGE_SIZE, "UHCI Framelist", Memory::Region::Access::Write));
+    m_framelist = TRY(MM.allocate_dma_buffer_page("UHCI Framelist", Memory::Region::Access::Write));
     dbgln("UHCI: Allocated framelist at physical address {}", m_framelist->physical_page(0)->paddr());
     dbgln("UHCI: Framelist is at virtual address {}", m_framelist->vaddr());
     write_sofmod(64); // 1mS frame time
@@ -141,11 +137,9 @@ UNMAP_AFTER_INIT ErrorOr<void> UHCIController::create_structures()
     m_dummy_qh = allocate_queue_head();
 
     // Now the Transfer Descriptor pool
-    auto td_pool_vmobject = TRY(Memory::AnonymousVMObject::try_create_physically_contiguous_with_size(PAGE_SIZE));
-
     m_transfer_descriptor_pool = TRY(UHCIDescriptorPool<TransferDescriptor>::try_create("Transfer Descriptor Pool"sv));
 
-    m_isochronous_transfer_pool = TRY(MM.allocate_kernel_region_with_vmobject(move(td_pool_vmobject), PAGE_SIZE, "UHCI Isochronous Descriptor Pool", Memory::Region::Access::ReadWrite));
+    m_isochronous_transfer_pool = TRY(MM.allocate_dma_buffer_page("UHCI Isochronous Descriptor Pool", Memory::Region::Access::ReadWrite));
 
     // Set up the Isochronous Transfer Descriptor list
     m_iso_td_list.resize(UHCI_NUMBER_OF_ISOCHRONOUS_TDS);
@@ -436,6 +430,50 @@ ErrorOr<size_t> UHCIController::submit_control_transfer(Transfer& transfer)
     return transfer_size;
 }
 
+ErrorOr<size_t> UHCIController::submit_bulk_transfer(Transfer& transfer)
+{
+    Pipe& pipe = transfer.pipe();
+    dbgln_if(UHCI_DEBUG, "UHCI: Received bulk transfer for address {}. Root Hub is at address {}.", pipe.device_address(), m_root_hub->device_address());
+
+    // Create a new descriptor chain
+    TransferDescriptor* last_data_descriptor;
+    TransferDescriptor* data_descriptor_chain;
+    auto buffer_address = Ptr32<u8>(transfer.buffer_physical().as_ptr());
+    TRY(create_chain(pipe, transfer.pipe().direction() == Pipe::Direction::In ? PacketID::IN : PacketID::OUT, buffer_address, pipe.max_packet_size(), transfer.transfer_data_size(), &data_descriptor_chain, &last_data_descriptor));
+
+    last_data_descriptor->terminate();
+
+    if constexpr (UHCI_VERBOSE_DEBUG) {
+        if (data_descriptor_chain) {
+            dbgln("Data TD");
+            data_descriptor_chain->print();
+        }
+    }
+
+    QueueHead* transfer_queue = allocate_queue_head();
+    if (!transfer_queue) {
+        free_descriptor_chain(data_descriptor_chain);
+        return 0;
+    }
+
+    transfer_queue->attach_transfer_descriptor_chain(data_descriptor_chain);
+    transfer_queue->set_transfer(&transfer);
+
+    m_bulk_qh->attach_transfer_queue(*transfer_queue);
+
+    size_t transfer_size = 0;
+    while (!transfer.complete()) {
+        transfer_size = poll_transfer_queue(*transfer_queue);
+        dbgln_if(USB_DEBUG, "Transfer size: {}", transfer_size);
+    }
+
+    free_descriptor_chain(transfer_queue->get_first_td());
+    transfer_queue->free();
+    m_queue_head_pool->release_to_pool(transfer_queue);
+
+    return transfer_size;
+}
+
 size_t UHCIController::poll_transfer_queue(QueueHead& transfer_queue)
 {
     Transfer* transfer = transfer_queue.transfer();
@@ -468,15 +506,10 @@ size_t UHCIController::poll_transfer_queue(QueueHead& transfer_queue)
     return transfer_size;
 }
 
-void UHCIController::spawn_port_proc()
+ErrorOr<void> UHCIController::spawn_port_process()
 {
     RefPtr<Thread> usb_hotplug_thread;
-
-    auto process_name = KString::try_create("UHCI hotplug");
-    if (process_name.is_error())
-        TODO();
-
-    Process::create_kernel_process(usb_hotplug_thread, process_name.release_value(), [&] {
+    (void)Process::create_kernel_process(usb_hotplug_thread, TRY(KString::try_create("UHCI hotplug")), [&] {
         for (;;) {
             if (m_root_hub)
                 m_root_hub->check_for_port_updates();
@@ -484,9 +517,10 @@ void UHCIController::spawn_port_proc()
             (void)Thread::current()->sleep(Time::from_seconds(1));
         }
     });
+    return {};
 }
 
-bool UHCIController::handle_irq(const RegisterState&)
+bool UHCIController::handle_irq(RegisterState const&)
 {
     u32 status = read_usbsts();
 
@@ -511,7 +545,7 @@ void UHCIController::get_port_status(Badge<UHCIRootHub>, u8 port, HubStatus& hub
 
     u16 status = port == 0 ? read_portsc1() : read_portsc2();
 
-    if (status & UHCI_PORTSC_CURRRENT_CONNECT_STATUS)
+    if (status & UHCI_PORTSC_CURRENT_CONNECT_STATUS)
         hub_port_status.status |= PORT_STATUS_CURRENT_CONNECT_STATUS;
 
     if (status & UHCI_PORTSC_CONNECT_STATUS_CHANGED)
@@ -555,7 +589,7 @@ void UHCIController::reset_port(u8 port)
     VERIFY(port < NUMBER_OF_ROOT_PORTS);
 
     u16 port_data = port == 0 ? read_portsc1() : read_portsc2();
-    port_data &= UCHI_PORTSC_NON_WRITE_CLEAR_BIT_MASK;
+    port_data &= UHCI_PORTSC_NON_WRITE_CLEAR_BIT_MASK;
     port_data |= UHCI_PORTSC_PORT_RESET;
     if (port == 0)
         write_portsc1(port_data);
@@ -605,7 +639,7 @@ ErrorOr<void> UHCIController::set_port_feature(Badge<UHCIRootHub>, u8 port, HubF
         break;
     case HubFeatureSelector::PORT_SUSPEND: {
         u16 port_data = port == 0 ? read_portsc1() : read_portsc2();
-        port_data &= UCHI_PORTSC_NON_WRITE_CLEAR_BIT_MASK;
+        port_data &= UHCI_PORTSC_NON_WRITE_CLEAR_BIT_MASK;
         port_data |= UHCI_PORTSC_SUSPEND;
 
         if (port == 0)
@@ -632,7 +666,7 @@ ErrorOr<void> UHCIController::clear_port_feature(Badge<UHCIRootHub>, u8 port, Hu
     dbgln_if(UHCI_DEBUG, "UHCI: clear_port_feature: port={} feature_selector={}", port, (u8)feature_selector);
 
     u16 port_data = port == 0 ? read_portsc1() : read_portsc2();
-    port_data &= UCHI_PORTSC_NON_WRITE_CLEAR_BIT_MASK;
+    port_data &= UHCI_PORTSC_NON_WRITE_CLEAR_BIT_MASK;
 
     switch (feature_selector) {
     case HubFeatureSelector::PORT_ENABLE:

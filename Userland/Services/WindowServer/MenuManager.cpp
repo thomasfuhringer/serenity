@@ -6,7 +6,7 @@
  */
 
 #include <AK/Badge.h>
-#include <WindowServer/ClientConnection.h>
+#include <WindowServer/ConnectionFromClient.h>
 #include <WindowServer/MenuManager.h>
 #include <WindowServer/Screen.h>
 #include <WindowServer/WindowManager.h>
@@ -26,11 +26,7 @@ MenuManager::MenuManager()
     s_the = this;
 }
 
-MenuManager::~MenuManager()
-{
-}
-
-bool MenuManager::is_open(const Menu& menu) const
+bool MenuManager::is_open(Menu const& menu) const
 {
     for (size_t i = 0; i < m_open_menu_stack.size(); ++i) {
         if (&menu == m_open_menu_stack[i].ptr())
@@ -41,7 +37,7 @@ bool MenuManager::is_open(const Menu& menu) const
 
 void MenuManager::refresh()
 {
-    ClientConnection::for_each_client([&](ClientConnection& client) {
+    ConnectionFromClient::for_each_client([&](ConnectionFromClient& client) {
         client.for_each_menu([&](Menu& menu) {
             menu.redraw();
             return IterationDecision::Continue;
@@ -59,7 +55,7 @@ void MenuManager::event(Core::Event& event)
     }
 
     if (static_cast<Event&>(event).is_key_event()) {
-        auto& key_event = static_cast<const KeyEvent&>(event);
+        auto& key_event = static_cast<KeyEvent const&>(event);
 
         if (key_event.type() == Event::KeyUp && key_event.key() == Key_Escape) {
             close_everyone();
@@ -89,7 +85,7 @@ void MenuManager::event(Core::Event& event)
         if (event.type() == Event::KeyDown) {
 
             if (key_event.key() == Key_Left) {
-                auto it = m_open_menu_stack.find_if([&](const auto& other) { return m_current_menu == other.ptr(); });
+                auto it = m_open_menu_stack.find_if([&](auto const& other) { return m_current_menu == other.ptr(); });
                 VERIFY(!it.is_end());
 
                 // Going "back" a menu should be the previous menu in the stack
@@ -137,6 +133,17 @@ void MenuManager::event(Core::Event& event)
                     m_current_menu->open_hovered_item(key_event.modifiers() & KeyModifier::Mod_Ctrl);
                 return;
             }
+
+            if (key_event.key() == Key_Space) {
+                auto* hovered_item = m_current_menu->hovered_item();
+                if (!hovered_item || !hovered_item->is_enabled())
+                    return;
+                if (!hovered_item->is_checkable())
+                    return;
+
+                m_current_menu->open_hovered_item(true);
+            }
+
             m_current_menu->dispatch_event(event);
         }
     }
@@ -202,7 +209,7 @@ void MenuManager::handle_mouse_event(MouseEvent& mouse_event)
     }
 }
 
-void MenuManager::close_all_menus_from_client(Badge<ClientConnection>, ClientConnection& client)
+void MenuManager::close_all_menus_from_client(Badge<ConnectionFromClient>, ConnectionFromClient& client)
 {
     if (!has_open_menu())
         return;
@@ -235,7 +242,7 @@ void MenuManager::close_everyone_not_in_lineage(Menu& menu)
     close_menus(menus_to_close);
 }
 
-void MenuManager::close_menus(const Vector<Menu&>& menus)
+void MenuManager::close_menus(Vector<Menu&>& menus)
 {
     for (auto& menu : menus) {
         if (&menu == m_current_menu)

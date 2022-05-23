@@ -26,37 +26,43 @@ public:
     static constexpr ForSearchTag ForSearch {};
 
     // Intentionally not explicit. (To allow suggesting bare strings)
-    CompletionSuggestion(const String& completion)
+    CompletionSuggestion(String const& completion)
         : CompletionSuggestion(completion, "", {})
     {
     }
 
-    CompletionSuggestion(const String& completion, ForSearchTag)
+    CompletionSuggestion(String const& completion, ForSearchTag)
         : text_string(completion)
     {
     }
 
-    CompletionSuggestion(StringView completion, StringView trailing_trivia)
-        : CompletionSuggestion(completion, trailing_trivia, {})
+    CompletionSuggestion(StringView completion, StringView trailing_trivia, StringView display_trivia = "")
+        : CompletionSuggestion(completion, trailing_trivia, display_trivia, {})
     {
     }
 
-    CompletionSuggestion(StringView completion, StringView trailing_trivia, Style style);
+    CompletionSuggestion(StringView completion, StringView trailing_trivia, StringView display_trivia, Style style);
 
-    bool operator==(const CompletionSuggestion& suggestion) const
+    bool operator==(CompletionSuggestion const& suggestion) const
     {
         return suggestion.text_string == text_string;
     }
 
     Vector<u32> text;
     Vector<u32> trailing_trivia;
+    Vector<u32> display_trivia;
     Style style;
     size_t start_index { 0 };
     size_t input_offset { 0 };
+    size_t static_offset { 0 };
+    size_t invariant_offset { 0 };
+    bool allow_commit_without_listing { true };
 
     Utf32View text_view;
     Utf32View trivia_view;
+    Utf32View display_trivia_view;
     String text_string;
+    String display_trivia_string;
     bool is_valid { false };
 };
 
@@ -73,7 +79,7 @@ public:
     size_t next_index() const { return m_next_suggestion_index; }
     void set_start_index(size_t index) const { m_last_displayed_suggestion_index = index; }
 
-    size_t for_each_suggestion(Function<IterationDecision(const CompletionSuggestion&, size_t)>) const;
+    size_t for_each_suggestion(Function<IterationDecision(CompletionSuggestion const&, size_t)>) const;
 
     enum CompletionMode {
         DontComplete,
@@ -93,24 +99,23 @@ public:
             size_t end;
         } offset_region_to_remove { 0, 0 }; // The region to remove as defined by [start, end) translated by (old_cursor + new_cursor_offset)
 
+        // This bit of data will be removed, but restored if the suggestion is rejected.
+        size_t static_offset_from_cursor { 0 };
+
         Vector<Utf32View> insert {};
 
         Optional<Style> style_to_apply {};
+
+        bool avoid_committing_to_single_suggestion { false };
     };
 
     CompletionAttemptResult attempt_completion(CompletionMode, size_t initiation_start_index);
 
     void next();
     void previous();
-    void set_suggestion_variants(size_t static_offset, size_t invariant_offset, size_t suggestion_index) const
-    {
-        m_next_suggestion_index = suggestion_index;
-        m_next_suggestion_static_offset = static_offset;
-        m_next_suggestion_invariant_offset = invariant_offset;
-    }
 
-    const CompletionSuggestion& suggest();
-    const CompletionSuggestion& current_suggestion() const { return m_last_shown_suggestion; }
+    CompletionSuggestion const& suggest();
+    CompletionSuggestion const& current_suggestion() const { return m_last_shown_suggestion; }
     bool is_current_suggestion_complete() const { return m_last_shown_suggestion_was_complete; }
 
     void reset()
@@ -119,6 +124,7 @@ public:
         m_last_shown_suggestion_display_length = 0;
         m_suggestions.clear();
         m_last_displayed_suggestion_index = 0;
+        m_next_suggestion_index = 0;
     }
 
 private:
@@ -131,8 +137,6 @@ private:
     size_t m_last_shown_suggestion_display_length { 0 };
     bool m_last_shown_suggestion_was_complete { false };
     mutable size_t m_next_suggestion_index { 0 };
-    mutable size_t m_next_suggestion_invariant_offset { 0 };
-    mutable size_t m_next_suggestion_static_offset { 0 };
     size_t m_largest_common_suggestion_prefix_length { 0 };
     mutable size_t m_last_displayed_suggestion_index { 0 };
     size_t m_selected_suggestion_index { 0 };

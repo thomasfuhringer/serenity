@@ -44,11 +44,11 @@ public:
     String() = default;
 
     String(StringView view)
+        : m_impl(StringImpl::create(view.characters_without_null_termination(), view.length()))
     {
-        m_impl = StringImpl::create(view.characters_without_null_termination(), view.length());
     }
 
-    String(const String& other)
+    String(String const& other)
         : m_impl(const_cast<String&>(other).m_impl)
     {
     }
@@ -58,12 +58,12 @@ public:
     {
     }
 
-    String(const char* cstring, ShouldChomp shouldChomp = NoChomp)
+    String(char const* cstring, ShouldChomp shouldChomp = NoChomp)
         : m_impl(StringImpl::create(cstring, shouldChomp))
     {
     }
 
-    String(const char* cstring, size_t length, ShouldChomp shouldChomp = NoChomp)
+    String(char const* cstring, size_t length, ShouldChomp shouldChomp = NoChomp)
         : m_impl(StringImpl::create(cstring, length, shouldChomp))
     {
     }
@@ -73,12 +73,12 @@ public:
     {
     }
 
-    String(const StringImpl& impl)
+    String(StringImpl const& impl)
         : m_impl(const_cast<StringImpl&>(impl))
     {
     }
 
-    String(const StringImpl* impl)
+    String(StringImpl const* impl)
         : m_impl(const_cast<StringImpl*>(impl))
     {
     }
@@ -93,7 +93,7 @@ public:
     {
     }
 
-    String(const FlyString&);
+    String(FlyString const&);
 
     [[nodiscard]] static String repeated(char, size_t count);
     [[nodiscard]] static String repeated(StringView, size_t count);
@@ -102,10 +102,10 @@ public:
     [[nodiscard]] static String roman_number_from(size_t value);
 
     template<class SeparatorType, class CollectionType>
-    [[nodiscard]] static String join(const SeparatorType& separator, const CollectionType& collection)
+    [[nodiscard]] static String join(SeparatorType const& separator, CollectionType const& collection, StringView fmtstr = "{}"sv)
     {
         StringBuilder builder;
-        builder.join(separator, collection);
+        builder.join(separator, collection, fmtstr);
         return builder.build();
     }
 
@@ -124,17 +124,21 @@ public:
 
     [[nodiscard]] bool is_whitespace() const { return StringUtils::is_whitespace(*this); }
 
-#ifndef KERNEL
     [[nodiscard]] String trim(StringView characters, TrimMode mode = TrimMode::Both) const
     {
-        return StringUtils::trim(view(), characters, mode);
+        auto trimmed_view = StringUtils::trim(view(), characters, mode);
+        if (view() == trimmed_view)
+            return *this;
+        return trimmed_view;
     }
 
     [[nodiscard]] String trim_whitespace(TrimMode mode = TrimMode::Both) const
     {
-        return StringUtils::trim_whitespace(view(), mode);
+        auto trimmed_view = StringUtils::trim_whitespace(view(), mode);
+        if (view() == trimmed_view)
+            return *this;
+        return trimmed_view;
     }
-#endif
 
     [[nodiscard]] bool equals_ignoring_case(StringView) const;
 
@@ -144,6 +148,7 @@ public:
     [[nodiscard]] Vector<String> split_limit(char separator, size_t limit, bool keep_empty = false) const;
     [[nodiscard]] Vector<String> split(char separator, bool keep_empty = false) const;
     [[nodiscard]] Vector<StringView> split_view(char separator, bool keep_empty = false) const;
+    [[nodiscard]] Vector<StringView> split_view(Function<bool(char)> separator, bool keep_empty = false) const;
 
     [[nodiscard]] Optional<size_t> find(char needle, size_t start = 0) const { return StringUtils::find(*this, needle, start); }
     [[nodiscard]] Optional<size_t> find(StringView needle, size_t start = 0) const { return StringUtils::find(*this, needle, start); }
@@ -162,7 +167,7 @@ public:
     [[nodiscard]] ALWAYS_INLINE bool is_empty() const { return length() == 0; }
     [[nodiscard]] ALWAYS_INLINE size_t length() const { return m_impl ? m_impl->length() : 0; }
     // Includes NUL-terminator, if non-nullptr.
-    [[nodiscard]] ALWAYS_INLINE const char* characters() const { return m_impl ? m_impl->characters() : nullptr; }
+    [[nodiscard]] ALWAYS_INLINE char const* characters() const { return m_impl ? m_impl->characters() : nullptr; }
 
     [[nodiscard]] bool copy_characters_to_buffer(char* buffer, size_t buffer_size) const;
 
@@ -174,13 +179,13 @@ public:
         return {};
     }
 
-    [[nodiscard]] ALWAYS_INLINE const char& operator[](size_t i) const
+    [[nodiscard]] ALWAYS_INLINE char const& operator[](size_t i) const
     {
         VERIFY(!is_null());
         return (*m_impl)[i];
     }
 
-    using ConstIterator = SimpleIterator<const String, const char>;
+    using ConstIterator = SimpleIterator<const String, char const>;
 
     [[nodiscard]] constexpr ConstIterator begin() const { return ConstIterator::begin(*this); }
     [[nodiscard]] constexpr ConstIterator end() const { return ConstIterator::end(*this); }
@@ -190,27 +195,27 @@ public:
     [[nodiscard]] bool starts_with(char) const;
     [[nodiscard]] bool ends_with(char) const;
 
-    bool operator==(const String&) const;
-    bool operator!=(const String& other) const { return !(*this == other); }
+    bool operator==(String const&) const;
+    bool operator!=(String const& other) const { return !(*this == other); }
 
     bool operator==(StringView) const;
     bool operator!=(StringView other) const { return !(*this == other); }
 
-    bool operator==(const FlyString&) const;
-    bool operator!=(const FlyString& other) const { return !(*this == other); }
+    bool operator==(FlyString const&) const;
+    bool operator!=(FlyString const& other) const { return !(*this == other); }
 
-    bool operator<(const String&) const;
-    bool operator<(const char*) const;
-    bool operator>=(const String& other) const { return !(*this < other); }
-    bool operator>=(const char* other) const { return !(*this < other); }
+    bool operator<(String const&) const;
+    bool operator<(char const*) const;
+    bool operator>=(String const& other) const { return !(*this < other); }
+    bool operator>=(char const* other) const { return !(*this < other); }
 
-    bool operator>(const String&) const;
-    bool operator>(const char*) const;
-    bool operator<=(const String& other) const { return !(*this > other); }
-    bool operator<=(const char* other) const { return !(*this > other); }
+    bool operator>(String const&) const;
+    bool operator>(char const*) const;
+    bool operator<=(String const& other) const { return !(*this > other); }
+    bool operator<=(char const* other) const { return !(*this > other); }
 
-    bool operator==(const char* cstring) const;
-    bool operator!=(const char* cstring) const { return !(*this == cstring); }
+    bool operator==(char const* cstring) const;
+    bool operator!=(char const* cstring) const { return !(*this == cstring); }
 
     [[nodiscard]] String isolated_copy() const;
 
@@ -220,7 +225,7 @@ public:
     }
 
     [[nodiscard]] StringImpl* impl() { return m_impl.ptr(); }
-    [[nodiscard]] const StringImpl* impl() const { return m_impl.ptr(); }
+    [[nodiscard]] StringImpl const* impl() const { return m_impl.ptr(); }
 
     String& operator=(String&& other)
     {
@@ -229,7 +234,7 @@ public:
         return *this;
     }
 
-    String& operator=(const String& other)
+    String& operator=(String const& other)
     {
         if (this != &other)
             m_impl = const_cast<String&>(other).m_impl;
@@ -258,17 +263,17 @@ public:
     [[nodiscard]] ByteBuffer to_byte_buffer() const;
 
     template<typename BufferType>
-    [[nodiscard]] static String copy(const BufferType& buffer, ShouldChomp should_chomp = NoChomp)
+    [[nodiscard]] static String copy(BufferType const& buffer, ShouldChomp should_chomp = NoChomp)
     {
         if (buffer.is_empty())
             return empty();
-        return String((const char*)buffer.data(), buffer.size(), should_chomp);
+        return String((char const*)buffer.data(), buffer.size(), should_chomp);
     }
 
     [[nodiscard]] static String vformatted(StringView fmtstr, TypeErasedFormatParams&);
 
     template<typename... Parameters>
-    [[nodiscard]] static String formatted(CheckedFormatString<Parameters...>&& fmtstr, const Parameters&... parameters)
+    [[nodiscard]] static String formatted(CheckedFormatString<Parameters...>&& fmtstr, Parameters const&... parameters)
     {
         VariadicFormatParams variadic_format_parameters { parameters... };
         return vformatted(fmtstr.view(), variadic_format_parameters);
@@ -295,24 +300,36 @@ public:
         return (... || this->operator==(forward<Ts>(strings)));
     }
 
+    template<typename... Ts>
+    [[nodiscard]] ALWAYS_INLINE constexpr bool is_one_of_ignoring_case(Ts&&... strings) const
+    {
+        return (... ||
+                [this, &strings]() -> bool {
+            if constexpr (requires(Ts a) { a.view()->StringView; })
+                return this->equals_ignoring_case(forward<Ts>(strings.view()));
+            else
+                return this->equals_ignoring_case(forward<Ts>(strings));
+        }());
+    }
+
 private:
     RefPtr<StringImpl> m_impl;
 };
 
 template<>
 struct Traits<String> : public GenericTraits<String> {
-    static unsigned hash(const String& s) { return s.impl() ? s.impl()->hash() : 0; }
+    static unsigned hash(String const& s) { return s.impl() ? s.impl()->hash() : 0; }
 };
 
 struct CaseInsensitiveStringTraits : public Traits<String> {
-    static unsigned hash(const String& s) { return s.impl() ? s.to_lowercase().impl()->hash() : 0; }
-    static bool equals(const String& a, const String& b) { return a.to_lowercase() == b.to_lowercase(); }
+    static unsigned hash(String const& s) { return s.impl() ? s.impl()->case_insensitive_hash() : 0; }
+    static bool equals(String const& a, String const& b) { return a.equals_ignoring_case(b); }
 };
 
-bool operator<(const char*, const String&);
-bool operator>=(const char*, const String&);
-bool operator>(const char*, const String&);
-bool operator<=(const char*, const String&);
+bool operator<(char const*, String const&);
+bool operator>=(char const*, String const&);
+bool operator>(char const*, String const&);
+bool operator<=(char const*, String const&);
 
 String escape_html_entities(StringView html);
 

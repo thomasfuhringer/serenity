@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2018-2021, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2022, the SerenityOS developers.
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -15,7 +16,7 @@
 #include <LibGUI/TextEditor.h>
 #include <LibGUI/Widget.h>
 #include <LibGUI/Window.h>
-#include <LibWeb/Forward.h>
+#include <LibWebView/Forward.h>
 
 namespace TextEditor {
 
@@ -23,8 +24,8 @@ class MainWidget final : public GUI::Widget {
     C_OBJECT(MainWidget);
 
 public:
-    virtual ~MainWidget() override;
-    bool read_file_and_close(int fd, String const& path);
+    virtual ~MainWidget() override = default;
+    bool read_file(Core::File&);
     void open_nonexistent_file(String const& path);
     bool request_close();
 
@@ -40,6 +41,7 @@ public:
     void set_auto_detect_preview_mode(bool value) { m_auto_detect_preview_mode = value; }
 
     void update_title();
+    void update_statusbar();
     void initialize_menubar(GUI::Window&);
 
 private:
@@ -48,12 +50,17 @@ private:
     void update_preview();
     void update_markdown_preview();
     void update_html_preview();
-    void update_statusbar();
 
-    Web::OutOfProcessWebView& ensure_web_view();
+    WebView::OutOfProcessWebView& ensure_web_view();
     void set_web_view_visible(bool);
 
     virtual void drop_event(GUI::DropEvent&) override;
+
+    enum class ShowMessageIfNoResutls {
+        Yes = 1,
+        No = 0
+    };
+    void find_text(GUI::TextEditor::SearchDirection, ShowMessageIfNoResutls);
 
     RefPtr<GUI::TextEditor> m_editor;
     String m_path;
@@ -83,6 +90,8 @@ private:
     RefPtr<GUI::Toolbar> m_toolbar;
     RefPtr<GUI::ToolbarContainer> m_toolbar_container;
     RefPtr<GUI::Statusbar> m_statusbar;
+    RefPtr<GUI::Menu> m_line_column_statusbar_menu;
+    RefPtr<GUI::Menu> m_syntax_statusbar_menu;
 
     RefPtr<GUI::TextBox> m_find_textbox;
     RefPtr<GUI::TextBox> m_replace_textbox;
@@ -119,12 +128,13 @@ private:
     RefPtr<GUI::Action> m_css_highlight;
     RefPtr<GUI::Action> m_js_highlight;
     RefPtr<GUI::Action> m_html_highlight;
+    RefPtr<GUI::Action> m_git_highlight;
     RefPtr<GUI::Action> m_gml_highlight;
     RefPtr<GUI::Action> m_ini_highlight;
     RefPtr<GUI::Action> m_shell_highlight;
     RefPtr<GUI::Action> m_sql_highlight;
 
-    RefPtr<Web::OutOfProcessWebView> m_page_view;
+    RefPtr<WebView::OutOfProcessWebView> m_page_view;
 
     bool m_auto_detect_preview_mode { false };
     bool m_use_regex { false };

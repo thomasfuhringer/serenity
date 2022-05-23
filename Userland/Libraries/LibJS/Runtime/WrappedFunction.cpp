@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2021, Linus Groh <linusg@serenityos.org>
+ * Copyright (c) 2021-2022, Linus Groh <linusg@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -10,24 +10,29 @@
 
 namespace JS {
 
-// 2.2 WrappedFunctionCreate ( callerRealm, targetFunction ), https://tc39.es/proposal-shadowrealm/#sec-wrappedfunctioncreate
-WrappedFunction* WrappedFunction::create(GlobalObject& global_object, Realm& caller_realm, FunctionObject& target_function)
+// 3.1.1 WrappedFunctionCreate ( callerRealm: a Realm Record, Target: a function object, ), https://tc39.es/proposal-shadowrealm/#sec-wrappedfunctioncreate
+ThrowCompletionOr<WrappedFunction*> WrappedFunction::create(GlobalObject& global_object, Realm& caller_realm, FunctionObject& target)
 {
-    // 1. Assert: callerRealm is a Realm Record.
-    // 2. Assert: IsCallable(targetFunction) is true.
+    auto& vm = global_object.vm();
 
-    // 3. Let internalSlotsList be the internal slots listed in Table 2, plus [[Prototype]] and [[Extensible]].
-    // 4. Let obj be ! MakeBasicObject(internalSlotsList).
+    // 1. Let internalSlotsList be the internal slots listed in Table 2, plus [[Prototype]] and [[Extensible]].
+    // 2. Let wrapped be MakeBasicObject(internalSlotsList).
+    // 3. Set wrapped.[[Prototype]] to callerRealm.[[Intrinsics]].[[%Function.prototype%]].
+    // 4. Set wrapped.[[Call]] as described in 2.1.
+    // 5. Set wrapped.[[WrappedTargetFunction]] to Target.
+    // 6. Set wrapped.[[Realm]] to callerRealm.
     auto& prototype = *caller_realm.global_object().function_prototype();
-    auto* object = global_object.heap().allocate<WrappedFunction>(global_object, caller_realm, target_function, prototype);
+    auto* wrapped = global_object.heap().allocate<WrappedFunction>(global_object, caller_realm, target, prototype);
 
-    // 5. Set obj.[[Prototype]] to callerRealm.[[Intrinsics]].[[%Function.prototype%]].
-    // 6. Set obj.[[Call]] as described in 2.1.
-    // 7. Set obj.[[WrappedTargetFunction]] to targetFunction.
-    // 8. Set obj.[[Realm]] to callerRealm.
+    // 7. Let result be CopyNameAndLength(wrapped, Target).
+    auto result = copy_name_and_length(global_object, *wrapped, target);
 
-    // 9. Return obj.
-    return object;
+    // 8. If result is an Abrupt Completion, throw a TypeError exception.
+    if (result.is_throw_completion())
+        return vm.throw_completion<TypeError>(global_object, ErrorType::WrappedFunctionCopyNameAndLengthThrowCompletion);
+
+    // 9. Return wrapped.
+    return wrapped;
 }
 
 // 2 Wrapped Function Exotic Objects, https://tc39.es/proposal-shadowrealm/#sec-wrapped-function-exotic-objects
@@ -39,7 +44,7 @@ WrappedFunction::WrappedFunction(Realm& realm, FunctionObject& wrapped_target_fu
 }
 
 // 2.1 [[Call]] ( thisArgument, argumentsList ), https://tc39.es/proposal-shadowrealm/#sec-wrapped-function-exotic-objects-call-thisargument-argumentslist
-ThrowCompletionOr<Value> WrappedFunction::internal_call(Value this_argument, MarkedValueList arguments_list)
+ThrowCompletionOr<Value> WrappedFunction::internal_call(Value this_argument, MarkedVector<Value> arguments_list)
 {
     auto& vm = this->vm();
     auto& global_object = this->global_object();
@@ -59,7 +64,7 @@ ThrowCompletionOr<Value> WrappedFunction::internal_call(Value this_argument, Mar
     // 5. NOTE: Any exception objects produced after this point are associated with callerRealm.
 
     // 6. Let wrappedArgs be a new empty List.
-    auto wrapped_args = MarkedValueList { vm.heap() };
+    auto wrapped_args = MarkedVector<Value> { vm.heap() };
     wrapped_args.ensure_capacity(arguments_list.size());
 
     // 7. For each element arg of argumentsList, do

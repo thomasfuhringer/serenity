@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-#include <LibCore/File.h>
+#include <LibCore/Stream.h>
 #include <LibTest/JavaScriptTestRunner.h>
 #include <LibWasm/AbstractMachine/BytecodeInterpreter.h>
 #include <LibWasm/Types.h>
@@ -15,12 +15,20 @@ TEST_ROOT("Userland/Libraries/LibWasm/Tests");
 TESTJS_GLOBAL_FUNCTION(read_binary_wasm_file, readBinaryWasmFile)
 {
     auto filename = TRY(vm.argument(0).to_string(global_object));
-    auto file = Core::File::open(filename, Core::OpenMode::ReadOnly);
+    auto file = Core::Stream::File::open(filename, Core::Stream::OpenMode::Read);
     if (file.is_error())
         return vm.throw_completion<JS::TypeError>(global_object, strerror(file.error().code()));
-    auto contents = file.value()->read_all();
-    auto array = JS::Uint8Array::create(global_object, contents.size());
-    contents.span().copy_to(array->data());
+
+    auto file_size = file.value()->size();
+    if (file_size.is_error())
+        return vm.throw_completion<JS::TypeError>(global_object, strerror(file_size.error().code()));
+
+    auto* array = TRY(JS::Uint8Array::create(global_object, file_size.value()));
+
+    auto read = file.value()->read(array->data());
+    if (read.is_error())
+        return vm.throw_completion<JS::TypeError>(global_object, strerror(read.error().code()));
+
     return JS::Value(array);
 }
 
@@ -38,22 +46,21 @@ public:
     Wasm::Module& module() { return *m_module; }
     Wasm::ModuleInstance& module_instance() { return *m_module_instance; }
 
-    static WebAssemblyModule* create(JS::GlobalObject& global_object, Wasm::Module module, HashMap<Wasm::Linker::Name, Wasm::ExternValue> const& imports)
+    static JS::ThrowCompletionOr<WebAssemblyModule*> create(JS::GlobalObject& global_object, Wasm::Module module, HashMap<Wasm::Linker::Name, Wasm::ExternValue> const& imports)
     {
-        auto instance = global_object.heap().allocate<WebAssemblyModule>(global_object, *global_object.object_prototype());
+        auto& vm = global_object.vm();
+        auto* instance = global_object.heap().allocate<WebAssemblyModule>(global_object, *global_object.object_prototype());
         instance->m_module = move(module);
         Wasm::Linker linker(*instance->m_module);
         linker.link(imports);
         linker.link(spec_test_namespace());
         auto link_result = linker.finish();
-        if (link_result.is_error()) {
-            global_object.vm().throw_exception<JS::TypeError>(global_object, "Link failed");
-        } else {
-            if (auto result = machine().instantiate(*instance->m_module, link_result.release_value()); result.is_error())
-                global_object.vm().throw_exception<JS::TypeError>(global_object, result.release_error().error);
-            else
-                instance->m_module_instance = result.release_value();
-        }
+        if (link_result.is_error())
+            return vm.throw_completion<JS::TypeError>(global_object, "Link failed");
+        auto result = machine().instantiate(*instance->m_module, link_result.release_value());
+        if (result.is_error())
+            return vm.throw_completion<JS::TypeError>(global_object, result.release_error().error);
+        instance->m_module_instance = result.release_value();
         return instance;
     }
     void initialize(JS::GlobalObject&) override;
@@ -125,7 +132,7 @@ TESTJS_GLOBAL_FUNCTION(parse_webassembly_module, parseWebAssemblyModule)
         }
     }
 
-    return JS::Value(WebAssemblyModule::create(global_object, result.release_value(), imports));
+    return JS::Value(TRY(WebAssemblyModule::create(global_object, result.release_value(), imports)));
 }
 
 TESTJS_GLOBAL_FUNCTION(compare_typed_arrays, compareTypedArrays)
@@ -163,10 +170,10 @@ JS_DEFINE_NATIVE_FUNCTION(WebAssemblyModule::get_export)
                 return JS::Value(static_cast<unsigned long>(ptr->value()));
             if (auto v = value.get_pointer<Wasm::GlobalAddress>()) {
                 return m_machine.store().get(*v)->value().value().visit(
-                    [&](const auto& value) -> JS::Value { return JS::Value(static_cast<double>(value)); },
+                    [&](auto const& value) -> JS::Value { return JS::Value(static_cast<double>(value)); },
                     [&](i32 value) { return JS::Value(static_cast<double>(value)); },
                     [&](i64 value) -> JS::Value { return JS::js_bigint(vm, Crypto::SignedBigInteger::create_from(value)); },
-                    [&](const Wasm::Reference& reference) -> JS::Value {
+                    [&](Wasm::Reference const& reference) -> JS::Value {
                         return reference.ref().visit(
                             [&](const Wasm::Reference::Null&) -> JS::Value { return JS::js_null(); },
                             [&](const auto& ref) -> JS::Value { return JS::Value(static_cast<double>(ref.address.value())); });
@@ -186,7 +193,7 @@ JS_DEFINE_NATIVE_FUNCTION(WebAssemblyModule::wasm_invoke)
     if (!function_instance)
         return vm.throw_completion<JS::TypeError>(global_object, "Invalid function address");
 
-    const Wasm::FunctionType* type { nullptr };
+    Wasm::FunctionType const* type { nullptr };
     function_instance->visit([&](auto& value) { type = &value.type(); });
     if (!type)
         return vm.throw_completion<JS::TypeError>(global_object, "Invalid function found at given address");
@@ -242,10 +249,10 @@ JS_DEFINE_NATIVE_FUNCTION(WebAssemblyModule::wasm_invoke)
 
     JS::Value return_value;
     result.values().first().value().visit(
-        [&](const auto& value) { return_value = JS::Value(static_cast<double>(value)); },
+        [&](auto const& value) { return_value = JS::Value(static_cast<double>(value)); },
         [&](i32 value) { return_value = JS::Value(static_cast<double>(value)); },
         [&](i64 value) { return_value = JS::Value(JS::js_bigint(vm, Crypto::SignedBigInteger::create_from(value))); },
-        [&](const Wasm::Reference& reference) {
+        [&](Wasm::Reference const& reference) {
             reference.ref().visit(
                 [&](const Wasm::Reference::Null&) { return_value = JS::js_null(); },
                 [&](const auto& ref) { return_value = JS::Value(static_cast<double>(ref.address.value())); });

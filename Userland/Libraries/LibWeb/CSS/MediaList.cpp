@@ -14,10 +14,6 @@ MediaList::MediaList(NonnullRefPtrVector<MediaQuery>&& media)
 {
 }
 
-MediaList::~MediaList()
-{
-}
-
 // https://www.w3.org/TR/cssom-1/#dom-medialist-mediatext
 String MediaList::media_text() const
 {
@@ -33,10 +29,15 @@ void MediaList::set_media_text(String const& text)
     m_media = parse_media_query_list({}, text);
 }
 
-// https://www.w3.org/TR/cssom-1/#dom-medialist-item
-Optional<String> MediaList::item(size_t index) const
+bool MediaList::is_supported_property_index(u32 index) const
 {
-    if (index >= length())
+    return index < length();
+}
+
+// https://www.w3.org/TR/cssom-1/#dom-medialist-item
+String MediaList::item(u32 index) const
+{
+    if (!is_supported_property_index(index))
         return {};
 
     return m_media[index].to_string();
@@ -65,7 +66,7 @@ void MediaList::delete_medium(String medium)
     // FIXME: If nothing was removed, then throw a NotFoundError exception.
 }
 
-bool MediaList::evaluate(DOM::Window const& window)
+bool MediaList::evaluate(HTML::Window const& window)
 {
     for (auto& media : m_media)
         media.evaluate(window);

@@ -43,9 +43,9 @@ void MergeBlocks::perform(PassPipelineExecutable& executable)
             }
         }
 
-        if (auto cfg_entry = inverted_cfg.get(*entry.value.begin()); cfg_entry.has_value()) {
-            auto& predecssor_entry = *cfg_entry;
-            if (predecssor_entry.size() != 1)
+        if (auto cfg_iter = inverted_cfg.find(*entry.value.begin()); cfg_iter != inverted_cfg.end()) {
+            auto& predecessor_entry = cfg_iter->value;
+            if (predecessor_entry.size() != 1)
                 continue;
         }
 
@@ -99,10 +99,10 @@ void MergeBlocks::perform(PassPipelineExecutable& executable)
         Vector<BasicBlock const*> successors { current_block };
         for (;;) {
             auto last = successors.last();
-            auto entry = cfg.get(last);
-            if (!entry.has_value())
+            auto entry = cfg.find(last);
+            if (entry == cfg.end())
                 break;
-            auto& successor = *entry->begin();
+            auto& successor = *entry->value.begin();
             successors.append(successor);
             auto it = blocks_to_merge.find(successor);
             if (it == blocks_to_merge.end())
@@ -112,10 +112,10 @@ void MergeBlocks::perform(PassPipelineExecutable& executable)
 
         auto blocks_to_merge_copy = blocks_to_merge;
         for (auto& last : blocks_to_merge) {
-            auto entry = cfg.get(last);
-            if (!entry.has_value())
+            auto entry = cfg.find(last);
+            if (entry == cfg.end())
                 continue;
-            auto successor = *entry->begin();
+            auto successor = *entry->value.begin();
             if (auto it = successors.find(successor); !it.is_end()) {
                 successors.insert(it.index(), last);
                 blocks_to_merge_copy.remove(last);
@@ -135,6 +135,8 @@ void MergeBlocks::perform(PassPipelineExecutable& executable)
 
         auto new_block = BasicBlock::create(builder.build(), size);
         auto& block = *new_block;
+        auto first_successor_position = replace_blocks(successors, *new_block);
+        VERIFY(first_successor_position.has_value());
 
         size_t last_successor_index = successors.size() - 1;
         for (size_t i = 0; i < successors.size(); ++i) {
@@ -152,8 +154,6 @@ void MergeBlocks::perform(PassPipelineExecutable& executable)
             block.grow(copy_end);
         }
 
-        auto first_successor_position = replace_blocks(successors, *new_block);
-        VERIFY(first_successor_position.has_value());
         executable.executable.basic_blocks.insert(*first_successor_position, move(new_block));
     }
 

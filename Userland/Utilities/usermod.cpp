@@ -21,10 +21,7 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
         return 1;
     }
 
-    if (setegid(0) < 0) {
-        perror("setegid");
-        return 1;
-    }
+    TRY(Core::System::setegid(0));
 
     TRY(Core::System::pledge("stdio wpath rpath cpath fattr tty"));
     TRY(Core::System::unveil("/etc", "rwc"));
@@ -33,11 +30,11 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
     int gid = 0;
     bool lock = false;
     bool unlock = false;
-    const char* new_home_directory = nullptr;
+    char const* new_home_directory = nullptr;
     bool move_home = false;
-    const char* shell = nullptr;
-    const char* gecos = nullptr;
-    const char* username = nullptr;
+    char const* shell = nullptr;
+    char const* gecos = nullptr;
+    char const* username = nullptr;
 
     auto args_parser = Core::ArgsParser();
     args_parser.set_general_help("Modify a user account");
@@ -137,10 +134,8 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
     }
 
     TRY(Core::System::pledge("stdio wpath rpath cpath fattr"));
-    if (!target_account.sync()) {
-        perror("Core::Account::Sync");
-        return 1;
-    }
+
+    TRY(target_account.sync());
 
     return 0;
 }

@@ -10,7 +10,7 @@ window_gid=13
 
 CP="cp"
 
-# cp on macOS and BSD systems do not support the -d option.
+# cp on macOS and BSD systems do not support the --preserve= option.
 # gcp comes with coreutils, which is already a dependency.
 OS="$(uname -s)"
 if [ "$OS" = "Darwin" ] || echo "$OS" | grep -qe 'BSD$'; then
@@ -21,10 +21,6 @@ die() {
     echo "die: $*"
     exit 1
 }
-
-if [ "$(id -u)" != 0 ]; then
-    die "this script needs to run as root"
-fi
 
 [ -z "$SERENITY_SOURCE_DIR" ] && die "SERENITY_SOURCE_DIR is not set"
 [ -d "$SERENITY_SOURCE_DIR/Base" ] || die "$SERENITY_SOURCE_DIR/Base doesn't exist"
@@ -46,18 +42,18 @@ else
 fi
 
 SERENITY_ARCH="${SERENITY_ARCH:-i686}"
-LLVM_VERSION="${LLVM_VERSION:-13.0.0}"
+LLVM_VERSION="${LLVM_VERSION:-14.0.1}"
 
 if [ "$SERENITY_TOOLCHAIN" = "Clang" ]; then
     TOOLCHAIN_DIR="$SERENITY_SOURCE_DIR"/Toolchain/Local/clang/
-    $CP "$TOOLCHAIN_DIR"/lib/"$SERENITY_ARCH"-pc-serenity/* mnt/usr/lib
+    $CP --preserve=timestamps "$TOOLCHAIN_DIR"/lib/"$SERENITY_ARCH"-pc-serenity/* mnt/usr/lib
     mkdir -p mnt/usr/include/"$SERENITY_ARCH"-pc-serenity
-    $CP -r "$TOOLCHAIN_DIR"/include/c++ mnt/usr/include
-    $CP -r "$TOOLCHAIN_DIR"/include/"$SERENITY_ARCH"-pc-serenity/c++ mnt/usr/include/"$SERENITY_ARCH"-pc-serenity
+    $CP --preserve=timestamps -r "$TOOLCHAIN_DIR"/include/c++ mnt/usr/include
+    $CP --preserve=timestamps -r "$TOOLCHAIN_DIR"/include/"$SERENITY_ARCH"-pc-serenity/c++ mnt/usr/include/"$SERENITY_ARCH"-pc-serenity
 elif [ "$SERENITY_ARCH" != "aarch64" ]; then
-    $CP "$SERENITY_SOURCE_DIR"/Toolchain/Local/"$SERENITY_ARCH"/"$SERENITY_ARCH"-pc-serenity/lib/libgcc_s.so mnt/usr/lib
-    $CP "$SERENITY_SOURCE_DIR"/Toolchain/Local/"$SERENITY_ARCH"/"$SERENITY_ARCH"-pc-serenity/lib/libstdc++.a mnt/usr/lib
-    $CP -r "$SERENITY_SOURCE_DIR"/Toolchain/Local/"$SERENITY_ARCH"/"$SERENITY_ARCH"-pc-serenity/include/c++ mnt/usr/include
+    $CP --preserve=timestamps "$SERENITY_SOURCE_DIR"/Toolchain/Local/"$SERENITY_ARCH"/"$SERENITY_ARCH"-pc-serenity/lib/libgcc_s.so mnt/usr/lib
+    $CP --preserve=timestamps "$SERENITY_SOURCE_DIR"/Toolchain/Local/"$SERENITY_ARCH"/"$SERENITY_ARCH"-pc-serenity/lib/libstdc++.a mnt/usr/lib
+    $CP --preserve=timestamps -r "$SERENITY_SOURCE_DIR"/Toolchain/Local/"$SERENITY_ARCH"/"$SERENITY_ARCH"-pc-serenity/include/c++ mnt/usr/include
 fi
 
 # If umask was 027 or similar when the repo was cloned,
@@ -105,6 +101,10 @@ if [ -f mnt/bin/utmpupdate ]; then
     chown 0:$utmp_gid mnt/bin/utmpupdate
     chmod 2755 mnt/bin/utmpupdate
 fi
+if [ -f mnt/bin/timezone ]; then
+    chown 0:$phys_gid mnt/bin/timezone
+    chmod 4750 mnt/bin/timezone
+fi
 if [ -f mnt/usr/Tests/Kernel/TestMemoryDeviceMmap ]; then
     chown 0:0 mnt/usr/Tests/Kernel/TestMemoryDeviceMmap
     chmod 4755 mnt/usr/Tests/Kernel/TestMemoryDeviceMmap
@@ -122,7 +122,7 @@ chmod 755 mnt/res/devel/templates/*.postcreate
 echo "done"
 
 printf "creating initial filesystem structure... "
-for dir in bin etc proc mnt tmp boot mod var/run; do
+for dir in bin etc proc mnt tmp boot mod var/run usr/local; do
     mkdir -p mnt/$dir
 done
 chmod 700 mnt/boot
@@ -155,16 +155,17 @@ mkdir -p mnt/home/anon
 mkdir -p mnt/home/anon/Desktop
 mkdir -p mnt/home/anon/Downloads
 mkdir -p mnt/home/nona
-rm -fr mnt/home/anon/js-tests mnt/home/anon/web-tests mnt/home/anon/cpp-tests mnt/home/anon/wasm-tests
-mkdir -p mnt/home/anon/cpp-tests/
+rm -fr mnt/home/anon/Tests/js-tests mnt/home/anon/Tests/web-tests mnt/home/anon/Tests/cpp-tests mnt/home/anon/Tests/wasm-tests 
+mkdir -p mnt/home/anon/Tests/cpp-tests/
 cp "$SERENITY_SOURCE_DIR"/README.md mnt/home/anon/
-cp -r "$SERENITY_SOURCE_DIR"/Userland/Libraries/LibJS/Tests mnt/home/anon/js-tests
-cp -r "$SERENITY_SOURCE_DIR"/Userland/Libraries/LibWeb/Tests mnt/home/anon/web-tests
-cp -r "$SERENITY_SOURCE_DIR"/Userland/DevTools/HackStudio/LanguageServers/Cpp/Tests mnt/home/anon/cpp-tests/comprehension
-cp -r "$SERENITY_SOURCE_DIR"/Userland/Libraries/LibCpp/Tests/parser mnt/home/anon/cpp-tests/parser
-cp -r "$SERENITY_SOURCE_DIR"/Userland/Libraries/LibCpp/Tests/preprocessor mnt/home/anon/cpp-tests/preprocessor
-cp -r "$SERENITY_SOURCE_DIR"/Userland/Libraries/LibWasm/Tests mnt/home/anon/wasm-tests
-cp -r "$SERENITY_SOURCE_DIR"/Userland/Libraries/LibJS/Tests/test-common.js mnt/home/anon/wasm-tests
+cp -r "$SERENITY_SOURCE_DIR"/Userland/Libraries/LibJS/Tests mnt/home/anon/Tests/js-tests
+cp -r "$SERENITY_SOURCE_DIR"/Userland/Libraries/LibWeb/Tests mnt/home/anon/Tests/web-tests
+cp -r "$SERENITY_SOURCE_DIR"/Userland/Libraries/LibCodeComprehension/Cpp/Tests mnt/home/anon/Tests/cpp-tests/comprehension
+cp -r "$SERENITY_SOURCE_DIR"/Userland/Libraries/LibCpp/Tests/parser mnt/home/anon/Tests/cpp-tests/parser
+cp -r "$SERENITY_SOURCE_DIR"/Userland/Libraries/LibCpp/Tests/preprocessor mnt/home/anon/Tests/cpp-tests/preprocessor
+cp -r "$SERENITY_SOURCE_DIR"/Userland/Libraries/LibWasm/Tests mnt/home/anon/Tests/wasm-tests
+cp -r "$SERENITY_SOURCE_DIR"/Userland/Libraries/LibJS/Tests/test-common.js mnt/home/anon/Tests/wasm-tests
+cp -r "$SERENITY_SOURCE_DIR"/Userland/Applications/Spreadsheet/Tests mnt/home/anon/Tests/spreadsheet-tests
 
 if [ -n "$SERENITY_COPY_SOURCE" ] ; then
   printf "\ncopying Serenity's source... "

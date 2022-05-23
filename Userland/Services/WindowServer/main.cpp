@@ -21,18 +21,22 @@
 
 ErrorOr<int> serenity_main(Main::Arguments)
 {
-    TRY(Core::System::pledge("stdio video thread sendfd recvfd accept rpath wpath cpath unix proc sigaction"));
+    TRY(Core::System::pledge("stdio video thread sendfd recvfd accept rpath wpath cpath unix proc sigaction exec tty"));
     TRY(Core::System::unveil("/res", "r"));
     TRY(Core::System::unveil("/tmp", "cw"));
     TRY(Core::System::unveil("/etc/WindowServer.ini", "rwc"));
+    TRY(Core::System::unveil("/etc/Keyboard.ini", "r"));
     TRY(Core::System::unveil("/dev", "rw"));
+    TRY(Core::System::unveil("/bin/keymap", "x"));
+    TRY(Core::System::unveil("/proc/keymap", "r"));
 
     struct sigaction act = {};
     act.sa_flags = SA_NOCLDWAIT;
     act.sa_handler = SIG_IGN;
     TRY(Core::System::sigaction(SIGCHLD, &act, nullptr));
+    TRY(Core::System::pledge("stdio video thread sendfd recvfd accept rpath wpath cpath unix proc exec tty"));
 
-    auto wm_config = Core::ConfigFile::open("/etc/WindowServer.ini");
+    auto wm_config = TRY(Core::ConfigFile::open("/etc/WindowServer.ini"));
     auto theme_name = wm_config->read_entry("Theme", "Name", "Default");
 
     auto theme = Gfx::load_system_theme(String::formatted("/res/themes/{}.ini", theme_name));
@@ -40,15 +44,23 @@ ErrorOr<int> serenity_main(Main::Arguments)
     Gfx::set_system_theme(theme);
     auto palette = Gfx::PaletteImpl::create_with_anonymous_buffer(theme);
 
-    auto default_font_query = wm_config->read_entry("Fonts", "Default", "Katica 10 400");
-    auto fixed_width_font_query = wm_config->read_entry("Fonts", "FixedWidth", "Csilla 10 400");
+    auto default_font_query = wm_config->read_entry("Fonts", "Default", "Katica 10 400 0");
+    auto fixed_width_font_query = wm_config->read_entry("Fonts", "FixedWidth", "Csilla 10 400 0");
 
     Gfx::FontDatabase::set_default_font_query(default_font_query);
     Gfx::FontDatabase::set_fixed_width_font_query(fixed_width_font_query);
 
+    {
+        // FIXME: Map switched tty from screens.
+        // FIXME: Gracefully cleanup the TTY graphics mode.
+        int tty_fd = TRY(Core::System::open("/dev/tty", O_RDWR));
+        TRY(Core::System::ioctl(tty_fd, KDSETMODE, KD_GRAPHICS));
+        TRY(Core::System::close(tty_fd));
+    }
+
     WindowServer::EventLoop loop;
 
-    TRY(Core::System::pledge("stdio video thread sendfd recvfd accept rpath wpath cpath proc"));
+    TRY(Core::System::pledge("stdio video thread sendfd recvfd accept rpath wpath cpath proc exec"));
 
     // First check which screens are explicitly configured
     {
@@ -56,19 +68,19 @@ ErrorOr<int> serenity_main(Main::Arguments)
         WindowServer::ScreenLayout screen_layout;
         String error_msg;
 
-        auto add_unconfigured_devices = [&]() {
+        auto add_unconfigured_display_connector_devices = [&]() {
             // Enumerate the /dev/fbX devices and try to set up any ones we find that we haven't already used
-            Core::DirIterator di("/dev", Core::DirIterator::SkipParentAndBaseDir);
+            Core::DirIterator di("/dev/gpu", Core::DirIterator::SkipParentAndBaseDir);
             while (di.has_next()) {
                 auto path = di.next_path();
-                if (!path.starts_with("fb"))
+                if (!path.starts_with("connector"))
                     continue;
-                auto full_path = String::formatted("/dev/{}", path);
+                auto full_path = String::formatted("/dev/gpu/{}", path);
                 if (!Core::File::is_device(full_path))
                     continue;
                 if (fb_devices_configured.find(full_path) != fb_devices_configured.end())
                     continue;
-                if (!screen_layout.try_auto_add_framebuffer(full_path))
+                if (!screen_layout.try_auto_add_display_connector(full_path))
                     dbgln("Could not auto-add framebuffer device {} to screen layout", full_path);
             }
         };
@@ -76,7 +88,8 @@ ErrorOr<int> serenity_main(Main::Arguments)
         auto apply_and_generate_generic_screen_layout = [&]() {
             screen_layout = {};
             fb_devices_configured = {};
-            add_unconfigured_devices();
+
+            add_unconfigured_display_connector_devices();
             if (!WindowServer::Screen::apply_layout(move(screen_layout), error_msg)) {
                 dbgln("Failed to apply generated fallback screen layout: {}", error_msg);
                 return false;
@@ -88,9 +101,10 @@ ErrorOr<int> serenity_main(Main::Arguments)
 
         if (screen_layout.load_config(*wm_config, &error_msg)) {
             for (auto& screen_info : screen_layout.screens)
-                fb_devices_configured.set(screen_info.device);
+                if (screen_info.mode == WindowServer::ScreenLayout::Screen::Mode::Device)
+                    fb_devices_configured.set(screen_info.device.value());
 
-            add_unconfigured_devices();
+            add_unconfigured_display_connector_devices();
 
             if (!WindowServer::Screen::apply_layout(move(screen_layout), error_msg)) {
                 dbgln("Error applying screen layout: {}", error_msg);

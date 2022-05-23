@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2018-2020, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2022, the SerenityOS developers.
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -29,13 +30,15 @@ public:
         return timer;
     }
 
-    virtual ~Timer() override;
+    virtual ~Timer() override = default;
 
     void start();
     void start(int interval_ms);
     void restart();
     void restart(int interval_ms);
     void stop();
+
+    void set_active(bool);
 
     bool is_active() const { return m_active; }
     int interval() const { return m_interval_ms; }

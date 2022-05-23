@@ -84,9 +84,9 @@ bool Parser::expect(StringView expected)
 }
 
 template<typename A, typename... Args>
-NonnullRefPtr<A> Parser::create(Args... args)
+NonnullRefPtr<A> Parser::create(Args&&... args)
 {
-    return adopt_ref(*new A(AST::Position { m_rule_start_offsets.last(), m_offset, m_rule_start_lines.last(), line() }, args...));
+    return adopt_ref(*new A(AST::Position { m_rule_start_offsets.last(), m_offset, m_rule_start_lines.last(), line() }, forward<Args>(args)...));
 }
 
 [[nodiscard]] OwnPtr<Parser::ScopedOffset> Parser::push_start()
@@ -333,7 +333,7 @@ RefPtr<AST::Node> Parser::parse_variable_decls()
     if (!expression) {
         if (is_whitespace(peek())) {
             auto string_start = push_start();
-            expression = create<AST::StringLiteral>("");
+            expression = create<AST::StringLiteral>("", AST::StringLiteral::EnclosureType::None);
         } else {
             restore_to(pos_before_name.offset, pos_before_name.line);
             return nullptr;
@@ -892,10 +892,10 @@ RefPtr<AST::Node> Parser::parse_match_expr()
     for (;;) {
         auto entry = parse_match_entry();
         consume_while(is_any_of(" \t\n"));
-        if (entry.options.is_empty())
+        if (entry.options.visit([](auto& x) { return x.is_empty(); }))
             break;
 
-        entries.append(entry);
+        entries.append(move(entry));
     }
 
     consume_while(is_any_of(" \t\n"));
@@ -916,15 +916,32 @@ AST::MatchEntry Parser::parse_match_entry()
     auto rule_start = push_start();
 
     NonnullRefPtrVector<AST::Node> patterns;
+    Vector<Regex<ECMA262>> regexps;
     Vector<AST::Position> pipe_positions;
     Optional<Vector<String>> match_names;
     Optional<AST::Position> match_as_position;
+    enum {
+        Regex,
+        Glob,
+    } pattern_kind;
 
-    auto pattern = parse_match_pattern();
-    if (!pattern)
-        return { {}, {}, {}, {}, create<AST::SyntaxError>("Expected a pattern in 'match' body", true) };
+    consume_while(is_any_of(" \t\n"));
 
-    patterns.append(pattern.release_nonnull());
+    auto regex_pattern = parse_regex_pattern();
+    if (regex_pattern.has_value()) {
+        if (auto error = regex_pattern.value().parser_result.error; error != regex::Error::NoError)
+            return { NonnullRefPtrVector<AST::Node> {}, {}, {}, {}, create<AST::SyntaxError>(regex::get_error_string(error), false) };
+
+        pattern_kind = Regex;
+        regexps.append(regex_pattern.release_value());
+    } else {
+        auto glob_pattern = parse_match_pattern();
+        if (!glob_pattern)
+            return { NonnullRefPtrVector<AST::Node> {}, {}, {}, {}, create<AST::SyntaxError>("Expected a pattern in 'match' body", true) };
+
+        pattern_kind = Glob;
+        patterns.append(glob_pattern.release_nonnull());
+    }
 
     consume_while(is_any_of(" \t\n"));
 
@@ -934,14 +951,28 @@ AST::MatchEntry Parser::parse_match_entry()
     while (expect('|')) {
         pipe_positions.append({ previous_pipe_start_position, m_offset, previous_pipe_start_line, line() });
         consume_while(is_any_of(" \t\n"));
-        auto pattern = parse_match_pattern();
-        if (!pattern) {
-            error = create<AST::SyntaxError>("Expected a pattern to follow '|' in 'match' body", true);
+        switch (pattern_kind) {
+        case Regex: {
+            auto pattern = parse_regex_pattern();
+            if (!pattern.has_value()) {
+                error = create<AST::SyntaxError>("Expected a regex pattern to follow '|' in 'match' body", true);
+                break;
+            }
+            regexps.append(pattern.release_value());
             break;
         }
-        consume_while(is_any_of(" \t\n"));
+        case Glob: {
+            auto pattern = parse_match_pattern();
+            if (!pattern) {
+                error = create<AST::SyntaxError>("Expected a pattern to follow '|' in 'match' body", true);
+                break;
+            }
+            patterns.append(pattern.release_nonnull());
+            break;
+        }
+        }
 
-        patterns.append(pattern.release_nonnull());
+        consume_while(is_any_of(" \t\n"));
 
         previous_pipe_start_line = line();
         previous_pipe_start_position = m_offset;
@@ -951,7 +982,7 @@ AST::MatchEntry Parser::parse_match_entry()
 
     auto as_start_position = m_offset;
     auto as_start_line = line();
-    if (expect("as")) {
+    if (pattern_kind == Glob && expect("as")) {
         match_as_position = AST::Position { as_start_position, m_offset, as_start_line, line() };
         consume_while(is_any_of(" \t\n"));
         if (!expect('(')) {
@@ -975,6 +1006,31 @@ AST::MatchEntry Parser::parse_match_entry()
         consume_while(is_any_of(" \t\n"));
     }
 
+    if (pattern_kind == Regex) {
+        Vector<String> names;
+        for (auto& regex : regexps) {
+            if (names.is_empty()) {
+                for (auto& name : regex.parser_result.capture_groups)
+                    names.append(name);
+            } else {
+                size_t index = 0;
+                for (auto& name : regex.parser_result.capture_groups) {
+                    if (names.size() <= index) {
+                        names.append(name);
+                        continue;
+                    }
+
+                    if (names[index] != name) {
+                        if (!error)
+                            error = create<AST::SyntaxError>("Alternative regex patterns must have the same capture groups", false);
+                        break;
+                    }
+                }
+            }
+        }
+        match_names = move(names);
+    }
+
     if (!expect('{')) {
         if (!error)
             error = create<AST::SyntaxError>("Expected an open brace '{' to start a match entry body", true);
@@ -992,12 +1048,45 @@ AST::MatchEntry Parser::parse_match_entry()
     else if (error)
         body = error;
 
-    return { move(patterns), move(match_names), move(match_as_position), move(pipe_positions), move(body) };
+    if (pattern_kind == Glob)
+        return { move(patterns), move(match_names), move(match_as_position), move(pipe_positions), move(body) };
+
+    return { move(regexps), move(match_names), move(match_as_position), move(pipe_positions), move(body) };
 }
 
 RefPtr<AST::Node> Parser::parse_match_pattern()
 {
     return parse_expression();
+}
+
+Optional<Regex<ECMA262>> Parser::parse_regex_pattern()
+{
+    auto rule_start = push_start();
+
+    auto start = m_offset;
+    if (!expect("(?:") && !expect("(?<"))
+        return {};
+
+    size_t open_parens = 1;
+    while (open_parens > 0) {
+        if (at_end())
+            break;
+
+        if (next_is("("))
+            ++open_parens;
+        else if (next_is(")"))
+            --open_parens;
+        consume();
+    }
+
+    if (open_parens != 0) {
+        restore_to(*rule_start);
+        return {};
+    }
+
+    auto end = m_offset;
+    auto pattern = m_input.substring_view(start, end - start);
+    return Regex<ECMA262>(pattern);
 }
 
 RefPtr<AST::Node> Parser::parse_redirection()
@@ -1276,7 +1365,7 @@ RefPtr<AST::Node> Parser::parse_string()
         bool is_error = false;
         if (!expect('\''))
             is_error = true;
-        auto result = create<AST::StringLiteral>(move(text)); // String Literal
+        auto result = create<AST::StringLiteral>(move(text), AST::StringLiteral::EnclosureType::SingleQuotes); // String Literal
         if (is_error)
             result->set_is_syntax_error(*create<AST::SyntaxError>("Expected a terminating single quote", true));
         return result;
@@ -1358,7 +1447,7 @@ RefPtr<AST::Node> Parser::parse_string_inner(StringEndCondition condition)
             continue;
         }
         if (peek() == '$') {
-            auto string_literal = create<AST::StringLiteral>(builder.to_string()); // String Literal
+            auto string_literal = create<AST::StringLiteral>(builder.to_string(), AST::StringLiteral::EnclosureType::DoubleQuotes); // String Literal
             auto read_concat = [&](auto&& node) {
                 auto inner = create<AST::StringPartCompose>(
                     move(string_literal),
@@ -1384,7 +1473,7 @@ RefPtr<AST::Node> Parser::parse_string_inner(StringEndCondition condition)
         builder.append(consume());
     }
 
-    return create<AST::StringLiteral>(builder.to_string()); // String Literal
+    return create<AST::StringLiteral>(builder.to_string(), AST::StringLiteral::EnclosureType::DoubleQuotes); // String Literal
 }
 
 RefPtr<AST::Node> Parser::parse_variable()
@@ -1919,30 +2008,36 @@ RefPtr<AST::Node> Parser::parse_brace_expansion_spec()
     m_extra_chars_not_allowed_in_barewords.append(',');
 
     auto rule_start = push_start();
-    auto start_expr = parse_expression();
-    if (start_expr) {
-        if (expect("..")) {
-            if (auto end_expr = parse_expression()) {
-                if (end_expr->position().start_offset != start_expr->position().end_offset + 2)
-                    end_expr->set_is_syntax_error(create<AST::SyntaxError>("Expected no whitespace between '..' and the following expression in brace expansion"));
-
-                return create<AST::Range>(start_expr.release_nonnull(), end_expr.release_nonnull());
-            }
-
-            return create<AST::Range>(start_expr.release_nonnull(), create<AST::SyntaxError>("Expected an expression to end range brace expansion with", true));
-        }
-    }
-
     NonnullRefPtrVector<AST::Node> subexpressions;
-    if (start_expr)
-        subexpressions.append(start_expr.release_nonnull());
+
+    if (next_is(",")) {
+        // Note that we don't consume the ',' here.
+        subexpressions.append(create<AST::StringLiteral>("", AST::StringLiteral::EnclosureType::None));
+    } else {
+        auto start_expr = parse_expression();
+        if (start_expr) {
+            if (expect("..")) {
+                if (auto end_expr = parse_expression()) {
+                    if (end_expr->position().start_offset != start_expr->position().end_offset + 2)
+                        end_expr->set_is_syntax_error(create<AST::SyntaxError>("Expected no whitespace between '..' and the following expression in brace expansion"));
+
+                    return create<AST::Range>(start_expr.release_nonnull(), end_expr.release_nonnull());
+                }
+
+                return create<AST::Range>(start_expr.release_nonnull(), create<AST::SyntaxError>("Expected an expression to end range brace expansion with", true));
+            }
+        }
+
+        if (start_expr)
+            subexpressions.append(start_expr.release_nonnull());
+    }
 
     while (expect(',')) {
         auto expr = parse_expression();
         if (expr) {
             subexpressions.append(expr.release_nonnull());
         } else {
-            subexpressions.append(create<AST::StringLiteral>(""));
+            subexpressions.append(create<AST::StringLiteral>("", AST::StringLiteral::EnclosureType::None));
         }
     }
 
@@ -2055,7 +2150,7 @@ bool Parser::parse_heredoc_entries()
             if (!last_line_offset.has_value())
                 last_line_offset = current_position();
             // Now just wrap it in a StringLiteral and set it as the node's contents
-            auto node = create<AST::StringLiteral>(m_input.substring_view(rule_start->offset, last_line_offset->offset - rule_start->offset));
+            auto node = create<AST::StringLiteral>(m_input.substring_view(rule_start->offset, last_line_offset->offset - rule_start->offset), AST::StringLiteral::EnclosureType::None);
             if (!found_key)
                 node->set_is_syntax_error(*create<AST::SyntaxError>(String::formatted("Expected to find the heredoc key '{}', but found Eof", record.end), true));
             record.node->set_contents(move(node));
@@ -2104,7 +2199,7 @@ bool Parser::parse_heredoc_entries()
             }
 
             if (!expr && found_key) {
-                expr = create<AST::StringLiteral>("");
+                expr = create<AST::StringLiteral>("", AST::StringLiteral::EnclosureType::None);
             } else if (!expr) {
                 expr = create<AST::SyntaxError>(String::formatted("Expected to find a valid string inside a heredoc (with end key '{}')", record.end), true);
             } else if (!found_key) {

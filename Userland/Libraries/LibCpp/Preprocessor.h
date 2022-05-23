@@ -20,7 +20,7 @@ namespace Cpp {
 class Preprocessor {
 
 public:
-    explicit Preprocessor(const String& filename, StringView program);
+    explicit Preprocessor(String const& filename, StringView program);
     Vector<Token> process_and_lex();
     Vector<StringView> included_paths() const { return m_included_paths; }
 
@@ -44,9 +44,12 @@ public:
     Vector<Substitution> const& substitutions() const { return m_substitutions; }
 
     void set_ignore_unsupported_keywords(bool ignore) { m_options.ignore_unsupported_keywords = ignore; }
+    void set_ignore_invalid_statements(bool ignore) { m_options.ignore_invalid_statements = ignore; }
     void set_keep_include_statements(bool keep) { m_options.keep_include_statements = keep; }
 
     Function<Definitions(StringView)> definitions_in_header_callback { nullptr };
+
+    Vector<Token> const& unprocessed_tokens() const { return m_unprocessed_tokens; }
 
 private:
     void handle_preprocessor_statement(StringView);
@@ -71,6 +74,7 @@ private:
     String m_filename;
     String m_program;
 
+    Vector<Token> m_unprocessed_tokens;
     Vector<Token> m_processed_tokens;
     Definitions m_definitions;
     Vector<Substitution> m_substitutions;
@@ -91,6 +95,7 @@ private:
 
     struct Options {
         bool ignore_unsupported_keywords { false };
+        bool ignore_invalid_statements { false };
         bool keep_include_statements { false };
     } m_options;
 };

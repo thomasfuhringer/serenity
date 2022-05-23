@@ -88,6 +88,24 @@ By default, [`clean`](#clean) and [`clean_dist`](#clean_dist) combined.
 Remove the port's files from the Serenity build directory, if it has a `plist`
 file.
 
+#### `dev`
+
+Start a development session with guided patch importing.
+This mode has a bunch of nice features:
+
+- Drops the user in a git repository backed by another (local) git repository
+  that acts as the "clean", patched version of the port that is ready to be built
+- The "remote" repository can be pushed to, pulled from and generally anything that
+  you'd want to do with a remote repo.
+- After leaving the dev shell, all patches are updated and the user will be prompted
+  whether they wish to generate a new patch readme file.
+
+This mode takes an extra `--no-depends` option, that if given, will cause the dependency
+fetch and build steps to be skipped.
+
+This mode can also assist in migrating old patches to new versions through a guided
+semi-automated process.
+
 #### `--auto`
 
 Same as no option, but mark the port as having been installed automatically.
@@ -106,7 +124,7 @@ port="foo"
 version="1.2.3"
 useconfigure="true"
 files="https://example.com/foo-${version}.tar.gz foo-${version}.tar.gz"
-depends="bar baz"
+depends=("bar" "baz")
 ```
 
 The script in the shebang, [`.port_include.sh`](./.port_include.sh), is where
@@ -135,13 +153,16 @@ auth_opts="foo-${version}.tar.xz.asc foo-${version}.tar.xz"
 
 The type of file validation to use, can be one of:
 
-- `md5`: Use MD5 hashes defined in [`files`](#files)
 - `sha256`: Use SHA256 hashes defined in [`files`](#files)
-- `sha1`: Use SHA1 hashes defined in [`files`](#files)
 - `sig`: Use PGP signatures (see [`auth_opts`](#auth_opts))
 
-Defaults to `md5`, most ports use `sig` though as `.asc` files are widely
-available.
+Most ports use `sig` as `.asc` files are widely available.
+
+This _has_ to be specified in order for `lint-ports` to pass.
+
+If no signature or hash is provided by the author of the files, just create the
+hash yourself by calling `sha256sum` on the downloaded file and specifying the
+hash along with the [`files`](#files).
 
 #### `configopts`
 
@@ -150,6 +171,16 @@ Options passed to the port's [`configscript`](#configscript) in the default
 
 `--host=i686-pc-serenity` is always passed, override the `configure` function
 if that's undesirable.
+
+#### `use_fresh_config_sub`
+
+Boolean option (`false` by default), will replace the `config.sub` pointed to by
+`config_sub_path` as part of the patching process if set to true.
+
+#### `config_sub_path`
+
+Path to the `config.sub` file used by autoconf, starting at `$workdir`.
+This is set to `config.sub` by default.
 
 #### `configscript`
 
@@ -160,8 +191,14 @@ Defaults to `configure`.
 
 #### `depends`
 
-A space-separated list of other SerenityOS ports the port depends on and which
-will be installed during the `installdepends` step.
+An array of other SerenityOS ports the port depends on and which will be
+installed during the `installdepends` step.
+
+For example:
+
+```bash
+depends=("ncurses" "gettext")
+```
 
 #### `files`
 
@@ -179,9 +216,14 @@ MD5, SHA1, or SHA256 hash that will be used for verification when
 
 For example:
 
+_With PGP signatures_
 ```bash
 files="https://example.com/foo-${version}.tar.xz foo-${version}.tar.xz
 https://example.com/foo-${version}.tar.xz.asc foo-${version}.tar.xz.asc"
+```
+_With a SHA256 hash_
+```bash
+files="https://example.com/foo-${version}.tar.xz foo-${version}.tar.xz 9acd50f9a2af37e471f761c3fe7b8dea5617e51dac802fe6c177b74abf0abb5a"
 ```
 
 If a file is a compressed tar archive, a gzip compressed file or a zip

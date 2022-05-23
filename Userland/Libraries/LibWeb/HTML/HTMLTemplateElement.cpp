@@ -9,16 +9,14 @@
 
 namespace Web::HTML {
 
-HTMLTemplateElement::HTMLTemplateElement(DOM::Document& document, QualifiedName qualified_name)
+HTMLTemplateElement::HTMLTemplateElement(DOM::Document& document, DOM::QualifiedName qualified_name)
     : HTMLElement(document, move(qualified_name))
 {
     m_content = adopt_ref(*new DOM::DocumentFragment(appropriate_template_contents_owner_document(document)));
-    m_content->set_host(*this);
+    m_content->set_host(this);
 }
 
-HTMLTemplateElement::~HTMLTemplateElement()
-{
-}
+HTMLTemplateElement::~HTMLTemplateElement() = default;
 
 DOM::Document& HTMLTemplateElement::appropriate_template_contents_owner_document(DOM::Document& document)
 {

@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2020, Hüseyin Aslıtürk <asliturk@hotmail.com>
+ * Copyright (c) 2022, the SerenityOS developers.
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -8,16 +9,18 @@
 
 #include <LibCore/Timer.h>
 #include <LibGUI/Frame.h>
+#include <LibGfx/ImageDecoder.h>
 
 namespace GUI {
 
 class ImageWidget : public Frame {
     C_OBJECT(ImageWidget)
 public:
-    virtual ~ImageWidget() override;
+    virtual ~ImageWidget() override = default;
 
-    void set_bitmap(const Gfx::Bitmap*);
+    void set_bitmap(Gfx::Bitmap const*);
     Gfx::Bitmap* bitmap() { return m_bitmap.ptr(); }
+    Gfx::Bitmap const* bitmap() const { return m_bitmap.ptr(); }
 
     void set_should_stretch(bool value) { m_should_stretch = value; }
     bool should_stretch() const { return m_should_stretch; }

@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2018-2020, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2022, the SerenityOS developers.
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -8,14 +9,6 @@
 #include <LibGUI/UndoStack.h>
 
 namespace GUI {
-
-UndoStack::UndoStack()
-{
-}
-
-UndoStack::~UndoStack()
-{
-}
 
 bool UndoStack::can_undo() const
 {
@@ -57,7 +50,7 @@ void UndoStack::push(NonnullOwnPtr<Command> command)
 {
     // If the stack cursor is behind the top of the stack, nuke everything from here to the top.
     while (m_stack.size() != m_stack_index)
-        m_stack.take_last();
+        (void)m_stack.take_last();
 
     if (m_clean_index.has_value() && m_clean_index.value() > m_stack.size())
         m_clean_index = {};
@@ -80,6 +73,7 @@ void UndoStack::set_current_unmodified()
         return;
 
     m_clean_index = m_stack_index;
+    m_last_unmodified_timestamp = Time::now_monotonic();
 
     if (on_state_change)
         on_state_change();

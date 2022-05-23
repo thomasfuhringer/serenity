@@ -42,9 +42,9 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
     TRY(Core::System::pledge("stdio recvfd sendfd rpath unix"));
 
     auto app = TRY(GUI::Application::try_create(arguments));
-    auto app_icon = GUI::Icon::default_icon("app-spider");
+    auto app_icon = TRY(GUI::Icon::try_create_default_icon("app-spider"));
 
-    Config::pledge_domains("Spider");
+    Config::pledge_domain("Spider");
 
     TRY(Core::System::pledge("stdio recvfd sendfd rpath"));
 
@@ -201,7 +201,7 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
                 GUI::MessageBox::Type::Warning,
                 GUI::MessageBox::InputType::YesNo);
 
-            if (result == GUI::MessageBox::ExecYes)
+            if (result == GUI::MessageBox::ExecResult::Yes)
                 return GUI::Window::CloseRequestDecision::Close;
             else
                 return GUI::Window::CloseRequestDecision::StayOpen;
@@ -233,7 +233,7 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
     suit_actions.add_action(two_suit_action);
 
     auto game_menu = TRY(window->try_add_menu("&Game"));
-    TRY(game_menu->try_add_action(GUI::Action::create("&New Game", { Mod_None, Key_F2 }, [&](auto&) {
+    TRY(game_menu->try_add_action(GUI::Action::create("&New Game", { Mod_None, Key_F2 }, TRY(Gfx::Bitmap::try_load_from_file("/res/icons/16x16/reload.png")), [&](auto&) {
         game.setup(mode);
     })));
     TRY(game_menu->try_add_separator());

@@ -4,6 +4,7 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <AK/BuiltinWrappers.h>
 #include <AK/NonnullRefPtr.h>
 #include <AK/RefPtr.h>
 #include <Kernel/Assertions.h>
@@ -26,9 +27,7 @@ static constexpr u32 next_power_of_two(u32 value)
     return value;
 }
 
-PhysicalRegion::~PhysicalRegion()
-{
-}
+PhysicalRegion::~PhysicalRegion() = default;
 
 PhysicalRegion::PhysicalRegion(PhysicalAddress lower, PhysicalAddress upper)
     : m_lower(lower)
@@ -42,11 +41,12 @@ void PhysicalRegion::initialize_zones()
     size_t remaining_pages = m_pages;
     auto base_address = m_lower;
 
-    auto make_zones = [&](size_t pages_per_zone) {
+    auto make_zones = [&](size_t zone_size) -> size_t {
+        size_t pages_per_zone = zone_size / PAGE_SIZE;
         size_t zone_count = 0;
         auto first_address = base_address;
         while (remaining_pages >= pages_per_zone) {
-            m_zones.append(make<PhysicalZone>(base_address, pages_per_zone));
+            m_zones.append(adopt_nonnull_own_or_enomem(new (nothrow) PhysicalZone(base_address, pages_per_zone)).release_value_but_fixme_should_propagate_errors());
             base_address = base_address.offset(pages_per_zone * PAGE_SIZE);
             m_usable_zones.append(m_zones.last());
             remaining_pages -= pages_per_zone;
@@ -54,13 +54,14 @@ void PhysicalRegion::initialize_zones()
         }
         if (zone_count)
             dmesgln(" * {}x PhysicalZone ({} MiB) @ {:016x}-{:016x}", zone_count, pages_per_zone / 256, first_address.get(), base_address.get() - pages_per_zone * PAGE_SIZE - 1);
+        return zone_count;
     };
 
     // First make 16 MiB zones (with 4096 pages each)
-    make_zones(4096);
+    m_large_zones = make_zones(large_zone_size);
 
     // Then divide any remaining space into 1 MiB zones (with 256 pages each)
-    make_zones(256);
+    make_zones(small_zone_size);
 }
 
 OwnPtr<PhysicalRegion> PhysicalRegion::try_take_pages_from_beginning(unsigned page_count)
@@ -78,7 +79,7 @@ OwnPtr<PhysicalRegion> PhysicalRegion::try_take_pages_from_beginning(unsigned pa
 NonnullRefPtrVector<PhysicalPage> PhysicalRegion::take_contiguous_free_pages(size_t count)
 {
     auto rounded_page_count = next_power_of_two(count);
-    auto order = __builtin_ctz(rounded_page_count);
+    auto order = count_trailing_zeroes(rounded_page_count);
 
     Optional<PhysicalAddress> page_base;
     for (auto& zone : m_usable_zones) {
@@ -122,20 +123,20 @@ RefPtr<PhysicalPage> PhysicalRegion::take_free_page()
 
 void PhysicalRegion::return_page(PhysicalAddress paddr)
 {
-    // FIXME: Find a way to avoid looping over the zones here.
-    //        (Do some math on the address to find the right zone index.)
-    //        The main thing that gets in the way of this is non-uniform zone sizes.
-    //        Perhaps it would be better if all zones had the same size.
-    for (auto& zone : m_zones) {
-        if (zone.contains(paddr)) {
-            zone.deallocate_block(paddr, 0);
-            if (m_full_zones.contains(zone))
-                m_usable_zones.append(zone);
-            return;
-        }
-    }
+    auto large_zone_base = lower().get();
+    auto small_zone_base = lower().get() + (m_large_zones * large_zone_size);
 
-    VERIFY_NOT_REACHED();
+    size_t zone_index;
+    if (paddr.get() < small_zone_base)
+        zone_index = (paddr.get() - large_zone_base) / large_zone_size;
+    else
+        zone_index = m_large_zones + (paddr.get() - small_zone_base) / small_zone_size;
+
+    auto& zone = m_zones[zone_index];
+    VERIFY(zone.contains(paddr));
+    zone.deallocate_block(paddr, 0);
+    if (m_full_zones.contains(zone))
+        m_usable_zones.append(zone);
 }
 
 }

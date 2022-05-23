@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2020, the SerenityOS developers.
+ * Copyright (c) 2020-2022, the SerenityOS developers.
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -13,7 +13,7 @@
 #include <LibGUI/Painter.h>
 #include <LibGUI/Widget.h>
 #include <LibGfx/Bitmap.h>
-#include <LibGfx/Font.h>
+#include <LibGfx/Font/Font.h>
 #include <LibGfx/StandardCursor.h>
 
 namespace Pong {
@@ -23,10 +23,12 @@ class Game final : public GUI::Widget
     C_OBJECT(Game);
 
 public:
-    static const int game_width = 560;
-    static const int game_height = 480;
+    static constexpr int game_width = 560;
+    static constexpr int game_height = 480;
 
-    virtual ~Game() override;
+    virtual ~Game() override = default;
+
+    void reset();
 
 private:
     Game();
@@ -37,12 +39,13 @@ private:
     virtual void timer_event(Core::TimerEvent&) override;
     virtual void track_mouse_move(Gfx::IntPoint const&) override;
 
-    void reset();
+    void reset_scores();
     void reset_ball(int serve_to_player);
+    void reset_keys();
     void reset_paddles();
     void tick();
     void round_over(int player);
-    void game_over(int player);
+    void show_game_over_message(int player);
     void calculate_move();
 
     struct Ball {
@@ -111,6 +114,8 @@ private:
     Optional<int> m_cursor_paddle_target_y;
     bool m_up_key_held = false;
     bool m_down_key_held = false;
+
+    bool m_game_over = false;
 };
 
 }

@@ -6,9 +6,11 @@
 
 #pragma once
 
+#include <AK/Vector.h>
 #include <LibGUI/Button.h>
 #include <LibGUI/CheckBox.h>
-#include <LibGUI/ComboBox.h>
+#include <LibGUI/ConnectionToWindowMangerServer.h>
+#include <LibGUI/ListView.h>
 #include <LibGUI/SettingsWindow.h>
 #include <LibGUI/TextEditor.h>
 
@@ -19,16 +21,25 @@ public:
 
     virtual void apply_settings() override;
 
+    void window_activated(bool is_active_window);
+
 private:
     KeyboardSettingsWidget();
 
-    void set_keymap(String const& keymap_filename);
+    void set_keymaps(Vector<String> const& keymaps, String const& active_keymap);
 
-    String m_current_applied_keymap;
-    Vector<String> m_character_map_files;
+    Vector<String> m_initial_keymap_list;
 
-    RefPtr<GUI::ComboBox> m_character_map_file_combo;
+    String m_initial_active_keymap;
+
+    RefPtr<GUI::ListView> m_selected_keymaps_listview;
+    RefPtr<GUI::Label> m_active_keymap_label;
+    RefPtr<GUI::CheckBox> m_num_lock_checkbox;
+    RefPtr<GUI::Button> m_activate_keymap_button;
+    RefPtr<GUI::Button> m_add_keymap_button;
+    RefPtr<GUI::Button> m_remove_keymap_button;
     RefPtr<GUI::TextEditor> m_test_typing_area;
     RefPtr<GUI::Button> m_clear_test_typing_area_button;
-    RefPtr<GUI::CheckBox> m_num_lock_checkbox;
+
+    Function<void()> m_activate_keymap_event;
 };

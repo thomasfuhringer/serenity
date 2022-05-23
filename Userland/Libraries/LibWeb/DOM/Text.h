@@ -16,8 +16,8 @@ class Text final : public CharacterData {
 public:
     using WrapperType = Bindings::TextWrapper;
 
-    explicit Text(Document&, const String&);
-    virtual ~Text() override;
+    explicit Text(Document&, String const&);
+    virtual ~Text() override = default;
 
     static NonnullRefPtr<Text> create_with_global_object(Bindings::WindowObject& window, String const& data);
 
@@ -27,10 +27,18 @@ public:
 
     void set_always_editable(bool b) { m_always_editable = b; }
 
+    void set_owner_input_element(Badge<HTML::HTMLInputElement>, HTML::HTMLInputElement&);
+    HTML::HTMLInputElement* owner_input_element() { return m_owner_input_element; }
+
+    ExceptionOr<NonnullRefPtr<Text>> split_text(size_t offset);
+
 private:
-    virtual RefPtr<Layout::Node> create_layout_node() override;
+    WeakPtr<HTML::HTMLInputElement> m_owner_input_element;
 
     bool m_always_editable { false };
 };
+
+template<>
+inline bool Node::fast_is<Text>() const { return is_text(); }
 
 }

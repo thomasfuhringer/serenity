@@ -9,6 +9,8 @@ set(SOURCES
     AbstractSlider.cpp
     AbstractTableView.cpp
     AbstractView.cpp
+    AbstractZoomPanWidget.cpp
+    AbstractThemePreview.cpp
     Action.cpp
     ActionGroup.cpp
     Application.cpp
@@ -25,7 +27,7 @@ set(SOURCES
     CommonActions.cpp
     CommonLocationsProvider.cpp
     ComboBox.cpp
-    Command.cpp
+    CommandPalette.cpp
     Desktop.cpp
     Dialog.cpp
     DisplayLink.cpp
@@ -41,11 +43,13 @@ set(SOURCES
     FontPicker.cpp
     FontPickerDialogGML.h
     Frame.cpp
-    GMLAutocompleteProvider.cpp
-    GMLFormatter.cpp
-    GMLLexer.cpp
-    GMLParser.cpp
-    GMLSyntaxHighlighter.cpp
+    GitCommitLexer.cpp
+    GitCommitSyntaxHighlighter.cpp
+    GlyphMapWidget.cpp
+    GML/AutocompleteProvider.cpp
+    GML/Lexer.cpp
+    GML/Parser.cpp
+    GML/SyntaxHighlighter.cpp
     GroupBox.cpp
     HeaderView.cpp
     INILexer.cpp
@@ -102,14 +106,15 @@ set(SOURCES
     ToolbarContainer.cpp
     Tray.cpp
     TreeView.cpp
+    TreeViewModel.cpp
     UndoStack.cpp
     ValueSlider.cpp
     Variant.cpp
     VimEditingEngine.cpp
     Widget.cpp
     Window.cpp
-    WindowServerConnection.cpp
-    WindowManagerServerConnection.cpp
+    ConnectionToWindowServer.cpp
+    ConnectionToWindowMangerServer.cpp
     Wizards/WizardDialog.cpp
     Wizards/AbstractWizardPage.cpp
     Wizards/CoverWizardPage.cpp

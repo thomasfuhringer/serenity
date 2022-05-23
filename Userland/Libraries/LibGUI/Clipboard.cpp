@@ -9,18 +9,18 @@
 #include <Clipboard/ClipboardServerEndpoint.h>
 #include <LibGUI/Clipboard.h>
 #include <LibGfx/Bitmap.h>
-#include <LibIPC/ServerConnection.h>
+#include <LibIPC/ConnectionToServer.h>
 
 namespace GUI {
 
-class ClipboardServerConnection final
-    : public IPC::ServerConnection<ClipboardClientEndpoint, ClipboardServerEndpoint>
+class ConnectionToClipboardServer final
+    : public IPC::ConnectionToServer<ClipboardClientEndpoint, ClipboardServerEndpoint>
     , public ClipboardClientEndpoint {
-    C_OBJECT(ClipboardServerConnection);
+    IPC_CLIENT_CONNECTION(ConnectionToClipboardServer, "/tmp/portal/clipboard")
 
 private:
-    ClipboardServerConnection()
-        : IPC::ServerConnection<ClipboardClientEndpoint, ClipboardServerEndpoint>(*this, "/tmp/portal/clipboard")
+    ConnectionToClipboardServer(NonnullOwnPtr<Core::Stream::LocalSocket> socket)
+        : IPC::ConnectionToServer<ClipboardClientEndpoint, ClipboardServerEndpoint>(*this, move(socket))
     {
     }
 
@@ -30,24 +30,28 @@ private:
     }
 };
 
-static ClipboardServerConnection* s_connection;
+static RefPtr<ConnectionToClipboardServer> s_connection;
 
-static ClipboardServerConnection& connection()
+static ConnectionToClipboardServer& connection()
 {
     return *s_connection;
 }
 
 void Clipboard::initialize(Badge<Application>)
 {
-    s_connection = &ClipboardServerConnection::construct().leak_ref();
+    s_connection = ConnectionToClipboardServer::try_create().release_value_but_fixme_should_propagate_errors();
 }
 
 Clipboard& Clipboard::the()
 {
-    static Clipboard* s_the;
-    if (!s_the)
-        s_the = new Clipboard;
-    return *s_the;
+    static bool s_destructed = false;
+    static ScopeGuard destructed_guard([] {
+        s_destructed = true;
+    });
+    VERIFY(!s_destructed); // Catch use-after-free
+
+    static Clipboard s_the;
+    return s_the;
 }
 
 Clipboard::DataAndType Clipboard::fetch_data_and_type() const
@@ -56,7 +60,7 @@ Clipboard::DataAndType Clipboard::fetch_data_and_type() const
     if (!response.data().is_valid())
         return {};
     auto data = ByteBuffer::copy(response.data().data<void>(), response.data().size());
-    if (!data.has_value())
+    if (data.is_error())
         return {};
 
     auto type = response.mime_type();
@@ -149,7 +153,7 @@ void Clipboard::clear()
     connection().async_set_clipboard_data({}, {}, {});
 }
 
-void Clipboard::clipboard_data_changed(Badge<ClipboardServerConnection>, String const& mime_type)
+void Clipboard::clipboard_data_changed(Badge<ConnectionToClipboardServer>, String const& mime_type)
 {
     if (on_change)
         on_change(mime_type);

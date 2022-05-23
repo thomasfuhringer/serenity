@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2020, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2022, the SerenityOS developers.
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -13,11 +14,11 @@
 #include <LibGUI/ListView.h>
 #include <LibGUI/SpinBox.h>
 #include <LibGUI/Widget.h>
-#include <LibGfx/FontDatabase.h>
+#include <LibGfx/Font/FontDatabase.h>
 
 namespace GUI {
 
-FontPicker::FontPicker(Window* parent_window, const Gfx::Font* current_font, bool fixed_width_only)
+FontPicker::FontPicker(Window* parent_window, Gfx::Font const* current_font, bool fixed_width_only)
     : Dialog(parent_window)
     , m_fixed_width_only(fixed_width_only)
 {
@@ -158,22 +159,18 @@ FontPicker::FontPicker(Window* parent_window, const Gfx::Font* current_font, boo
 
     auto& ok_button = *widget.find_descendant_of_type_named<GUI::Button>("ok_button");
     ok_button.on_click = [this](auto) {
-        done(ExecOK);
+        done(ExecResult::OK);
     };
 
     auto& cancel_button = *widget.find_descendant_of_type_named<GUI::Button>("cancel_button");
     cancel_button.on_click = [this](auto) {
-        done(ExecCancel);
+        done(ExecResult::Cancel);
     };
 
     set_font(current_font);
 }
 
-FontPicker::~FontPicker()
-{
-}
-
-void FontPicker::set_font(const Gfx::Font* font)
+void FontPicker::set_font(Gfx::Font const* font)
 {
     if (m_font == font)
         return;

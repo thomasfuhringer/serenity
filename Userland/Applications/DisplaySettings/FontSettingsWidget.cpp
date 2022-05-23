@@ -1,6 +1,7 @@
 /*
  * Copyright (c) 2021, Andreas Kling <kling@serenityos.org>
  * Copyright (c) 2021, Thomas Keppler <winfr34k@gmail.com>
+ * Copyright (c) 2022, the SerenityOS developers.
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -8,9 +9,9 @@
 #include "FontSettingsWidget.h"
 #include <Applications/DisplaySettings/FontSettingsGML.h>
 #include <LibGUI/Button.h>
+#include <LibGUI/ConnectionToWindowServer.h>
 #include <LibGUI/FontPicker.h>
-#include <LibGUI/WindowServerConnection.h>
-#include <LibGfx/FontDatabase.h>
+#include <LibGfx/Font/FontDatabase.h>
 
 namespace DisplaySettings {
 
@@ -27,8 +28,9 @@ FontSettingsWidget::FontSettingsWidget()
     auto& default_font_button = *find_descendant_of_type_named<GUI::Button>("default_font_button");
     default_font_button.on_click = [this](auto) {
         auto font_picker = GUI::FontPicker::construct(window(), &m_default_font_label->font(), false);
-        if (font_picker->exec() == GUI::Dialog::ExecOK) {
+        if (font_picker->exec() == GUI::Dialog::ExecResult::OK) {
             update_label_with_font(*m_default_font_label, *font_picker->font());
+            set_modified(true);
         }
     };
 
@@ -39,25 +41,22 @@ FontSettingsWidget::FontSettingsWidget()
     auto& fixed_width_font_button = *find_descendant_of_type_named<GUI::Button>("fixed_width_font_button");
     fixed_width_font_button.on_click = [this](auto) {
         auto font_picker = GUI::FontPicker::construct(window(), &m_fixed_width_font_label->font(), true);
-        if (font_picker->exec() == GUI::Dialog::ExecOK) {
+        if (font_picker->exec() == GUI::Dialog::ExecResult::OK) {
             update_label_with_font(*m_fixed_width_font_label, *font_picker->font());
+            set_modified(true);
         }
     };
 }
 
-FontSettingsWidget::~FontSettingsWidget()
-{
-}
-
 static void update_label_with_font(GUI::Label& label, Gfx::Font const& font)
 {
-    label.set_text(font.qualified_name());
+    label.set_text(font.human_readable_name());
     label.set_font(font);
 }
 
 void FontSettingsWidget::apply_settings()
 {
-    GUI::WindowServerConnection::the().set_system_fonts(m_default_font_label->text(), m_fixed_width_font_label->text());
+    GUI::ConnectionToWindowServer::the().set_system_fonts(m_default_font_label->font().qualified_name(), m_fixed_width_font_label->font().qualified_name());
 }
 
 }

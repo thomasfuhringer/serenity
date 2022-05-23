@@ -5,10 +5,10 @@
  */
 
 #include <AK/Memory.h>
+#include <Kernel/API/POSIX/errno.h>
 #include <Kernel/Devices/DeviceManagement.h>
 #include <Kernel/Devices/FullDevice.h>
 #include <Kernel/Sections.h>
-#include <LibC/errno_numbers.h>
 
 namespace Kernel {
 
@@ -25,11 +25,9 @@ UNMAP_AFTER_INIT FullDevice::FullDevice()
 {
 }
 
-UNMAP_AFTER_INIT FullDevice::~FullDevice()
-{
-}
+UNMAP_AFTER_INIT FullDevice::~FullDevice() = default;
 
-bool FullDevice::can_read(const OpenFileDescription&, size_t) const
+bool FullDevice::can_read(OpenFileDescription const&, u64) const
 {
     return true;
 }
@@ -40,7 +38,7 @@ ErrorOr<size_t> FullDevice::read(OpenFileDescription&, u64, UserOrKernelBuffer& 
     return size;
 }
 
-ErrorOr<size_t> FullDevice::write(OpenFileDescription&, u64, const UserOrKernelBuffer&, size_t size)
+ErrorOr<size_t> FullDevice::write(OpenFileDescription&, u64, UserOrKernelBuffer const&, size_t size)
 {
     if (size == 0)
         return 0;

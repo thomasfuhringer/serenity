@@ -12,22 +12,8 @@
 
 namespace Kernel {
 
-File::File()
-{
-}
-
-File::~File()
-{
-}
-
-bool File::unref() const
-{
-    if (deref_base())
-        return false;
-    const_cast<File&>(*this).before_removing();
-    delete this;
-    return true;
-}
+File::File() = default;
+File::~File() = default;
 
 ErrorOr<NonnullRefPtr<OpenFileDescription>> File::open(int options)
 {

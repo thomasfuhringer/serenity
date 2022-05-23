@@ -44,23 +44,29 @@ MailSettingsWidget::MailSettingsWidget()
 
     load_from_gml(mail_settings_widget_gml);
 
-    auto& server_settings_image_label = *find_descendant_of_type_named<GUI::Label>("server_settings_image_label");
-    server_settings_image_label.set_icon(Gfx::Bitmap::try_load_from_file("/res/graphics/mail-server-settings.png").release_value_but_fixme_should_propagate_errors());
-
-    auto& user_settings_image_label = *find_descendant_of_type_named<GUI::Label>("user_settings_image_label");
-    user_settings_image_label.set_icon(Gfx::Bitmap::try_load_from_file("/res/graphics/mail-user-settings.png").release_value_but_fixme_should_propagate_errors());
-
     m_server_inputbox = *find_descendant_of_type_named<GUI::TextBox>("server_input");
     m_server_inputbox->set_text(Config::read_string("Mail", "Connection", "Server", ""));
+    m_server_inputbox->on_change = [&]() {
+        set_modified(true);
+    };
 
     m_port_combobox = *find_descendant_of_type_named<GUI::ComboBox>("port_input");
     m_port_combobox->set_text(Config::read_string("Mail", "Connection", "Port", "993"));
     m_port_combobox->set_only_allow_values_from_model(false);
     m_port_combobox->set_model(*GUI::ItemListModel<String>::create(m_common_ports));
+    m_port_combobox->on_change = [&](auto, auto) {
+        set_modified(true);
+    };
 
     m_tls_checkbox = *find_descendant_of_type_named<GUI::CheckBox>("tls_input");
     m_tls_checkbox->set_checked(Config::read_bool("Mail", "Connection", "TLS", false));
+    m_tls_checkbox->on_checked = [&](auto) {
+        set_modified(true);
+    };
 
     m_email_inputbox = *find_descendant_of_type_named<GUI::TextBox>("email_input");
     m_email_inputbox->set_text(Config::read_string("Mail", "User", "Username", ""));
+    m_email_inputbox->on_change = [&]() {
+        set_modified(true);
+    };
 }

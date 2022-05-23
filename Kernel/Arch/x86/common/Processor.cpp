@@ -1,28 +1,32 @@
 /*
  * Copyright (c) 2018-2021, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2022, Linus Groh <linusg@serenityos.org>
+ * Copyright (c) 2022, the SerenityOS developers.
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <AK/BuiltinWrappers.h>
 #include <AK/Format.h>
 #include <AK/StdLibExtras.h>
-#include <AK/String.h>
+#include <AK/StringBuilder.h>
 #include <AK/Types.h>
 
 #include <Kernel/Interrupts/APIC.h>
 #include <Kernel/Process.h>
+#include <Kernel/Scheduler.h>
 #include <Kernel/Sections.h>
 #include <Kernel/StdLib.h>
 #include <Kernel/Thread.h>
 
 #include <Kernel/Arch/Processor.h>
+#include <Kernel/Arch/SafeMem.h>
 #include <Kernel/Arch/ScopedCritical.h>
 #include <Kernel/Arch/x86/CPUID.h>
 #include <Kernel/Arch/x86/InterruptDisabler.h>
 #include <Kernel/Arch/x86/Interrupts.h>
 #include <Kernel/Arch/x86/MSR.h>
 #include <Kernel/Arch/x86/ProcessorInfo.h>
-#include <Kernel/Arch/x86/SafeMem.h>
 #include <Kernel/Arch/x86/TrapFrame.h>
 
 #include <Kernel/Memory/PageDirectory.h>
@@ -34,7 +38,7 @@ READONLY_AFTER_INIT FPUState Processor::s_clean_fpu_state;
 
 READONLY_AFTER_INIT static ProcessorContainer s_processors {};
 READONLY_AFTER_INIT Atomic<u32> Processor::g_total_processors;
-READONLY_AFTER_INIT static volatile bool s_smp_enabled;
+READONLY_AFTER_INIT static bool volatile s_smp_enabled;
 
 static Atomic<ProcessorMessage*> s_message_pool;
 Atomic<u32> Processor::s_idle_cpu_mask { 0 };
@@ -44,6 +48,7 @@ Atomic<u32> Processor::s_idle_cpu_mask { 0 };
 extern "C" void context_first_init(Thread* from_thread, Thread* to_thread, TrapFrame* trap) __attribute__((used));
 extern "C" void enter_thread_context(Thread* from_thread, Thread* to_thread) __attribute__((used));
 extern "C" FlatPtr do_init_context(Thread* thread, u32 flags) __attribute__((used));
+extern "C" void syscall_entry();
 
 bool Processor::is_smp_enabled()
 {
@@ -66,76 +71,402 @@ UNMAP_AFTER_INIT void Processor::cpu_detect()
     // NOTE: This is called during Processor::early_initialize, we cannot
     //       safely log at this point because we don't have kmalloc
     //       initialized yet!
-    auto set_feature =
-        [&](CPUFeature f) {
-            m_features = static_cast<CPUFeature>(static_cast<u32>(m_features) | static_cast<u32>(f));
-        };
-    m_features = static_cast<CPUFeature>(0);
+    m_features = CPUFeature::Type(0u);
 
     CPUID processor_info(0x1);
-    if (processor_info.edx() & (1 << 4))
-        set_feature(CPUFeature::TSC);
-    if (processor_info.edx() & (1 << 6))
-        set_feature(CPUFeature::PAE);
-    if (processor_info.edx() & (1 << 13))
-        set_feature(CPUFeature::PGE);
-    if (processor_info.edx() & (1 << 23))
-        set_feature(CPUFeature::MMX);
-    if (processor_info.edx() & (1 << 24))
-        set_feature(CPUFeature::FXSR);
-    if (processor_info.edx() & (1 << 25))
-        set_feature(CPUFeature::SSE);
-    if (processor_info.edx() & (1 << 26))
-        set_feature(CPUFeature::SSE2);
-    if (processor_info.ecx() & (1 << 0))
-        set_feature(CPUFeature::SSE3);
-    if (processor_info.ecx() & (1 << 9))
-        set_feature(CPUFeature::SSSE3);
-    if (processor_info.ecx() & (1 << 19))
-        set_feature(CPUFeature::SSE4_1);
-    if (processor_info.ecx() & (1 << 20))
-        set_feature(CPUFeature::SSE4_2);
-    if (processor_info.ecx() & (1 << 26))
-        set_feature(CPUFeature::XSAVE);
-    if (processor_info.ecx() & (1 << 28))
-        set_feature(CPUFeature::AVX);
-    if (processor_info.ecx() & (1 << 30))
-        set_feature(CPUFeature::RDRAND);
-    if (processor_info.ecx() & (1u << 31))
-        set_feature(CPUFeature::HYPERVISOR);
-    if (processor_info.edx() & (1 << 11)) {
+
+    auto handle_edx_bit_11_feature = [&] {
         u32 stepping = processor_info.eax() & 0xf;
         u32 model = (processor_info.eax() >> 4) & 0xf;
         u32 family = (processor_info.eax() >> 8) & 0xf;
+        // FIXME: I have no clue what these mean or where it's from (the Intel manual I've seen just says EDX[11] is SEP).
+        //        If you do, please convert them to constants or add comments!
         if (!(family == 6 && model < 3 && stepping < 3))
-            set_feature(CPUFeature::SEP);
+            m_features |= CPUFeature::SEP;
         if ((family == 6 && model >= 3) || (family == 0xf && model >= 0xe))
-            set_feature(CPUFeature::CONSTANT_TSC);
-    }
+            m_features |= CPUFeature::CONSTANT_TSC;
+    };
+
+    if (processor_info.ecx() & (1 << 0))
+        m_features |= CPUFeature::SSE3;
+    if (processor_info.ecx() & (1 << 1))
+        m_features |= CPUFeature::PCLMULQDQ;
+    if (processor_info.ecx() & (1 << 2))
+        m_features |= CPUFeature::DTES64;
+    if (processor_info.ecx() & (1 << 3))
+        m_features |= CPUFeature::MONITOR;
+    if (processor_info.ecx() & (1 << 4))
+        m_features |= CPUFeature::DS_CPL;
+    if (processor_info.ecx() & (1 << 5))
+        m_features |= CPUFeature::VMX;
+    if (processor_info.ecx() & (1 << 6))
+        m_features |= CPUFeature::SMX;
+    if (processor_info.ecx() & (1 << 7))
+        m_features |= CPUFeature::EST;
+    if (processor_info.ecx() & (1 << 8))
+        m_features |= CPUFeature::TM2;
+    if (processor_info.ecx() & (1 << 9))
+        m_features |= CPUFeature::SSSE3;
+    if (processor_info.ecx() & (1 << 10))
+        m_features |= CPUFeature::CNXT_ID;
+    if (processor_info.ecx() & (1 << 11))
+        m_features |= CPUFeature::SDBG;
+    if (processor_info.ecx() & (1 << 12))
+        m_features |= CPUFeature::FMA;
+    if (processor_info.ecx() & (1 << 13))
+        m_features |= CPUFeature::CX16;
+    if (processor_info.ecx() & (1 << 14))
+        m_features |= CPUFeature::XTPR;
+    if (processor_info.ecx() & (1 << 15))
+        m_features |= CPUFeature::PDCM;
+    if (processor_info.ecx() & (1 << 17))
+        m_features |= CPUFeature::PCID;
+    if (processor_info.ecx() & (1 << 18))
+        m_features |= CPUFeature::DCA;
+    if (processor_info.ecx() & (1 << 19))
+        m_features |= CPUFeature::SSE4_1;
+    if (processor_info.ecx() & (1 << 20))
+        m_features |= CPUFeature::SSE4_2;
+    if (processor_info.ecx() & (1 << 21))
+        m_features |= CPUFeature::X2APIC;
+    if (processor_info.ecx() & (1 << 22))
+        m_features |= CPUFeature::MOVBE;
+    if (processor_info.ecx() & (1 << 23))
+        m_features |= CPUFeature::POPCNT;
+    if (processor_info.ecx() & (1 << 24))
+        m_features |= CPUFeature::TSC_DEADLINE;
+    if (processor_info.ecx() & (1 << 25))
+        m_features |= CPUFeature::AES;
+    if (processor_info.ecx() & (1 << 26))
+        m_features |= CPUFeature::XSAVE;
+    if (processor_info.ecx() & (1 << 27))
+        m_features |= CPUFeature::OSXSAVE;
+    if (processor_info.ecx() & (1 << 28))
+        m_features |= CPUFeature::AVX;
+    if (processor_info.ecx() & (1 << 29))
+        m_features |= CPUFeature::F16C;
+    if (processor_info.ecx() & (1 << 30))
+        m_features |= CPUFeature::RDRAND;
+    if (processor_info.ecx() & (1 << 31))
+        m_features |= CPUFeature::HYPERVISOR;
+
+    if (processor_info.edx() & (1 << 0))
+        m_features |= CPUFeature::FPU;
+    if (processor_info.edx() & (1 << 1))
+        m_features |= CPUFeature::VME;
+    if (processor_info.edx() & (1 << 2))
+        m_features |= CPUFeature::DE;
+    if (processor_info.edx() & (1 << 3))
+        m_features |= CPUFeature::PSE;
+    if (processor_info.edx() & (1 << 4))
+        m_features |= CPUFeature::TSC;
+    if (processor_info.edx() & (1 << 5))
+        m_features |= CPUFeature::MSR;
+    if (processor_info.edx() & (1 << 6))
+        m_features |= CPUFeature::PAE;
+    if (processor_info.edx() & (1 << 7))
+        m_features |= CPUFeature::MCE;
+    if (processor_info.edx() & (1 << 8))
+        m_features |= CPUFeature::CX8;
+    if (processor_info.edx() & (1 << 9))
+        m_features |= CPUFeature::APIC;
+    if (processor_info.edx() & (1 << 11))
+        handle_edx_bit_11_feature();
+    if (processor_info.edx() & (1 << 12))
+        m_features |= CPUFeature::MTRR;
+    if (processor_info.edx() & (1 << 13))
+        m_features |= CPUFeature::PGE;
+    if (processor_info.edx() & (1 << 14))
+        m_features |= CPUFeature::MCA;
+    if (processor_info.edx() & (1 << 15))
+        m_features |= CPUFeature::CMOV;
+    if (processor_info.edx() & (1 << 16))
+        m_features |= CPUFeature::PAT;
+    if (processor_info.edx() & (1 << 17))
+        m_features |= CPUFeature::PSE36;
+    if (processor_info.edx() & (1 << 18))
+        m_features |= CPUFeature::PSN;
+    if (processor_info.edx() & (1 << 19))
+        m_features |= CPUFeature::CLFLUSH;
+    if (processor_info.edx() & (1 << 21))
+        m_features |= CPUFeature::DS;
+    if (processor_info.edx() & (1 << 22))
+        m_features |= CPUFeature::ACPI;
+    if (processor_info.edx() & (1 << 23))
+        m_features |= CPUFeature::MMX;
+    if (processor_info.edx() & (1 << 24))
+        m_features |= CPUFeature::FXSR;
+    if (processor_info.edx() & (1 << 25))
+        m_features |= CPUFeature::SSE;
+    if (processor_info.edx() & (1 << 26))
+        m_features |= CPUFeature::SSE2;
+    if (processor_info.edx() & (1 << 27))
+        m_features |= CPUFeature::SS;
+    if (processor_info.edx() & (1 << 28))
+        m_features |= CPUFeature::HTT;
+    if (processor_info.edx() & (1 << 29))
+        m_features |= CPUFeature::TM;
+    if (processor_info.edx() & (1 << 30))
+        m_features |= CPUFeature::IA64;
+    if (processor_info.edx() & (1 << 31))
+        m_features |= CPUFeature::PBE;
+
+    CPUID extended_features(0x7);
+
+    if (extended_features.ebx() & (1 << 0))
+        m_features |= CPUFeature::FSGSBASE;
+    if (extended_features.ebx() & (1 << 1))
+        m_features |= CPUFeature::TSC_ADJUST;
+    if (extended_features.ebx() & (1 << 2))
+        m_features |= CPUFeature::SGX;
+    if (extended_features.ebx() & (1 << 3))
+        m_features |= CPUFeature::BMI1;
+    if (extended_features.ebx() & (1 << 4))
+        m_features |= CPUFeature::HLE;
+    if (extended_features.ebx() & (1 << 5))
+        m_features |= CPUFeature::AVX2;
+    if (extended_features.ebx() & (1 << 6))
+        m_features |= CPUFeature::FDP_EXCPTN_ONLY;
+    if (extended_features.ebx() & (1 << 7))
+        m_features |= CPUFeature::SMEP;
+    if (extended_features.ebx() & (1 << 8))
+        m_features |= CPUFeature::BMI2;
+    if (extended_features.ebx() & (1 << 9))
+        m_features |= CPUFeature::ERMS;
+    if (extended_features.ebx() & (1 << 10))
+        m_features |= CPUFeature::INVPCID;
+    if (extended_features.ebx() & (1 << 11))
+        m_features |= CPUFeature::RTM;
+    if (extended_features.ebx() & (1 << 12))
+        m_features |= CPUFeature::PQM;
+    if (extended_features.ebx() & (1 << 13))
+        m_features |= CPUFeature::ZERO_FCS_FDS;
+    if (extended_features.ebx() & (1 << 14))
+        m_features |= CPUFeature::MPX;
+    if (extended_features.ebx() & (1 << 15))
+        m_features |= CPUFeature::PQE;
+    if (extended_features.ebx() & (1 << 16))
+        m_features |= CPUFeature::AVX512_F;
+    if (extended_features.ebx() & (1 << 17))
+        m_features |= CPUFeature::AVX512_DQ;
+    if (extended_features.ebx() & (1 << 18))
+        m_features |= CPUFeature::RDSEED;
+    if (extended_features.ebx() & (1 << 19))
+        m_features |= CPUFeature::ADX;
+    if (extended_features.ebx() & (1 << 20))
+        m_features |= CPUFeature::SMAP;
+    if (extended_features.ebx() & (1 << 21))
+        m_features |= CPUFeature::AVX512_IFMA;
+    if (extended_features.ebx() & (1 << 22))
+        m_features |= CPUFeature::PCOMMIT;
+    if (extended_features.ebx() & (1 << 23))
+        m_features |= CPUFeature::CLFLUSHOPT;
+    if (extended_features.ebx() & (1 << 24))
+        m_features |= CPUFeature::CLWB;
+    if (extended_features.ebx() & (1 << 25))
+        m_features |= CPUFeature::INTEL_PT;
+    if (extended_features.ebx() & (1 << 26))
+        m_features |= CPUFeature::AVX512_PF;
+    if (extended_features.ebx() & (1 << 27))
+        m_features |= CPUFeature::AVX512_ER;
+    if (extended_features.ebx() & (1 << 28))
+        m_features |= CPUFeature::AVX512_CD;
+    if (extended_features.ebx() & (1 << 29))
+        m_features |= CPUFeature::SHA;
+    if (extended_features.ebx() & (1 << 30))
+        m_features |= CPUFeature::AVX512_BW;
+    if (extended_features.ebx() & (1 << 31))
+        m_features |= CPUFeature::AVX512_VL;
+
+    if (extended_features.ecx() & (1 << 0))
+        m_features |= CPUFeature::PREFETCHWT1;
+    if (extended_features.ecx() & (1 << 1))
+        m_features |= CPUFeature::AVX512_VBMI;
+    if (extended_features.ecx() & (1 << 2))
+        m_features |= CPUFeature::UMIP;
+    if (extended_features.ecx() & (1 << 3))
+        m_features |= CPUFeature::PKU;
+    if (extended_features.ecx() & (1 << 4))
+        m_features |= CPUFeature::OSPKE;
+    if (extended_features.ecx() & (1 << 5))
+        m_features |= CPUFeature::WAITPKG;
+    if (extended_features.ecx() & (1 << 6))
+        m_features |= CPUFeature::AVX512_VBMI2;
+    if (extended_features.ecx() & (1 << 7))
+        m_features |= CPUFeature::CET_SS;
+    if (extended_features.ecx() & (1 << 8))
+        m_features |= CPUFeature::GFNI;
+    if (extended_features.ecx() & (1 << 9))
+        m_features |= CPUFeature::VAES;
+    if (extended_features.ecx() & (1 << 10))
+        m_features |= CPUFeature::VPCLMULQDQ;
+    if (extended_features.ecx() & (1 << 11))
+        m_features |= CPUFeature::AVX512_VNNI;
+    if (extended_features.ecx() & (1 << 12))
+        m_features |= CPUFeature::AVX512_BITALG;
+    if (extended_features.ecx() & (1 << 13))
+        m_features |= CPUFeature::TME_EN;
+    if (extended_features.ecx() & (1 << 14))
+        m_features |= CPUFeature::AVX512_VPOPCNTDQ;
+    if (extended_features.ecx() & (1 << 16))
+        m_features |= CPUFeature::INTEL_5_LEVEL_PAGING;
+    if (extended_features.ecx() & (1 << 22))
+        m_features |= CPUFeature::RDPID;
+    if (extended_features.ecx() & (1 << 23))
+        m_features |= CPUFeature::KL;
+    if (extended_features.ecx() & (1 << 25))
+        m_features |= CPUFeature::CLDEMOTE;
+    if (extended_features.ecx() & (1 << 27))
+        m_features |= CPUFeature::MOVDIRI;
+    if (extended_features.ecx() & (1 << 28))
+        m_features |= CPUFeature::MOVDIR64B;
+    if (extended_features.ecx() & (1 << 29))
+        m_features |= CPUFeature::ENQCMD;
+    if (extended_features.ecx() & (1 << 30))
+        m_features |= CPUFeature::SGX_LC;
+    if (extended_features.ecx() & (1 << 31))
+        m_features |= CPUFeature::PKS;
+
+    if (extended_features.edx() & (1 << 2))
+        m_features |= CPUFeature::AVX512_4VNNIW;
+    if (extended_features.edx() & (1 << 3))
+        m_features |= CPUFeature::AVX512_4FMAPS;
+    if (extended_features.edx() & (1 << 4))
+        m_features |= CPUFeature::FSRM;
+    if (extended_features.edx() & (1 << 8))
+        m_features |= CPUFeature::AVX512_VP2INTERSECT;
+    if (extended_features.edx() & (1 << 9))
+        m_features |= CPUFeature::SRBDS_CTRL;
+    if (extended_features.edx() & (1 << 10))
+        m_features |= CPUFeature::MD_CLEAR;
+    if (extended_features.edx() & (1 << 11))
+        m_features |= CPUFeature::RTM_ALWAYS_ABORT;
+    if (extended_features.edx() & (1 << 13))
+        m_features |= CPUFeature::TSX_FORCE_ABORT;
+    if (extended_features.edx() & (1 << 14))
+        m_features |= CPUFeature::SERIALIZE;
+    if (extended_features.edx() & (1 << 15))
+        m_features |= CPUFeature::HYBRID;
+    if (extended_features.edx() & (1 << 16))
+        m_features |= CPUFeature::TSXLDTRK;
+    if (extended_features.edx() & (1 << 18))
+        m_features |= CPUFeature::PCONFIG;
+    if (extended_features.edx() & (1 << 19))
+        m_features |= CPUFeature::LBR;
+    if (extended_features.edx() & (1 << 20))
+        m_features |= CPUFeature::CET_IBT;
+    if (extended_features.edx() & (1 << 22))
+        m_features |= CPUFeature::AMX_BF16;
+    if (extended_features.edx() & (1 << 23))
+        m_features |= CPUFeature::AVX512_FP16;
+    if (extended_features.edx() & (1 << 24))
+        m_features |= CPUFeature::AMX_TILE;
+    if (extended_features.edx() & (1 << 25))
+        m_features |= CPUFeature::AMX_INT8;
+    if (extended_features.edx() & (1 << 26))
+        m_features |= CPUFeature::SPEC_CTRL;
+    if (extended_features.edx() & (1 << 27))
+        m_features |= CPUFeature::STIBP;
+    if (extended_features.edx() & (1 << 28))
+        m_features |= CPUFeature::L1D_FLUSH;
+    if (extended_features.edx() & (1 << 29))
+        m_features |= CPUFeature::IA32_ARCH_CAPABILITIES;
+    if (extended_features.edx() & (1 << 30))
+        m_features |= CPUFeature::IA32_CORE_CAPABILITIES;
+    if (extended_features.edx() & (1 << 31))
+        m_features |= CPUFeature::SSBD;
 
     u32 max_extended_leaf = CPUID(0x80000000).eax();
 
     if (max_extended_leaf >= 0x80000001) {
         CPUID extended_processor_info(0x80000001);
+
+        if (extended_processor_info.ecx() & (1 << 0))
+            m_features |= CPUFeature::LAHF_LM;
+        if (extended_processor_info.ecx() & (1 << 1))
+            m_features |= CPUFeature::CMP_LEGACY;
+        if (extended_processor_info.ecx() & (1 << 2))
+            m_features |= CPUFeature::SVM;
+        if (extended_processor_info.ecx() & (1 << 3))
+            m_features |= CPUFeature::EXTAPIC;
+        if (extended_processor_info.ecx() & (1 << 4))
+            m_features |= CPUFeature::CR8_LEGACY;
+        if (extended_processor_info.ecx() & (1 << 5))
+            m_features |= CPUFeature::ABM;
+        if (extended_processor_info.ecx() & (1 << 6))
+            m_features |= CPUFeature::SSE4A;
+        if (extended_processor_info.ecx() & (1 << 7))
+            m_features |= CPUFeature::MISALIGNSSE;
+        if (extended_processor_info.ecx() & (1 << 8))
+            m_features |= CPUFeature::_3DNOWPREFETCH;
+        if (extended_processor_info.ecx() & (1 << 9))
+            m_features |= CPUFeature::OSVW;
+        if (extended_processor_info.ecx() & (1 << 10))
+            m_features |= CPUFeature::IBS;
+        if (extended_processor_info.ecx() & (1 << 11))
+            m_features |= CPUFeature::XOP;
+        if (extended_processor_info.ecx() & (1 << 12))
+            m_features |= CPUFeature::SKINIT;
+        if (extended_processor_info.ecx() & (1 << 13))
+            m_features |= CPUFeature::WDT;
+        if (extended_processor_info.ecx() & (1 << 15))
+            m_features |= CPUFeature::LWP;
+        if (extended_processor_info.ecx() & (1 << 16))
+            m_features |= CPUFeature::FMA4;
+        if (extended_processor_info.ecx() & (1 << 17))
+            m_features |= CPUFeature::TCE;
+        if (extended_processor_info.ecx() & (1 << 19))
+            m_features |= CPUFeature::NODEID_MSR;
+        if (extended_processor_info.ecx() & (1 << 21))
+            m_features |= CPUFeature::TBM;
+        if (extended_processor_info.ecx() & (1 << 22))
+            m_features |= CPUFeature::TOPOEXT;
+        if (extended_processor_info.ecx() & (1 << 23))
+            m_features |= CPUFeature::PERFCTR_CORE;
+        if (extended_processor_info.ecx() & (1 << 24))
+            m_features |= CPUFeature::PERFCTR_NB;
+        if (extended_processor_info.ecx() & (1 << 26))
+            m_features |= CPUFeature::DBX;
+        if (extended_processor_info.ecx() & (1 << 27))
+            m_features |= CPUFeature::PERFTSC;
+        if (extended_processor_info.ecx() & (1 << 28))
+            m_features |= CPUFeature::PCX_L2I;
+
+        if (extended_processor_info.edx() & (1 << 11))
+            m_features |= CPUFeature::SYSCALL; // Only available in 64 bit mode
+        if (extended_processor_info.edx() & (1 << 19))
+            m_features |= CPUFeature::MP;
         if (extended_processor_info.edx() & (1 << 20))
-            set_feature(CPUFeature::NX);
+            m_features |= CPUFeature::NX;
+        if (extended_processor_info.edx() & (1 << 22))
+            m_features |= CPUFeature::MMXEXT;
+        if (extended_processor_info.edx() & (1 << 23))
+            m_features |= CPUFeature::RDTSCP;
+        if (extended_processor_info.edx() & (1 << 25))
+            m_features |= CPUFeature::FXSR_OPT;
+        if (extended_processor_info.edx() & (1 << 26))
+            m_features |= CPUFeature::PDPE1GB;
         if (extended_processor_info.edx() & (1 << 27))
-            set_feature(CPUFeature::RDTSCP);
+            m_features |= CPUFeature::RDTSCP;
         if (extended_processor_info.edx() & (1 << 29))
-            set_feature(CPUFeature::LM);
-        if (extended_processor_info.edx() & (1 << 11)) {
-            // Only available in 64 bit mode
-            set_feature(CPUFeature::SYSCALL);
-        }
+            m_features |= CPUFeature::LM;
+        if (extended_processor_info.edx() & (1 << 30))
+            m_features |= CPUFeature::_3DNOWEXT;
+        if (extended_processor_info.edx() & (1 << 31))
+            m_features |= CPUFeature::_3DNOW;
     }
 
     if (max_extended_leaf >= 0x80000007) {
         CPUID cpuid(0x80000007);
         if (cpuid.edx() & (1 << 8)) {
-            set_feature(CPUFeature::CONSTANT_TSC);
-            set_feature(CPUFeature::NONSTOP_TSC);
+            m_features |= CPUFeature::CONSTANT_TSC;
+            m_features |= CPUFeature::NONSTOP_TSC;
         }
     }
+
+#if ARCH(X86_64)
+    m_has_qemu_hvf_quirk = false;
+#endif
 
     if (max_extended_leaf >= 0x80000008) {
         // CPUID.80000008H:EAX[7:0] reports the physical-address width supported by the processor.
@@ -148,17 +479,23 @@ UNMAP_AFTER_INIT void Processor::cpu_detect()
         m_physical_address_bit_width = has_feature(CPUFeature::PAE) ? 36 : 32;
         // Processors that do not support CPUID function 80000008H, support a linear-address width of 32.
         m_virtual_address_bit_width = 32;
+#if ARCH(X86_64)
+        // Workaround QEMU hypervisor.framework bug
+        // https://gitlab.com/qemu-project/qemu/-/issues/664
+        //
+        // We detect this as follows:
+        //    * We're in a hypervisor
+        //    * hypervisor_leaf_range is null under Hypervisor.framework
+        //    * m_physical_address_bit_width is 36 bits
+        if (has_feature(CPUFeature::HYPERVISOR)) {
+            CPUID hypervisor_leaf_range(0x40000000);
+            if (!hypervisor_leaf_range.ebx() && m_physical_address_bit_width == 36) {
+                m_has_qemu_hvf_quirk = true;
+                m_virtual_address_bit_width = 48;
+            }
+        }
+#endif
     }
-
-    CPUID extended_features(0x7);
-    if (extended_features.ebx() & (1 << 20))
-        set_feature(CPUFeature::SMAP);
-    if (extended_features.ebx() & (1 << 7))
-        set_feature(CPUFeature::SMEP);
-    if (extended_features.ecx() & (1 << 2))
-        set_feature(CPUFeature::UMIP);
-    if (extended_features.ebx() & (1 << 18))
-        set_feature(CPUFeature::RDSEED);
 }
 
 UNMAP_AFTER_INIT void Processor::cpu_setup()
@@ -186,6 +523,18 @@ UNMAP_AFTER_INIT void Processor::cpu_setup()
         // Turn on IA32_EFER.NXE
         MSR ia32_efer(MSR_IA32_EFER);
         ia32_efer.set(ia32_efer.get() | 0x800);
+    }
+
+    if (has_feature(CPUFeature::PAT)) {
+        MSR ia32_pat(MSR_IA32_PAT);
+        // Set PA4 to Write Comine. This allows us to
+        // use this mode by only setting the bit in the PTE
+        // and leaving all other bits in the upper levels unset,
+        // which maps to setting bit 3 of the index, resulting
+        // in the index value 0 or 4.
+        u64 pat = ia32_pat.get() & ~(0x7ull << 32);
+        pat |= 0x1ull << 32; // set WC mode for PA4
+        ia32_pat.set(pat);
     }
 
     if (has_feature(CPUFeature::SMEP)) {
@@ -216,87 +565,43 @@ UNMAP_AFTER_INIT void Processor::cpu_setup()
 
         if (has_feature(CPUFeature::AVX)) {
             // Turn on SSE, AVX and x87 flags
-            write_xcr0(read_xcr0() | 0x7);
+            write_xcr0(read_xcr0() | SIMD::StateComponent::AVX | SIMD::StateComponent::SSE | SIMD::StateComponent::X87);
         }
     }
-}
 
-String Processor::features_string() const
-{
-    StringBuilder builder;
-    auto feature_to_str =
-        [](CPUFeature f) -> const char* {
-        switch (f) {
-        case CPUFeature::NX:
-            return "nx";
-        case CPUFeature::PAE:
-            return "pae";
-        case CPUFeature::PGE:
-            return "pge";
-        case CPUFeature::RDRAND:
-            return "rdrand";
-        case CPUFeature::RDSEED:
-            return "rdseed";
-        case CPUFeature::SMAP:
-            return "smap";
-        case CPUFeature::SMEP:
-            return "smep";
-        case CPUFeature::SSE:
-            return "sse";
-        case CPUFeature::TSC:
-            return "tsc";
-        case CPUFeature::RDTSCP:
-            return "rdtscp";
-        case CPUFeature::CONSTANT_TSC:
-            return "constant_tsc";
-        case CPUFeature::NONSTOP_TSC:
-            return "nonstop_tsc";
-        case CPUFeature::UMIP:
-            return "umip";
-        case CPUFeature::SEP:
-            return "sep";
-        case CPUFeature::SYSCALL:
-            return "syscall";
-        case CPUFeature::MMX:
-            return "mmx";
-        case CPUFeature::FXSR:
-            return "fxsr";
-        case CPUFeature::SSE2:
-            return "sse2";
-        case CPUFeature::SSE3:
-            return "sse3";
-        case CPUFeature::SSSE3:
-            return "ssse3";
-        case CPUFeature::SSE4_1:
-            return "sse4.1";
-        case CPUFeature::SSE4_2:
-            return "sse4.2";
-        case CPUFeature::XSAVE:
-            return "xsave";
-        case CPUFeature::AVX:
-            return "avx";
-        case CPUFeature::LM:
-            return "lm";
-        case CPUFeature::HYPERVISOR:
-            return "hypervisor";
-            // no default statement here intentionally so that we get
-            // a warning if a new feature is forgotten to be added here
-        }
-        // Shouldn't ever happen
-        return "???";
-    };
-    bool first = true;
-    for (u32 flag = 1; flag != 0; flag <<= 1) {
-        if ((static_cast<u32>(m_features) & flag) != 0) {
-            if (first)
-                first = false;
-            else
-                builder.append(' ');
-            auto str = feature_to_str(static_cast<CPUFeature>(flag));
-            builder.append(str, strlen(str));
-        }
-    }
-    return builder.build();
+#if ARCH(X86_64)
+    // x86_64 processors must support the syscall feature.
+    VERIFY(has_feature(CPUFeature::SYSCALL));
+    MSR efer_msr(MSR_EFER);
+    efer_msr.set(efer_msr.get() | 1u);
+
+    // Write code and stack selectors to the STAR MSR. The first value stored in bits 63:48 controls the sysret CS (value + 0x10) and SS (value + 0x8),
+    // and the value stored in bits 47:32 controls the syscall CS (value) and SS (value + 0x8).
+    u64 star = 0;
+    star |= 0x13ul << 48u;
+    star |= 0x08ul << 32u;
+    MSR star_msr(MSR_STAR);
+    star_msr.set(star);
+
+    // Write the syscall entry point to the LSTAR MSR.
+    MSR lstar_msr(MSR_LSTAR);
+    lstar_msr.set(reinterpret_cast<u64>(&syscall_entry));
+
+    // Write the SFMASK MSR. This MSR controls which bits of rflags are masked when a syscall instruction is executed -
+    // if a bit is set in sfmask, the corresponding bit in rflags is cleared. The value set here clears most of rflags,
+    // but keeps the reserved and virtualization bits intact. The userspace rflags value is saved in r11 by syscall.
+    constexpr u64 rflags_mask = 0x257fd5u;
+    MSR sfmask_msr(MSR_SFMASK);
+    sfmask_msr.set(rflags_mask);
+#endif
+
+    // Query OS-enabled CPUID features again, and set the flags if needed.
+    CPUID processor_info(0x1);
+    if (processor_info.ecx() & (1 << 27))
+        m_features |= CPUFeature::OSXSAVE;
+    CPUID extended_features(0x7);
+    if (extended_features.ecx() & (1 << 4))
+        m_features |= CPUFeature::OSPKE;
 }
 
 UNMAP_AFTER_INIT void Processor::early_initialize(u32 cpu)
@@ -338,11 +643,17 @@ UNMAP_AFTER_INIT void Processor::initialize(u32 cpu)
     VERIFY(m_self == this);
     VERIFY(&current() == this); // sanity check
 
-    dmesgln("CPU[{}]: Supported features: {}", current_id(), features_string());
+    m_info = new ProcessorInfo(*this);
+
+    dmesgln("CPU[{}]: Supported features: {}", current_id(), m_info->features_string());
     if (!has_feature(CPUFeature::RDRAND))
         dmesgln("CPU[{}]: No RDRAND support detected, randomness will be poor", current_id());
     dmesgln("CPU[{}]: Physical address bit width: {}", current_id(), m_physical_address_bit_width);
     dmesgln("CPU[{}]: Virtual address bit width: {}", current_id(), m_virtual_address_bit_width);
+#if ARCH(X86_64)
+    if (m_has_qemu_hvf_quirk)
+        dmesgln("CPU[{}]: Applied correction for QEMU Hypervisor.framework quirk", current_id());
+#endif
 
     if (cpu == 0)
         idt_init();
@@ -352,18 +663,22 @@ UNMAP_AFTER_INIT void Processor::initialize(u32 cpu)
     if (cpu == 0) {
         VERIFY((FlatPtr(&s_clean_fpu_state) & 0xF) == 0);
         asm volatile("fninit");
-        if (has_feature(CPUFeature::FXSR))
+        // Initialize AVX state
+        if (has_feature(CPUFeature::XSAVE | CPUFeature::AVX)) {
+            asm volatile("xsave %0\n"
+                         : "=m"(s_clean_fpu_state)
+                         : "a"(static_cast<u32>(SIMD::StateComponent::AVX | SIMD::StateComponent::SSE | SIMD::StateComponent::X87)), "d"(0u));
+        } else if (has_feature(CPUFeature::FXSR)) {
             asm volatile("fxsave %0"
                          : "=m"(s_clean_fpu_state));
-        else
+        } else {
             asm volatile("fnsave %0"
                          : "=m"(s_clean_fpu_state));
+        }
 
         if (has_feature(CPUFeature::HYPERVISOR))
             detect_hypervisor();
     }
-
-    m_info = new ProcessorInfo(*this);
 
     {
         // We need to prevent races between APs starting up at the same time
@@ -375,18 +690,10 @@ UNMAP_AFTER_INIT void Processor::initialize(u32 cpu)
 UNMAP_AFTER_INIT void Processor::detect_hypervisor()
 {
     CPUID hypervisor_leaf_range(0x40000000);
+    auto hypervisor_vendor_id_string = m_info->hypervisor_vendor_id_string();
+    dmesgln("CPU[{}]: CPUID hypervisor signature '{}', max leaf {:#x}", current_id(), hypervisor_vendor_id_string, hypervisor_leaf_range.eax());
 
-    // Get signature of hypervisor.
-    alignas(sizeof(u32)) char hypervisor_signature_buffer[13];
-    *reinterpret_cast<u32*>(hypervisor_signature_buffer) = hypervisor_leaf_range.ebx();
-    *reinterpret_cast<u32*>(hypervisor_signature_buffer + 4) = hypervisor_leaf_range.ecx();
-    *reinterpret_cast<u32*>(hypervisor_signature_buffer + 8) = hypervisor_leaf_range.edx();
-    hypervisor_signature_buffer[12] = '\0';
-    StringView hypervisor_signature(hypervisor_signature_buffer);
-
-    dmesgln("CPU[{}]: CPUID hypervisor signature '{}' ({:#x} {:#x} {:#x}), max leaf {:#x}", current_id(), hypervisor_signature, hypervisor_leaf_range.ebx(), hypervisor_leaf_range.ecx(), hypervisor_leaf_range.edx(), hypervisor_leaf_range.eax());
-
-    if (hypervisor_signature == "Microsoft Hv"sv)
+    if (hypervisor_vendor_id_string == "Microsoft Hv"sv)
         detect_hypervisor_hyperv(hypervisor_leaf_range);
 }
 
@@ -433,10 +740,9 @@ void Processor::write_raw_gdt_entry(u16 selector, u32 low, u32 high)
     m_gdt[i].high = high;
 
     // clear selectors we may have skipped
-    while (i < prev_gdt_length) {
-        m_gdt[i].low = 0;
-        m_gdt[i].high = 0;
-        i++;
+    for (auto j = prev_gdt_length; j < i; ++j) {
+        m_gdt[j].low = 0;
+        m_gdt[j].high = 0;
     }
 }
 
@@ -459,19 +765,20 @@ void Processor::flush_gdt()
                  : "memory");
 }
 
-const DescriptorTablePointer& Processor::get_gdtr()
+DescriptorTablePointer const& Processor::get_gdtr()
 {
     return m_gdtr;
 }
 
-Vector<FlatPtr> Processor::capture_stack_trace(Thread& thread, size_t max_frames)
+ErrorOr<Vector<FlatPtr, 32>> Processor::capture_stack_trace(Thread& thread, size_t max_frames)
 {
     FlatPtr frame_ptr = 0, ip = 0;
     Vector<FlatPtr, 32> stack_trace;
 
-    auto walk_stack = [&](FlatPtr stack_ptr) {
-        static constexpr size_t max_stack_frames = 4096;
-        stack_trace.append(ip);
+    auto walk_stack = [&](FlatPtr stack_ptr) -> ErrorOr<void> {
+        constexpr size_t max_stack_frames = 4096;
+        bool is_walking_userspace_stack = false;
+        TRY(stack_trace.try_append(ip));
         size_t count = 1;
         while (stack_ptr && stack_trace.size() < max_stack_frames) {
             FlatPtr retaddr;
@@ -480,27 +787,37 @@ Vector<FlatPtr> Processor::capture_stack_trace(Thread& thread, size_t max_frames
             if (max_frames != 0 && count > max_frames)
                 break;
 
+            if (!Memory::is_user_address(VirtualAddress { stack_ptr })) {
+                if (is_walking_userspace_stack) {
+                    dbgln("SHENANIGANS! Userspace stack points back into kernel memory");
+                    break;
+                }
+            } else {
+                is_walking_userspace_stack = true;
+            }
+
             if (Memory::is_user_range(VirtualAddress(stack_ptr), sizeof(FlatPtr) * 2)) {
                 if (copy_from_user(&retaddr, &((FlatPtr*)stack_ptr)[1]).is_error() || !retaddr)
                     break;
-                stack_trace.append(retaddr);
+                TRY(stack_trace.try_append(retaddr));
                 if (copy_from_user(&stack_ptr, (FlatPtr*)stack_ptr).is_error())
                     break;
             } else {
                 void* fault_at;
                 if (!safe_memcpy(&retaddr, &((FlatPtr*)stack_ptr)[1], sizeof(FlatPtr), fault_at) || !retaddr)
                     break;
-                stack_trace.append(retaddr);
+                TRY(stack_trace.try_append(retaddr));
                 if (!safe_memcpy(&stack_ptr, (FlatPtr*)stack_ptr, sizeof(FlatPtr), fault_at))
                     break;
             }
         }
+        return {};
     };
     auto capture_current_thread = [&]() {
         frame_ptr = (FlatPtr)__builtin_frame_address(0);
         ip = (FlatPtr)__builtin_return_address(0);
 
-        walk_stack(frame_ptr);
+        return walk_stack(frame_ptr);
     };
 
     // Since the thread may be running on another processor, there
@@ -509,12 +826,12 @@ Vector<FlatPtr> Processor::capture_stack_trace(Thread& thread, size_t max_frames
     // reflect the status at the last context switch.
     SpinlockLocker lock(g_scheduler_lock);
     if (&thread == Processor::current_thread()) {
-        VERIFY(thread.state() == Thread::Running);
+        VERIFY(thread.state() == Thread::State::Running);
         // Leave the scheduler lock. If we trigger page faults we may
         // need to be preempted. Since this is our own thread it won't
         // cause any problems as the stack won't change below this frame.
         lock.unlock();
-        capture_current_thread();
+        TRY(capture_current_thread());
     } else if (thread.is_active()) {
         VERIFY(thread.cpu() != Processor::current_id());
         // If this is the case, the thread is currently running
@@ -523,6 +840,7 @@ Vector<FlatPtr> Processor::capture_stack_trace(Thread& thread, size_t max_frames
         // an IPI to that processor, have it walk the stack and wait
         // until it returns the data back to us
         auto& proc = Processor::current();
+        ErrorOr<void> result;
         smp_unicast(
             thread.cpu(),
             [&]() {
@@ -537,18 +855,19 @@ Vector<FlatPtr> Processor::capture_stack_trace(Thread& thread, size_t max_frames
                 // TODO: What to do about page faults here? We might deadlock
                 //       because the other processor is still holding the
                 //       scheduler lock...
-                capture_current_thread();
+                result = capture_current_thread();
             },
             false);
+        TRY(result);
     } else {
         switch (thread.state()) {
-        case Thread::Running:
+        case Thread::State::Running:
             VERIFY_NOT_REACHED(); // should have been handled above
-        case Thread::Runnable:
-        case Thread::Stopped:
-        case Thread::Blocked:
-        case Thread::Dying:
-        case Thread::Dead: {
+        case Thread::State::Runnable:
+        case Thread::State::Stopped:
+        case Thread::State::Blocked:
+        case Thread::State::Dying:
+        case Thread::State::Dead: {
             // We need to retrieve ebp from what was last pushed to the kernel
             // stack. Before switching out of that thread, it switch_context
             // pushed the callee-saved registers, and the last of them happens
@@ -571,7 +890,7 @@ Vector<FlatPtr> Processor::capture_stack_trace(Thread& thread, size_t max_frames
             //       need to prevent the target thread from being run while
             //       we walk the stack
             lock.unlock();
-            walk_stack(frame_ptr);
+            TRY(walk_stack(frame_ptr));
             break;
         }
         default:
@@ -761,13 +1080,13 @@ u32 Processor::smp_wake_n_idle_processors(u32 wake_count)
     while (did_wake_count < wake_count) {
         // Try to get a set of idle CPUs and flip them to busy
         u32 idle_mask = s_idle_cpu_mask.load(AK::MemoryOrder::memory_order_relaxed) & ~(1u << current_id);
-        u32 idle_count = __builtin_popcountl(idle_mask);
+        u32 idle_count = popcount(idle_mask);
         if (idle_count == 0)
             break; // No (more) idle processor available
 
         u32 found_mask = 0;
         for (u32 i = 0; i < idle_count; i++) {
-            u32 cpu = __builtin_ffsl(idle_mask) - 1;
+            u32 cpu = bit_scan_forward(idle_mask) - 1;
             idle_mask &= ~(1u << cpu);
             found_mask |= 1u << cpu;
         }
@@ -775,9 +1094,9 @@ u32 Processor::smp_wake_n_idle_processors(u32 wake_count)
         idle_mask = s_idle_cpu_mask.fetch_and(~found_mask, AK::MemoryOrder::memory_order_acq_rel) & found_mask;
         if (idle_mask == 0)
             continue; // All of them were flipped to busy, try again
-        idle_count = __builtin_popcountl(idle_mask);
+        idle_count = popcount(idle_mask);
         for (u32 i = 0; i < idle_count; i++) {
-            u32 cpu = __builtin_ffsl(idle_mask) - 1;
+            u32 cpu = bit_scan_forward(idle_mask) - 1;
             idle_mask &= ~(1u << cpu);
 
             // Send an IPI to that CPU to wake it up. There is a possibility
@@ -1145,8 +1464,9 @@ UNMAP_AFTER_INIT void Processor::gdt_init()
     write_raw_gdt_entry(GDT_SELECTOR_DATA3, 0x0000ffff, 0x00cff200); // data3
 #else
     write_raw_gdt_entry(GDT_SELECTOR_CODE0, 0x0000ffff, 0x00af9a00); // code0
-    write_raw_gdt_entry(GDT_SELECTOR_CODE3, 0x0000ffff, 0x00affa00); // code3
+    write_raw_gdt_entry(GDT_SELECTOR_DATA0, 0x0000ffff, 0x00af9200); // data0
     write_raw_gdt_entry(GDT_SELECTOR_DATA3, 0x0000ffff, 0x008ff200); // data3
+    write_raw_gdt_entry(GDT_SELECTOR_CODE3, 0x0000ffff, 0x00affa00); // code3
 #endif
 
 #if ARCH(I386)
@@ -1183,7 +1503,7 @@ UNMAP_AFTER_INIT void Processor::gdt_init()
     tss_descriptor.operation_size64 = 0;
     tss_descriptor.operation_size32 = 1;
     tss_descriptor.descriptor_type = 0;
-    tss_descriptor.type = 9;
+    tss_descriptor.type = Descriptor::SystemType::AvailableTSS;
     write_gdt_entry(GDT_SELECTOR_TSS, tss_descriptor); // tss
 
 #if ARCH(X86_64)
@@ -1227,7 +1547,7 @@ extern "C" void context_first_init([[maybe_unused]] Thread* from_thread, [[maybe
 
     VERIFY(to_thread == Thread::current());
 
-    Scheduler::enter_current(*from_thread, true);
+    Scheduler::enter_current(*from_thread);
 
     auto in_critical = to_thread->saved_critical();
     VERIFY(in_critical > 0);
@@ -1245,21 +1565,33 @@ extern "C" void context_first_init([[maybe_unused]] Thread* from_thread, [[maybe
 
 extern "C" void enter_thread_context(Thread* from_thread, Thread* to_thread)
 {
-    VERIFY(from_thread == to_thread || from_thread->state() != Thread::Running);
-    VERIFY(to_thread->state() == Thread::Running);
+    VERIFY(from_thread == to_thread || from_thread->state() != Thread::State::Running);
+    VERIFY(to_thread->state() == Thread::State::Running);
 
     bool has_fxsr = Processor::current().has_feature(CPUFeature::FXSR);
+    bool has_xsave_avx_support = Processor::current().has_feature(CPUFeature::XSAVE) && Processor::current().has_feature(CPUFeature::AVX);
     Processor::set_current_thread(*to_thread);
 
     auto& from_regs = from_thread->regs();
     auto& to_regs = to_thread->regs();
 
-    if (has_fxsr)
+    // NOTE: IOPL should never be non-zero in any situation, so let's panic immediately
+    //       instead of carrying on with elevated I/O privileges.
+    VERIFY(get_iopl_from_eflags(to_regs.flags()) == 0);
+
+    if (has_xsave_avx_support) {
+        // The specific state components saved correspond to the bits set in the requested-feature bitmap (RFBM), which is the logical-AND of EDX:EAX and XCR0.
+        // https://www.moritz.systems/blog/how-debuggers-work-getting-and-setting-x86-registers-part-2/
+        asm volatile("xsave %0\n"
+                     : "=m"(from_thread->fpu_state())
+                     : "a"(static_cast<u32>(SIMD::StateComponent::AVX | SIMD::StateComponent::SSE | SIMD::StateComponent::X87)), "d"(0u));
+    } else if (has_fxsr) {
         asm volatile("fxsave %0"
                      : "=m"(from_thread->fpu_state()));
-    else
+    } else {
         asm volatile("fnsave %0"
                      : "=m"(from_thread->fpu_state()));
+    }
 
 #if ARCH(I386)
     from_regs.fs = get_fs();
@@ -1296,12 +1628,12 @@ extern "C" void enter_thread_context(Thread* from_thread, Thread* to_thread)
     VERIFY(in_critical > 0);
     Processor::restore_in_critical(in_critical);
 
-    if (has_fxsr)
+    if (has_xsave_avx_support)
+        asm volatile("xrstor %0" ::"m"(to_thread->fpu_state()), "a"(static_cast<u32>(SIMD::StateComponent::AVX | SIMD::StateComponent::SSE | SIMD::StateComponent::X87)), "d"(0u));
+    else if (has_fxsr)
         asm volatile("fxrstor %0" ::"m"(to_thread->fpu_state()));
     else
         asm volatile("frstor %0" ::"m"(to_thread->fpu_state()));
-
-    // TODO: ioperm?
 }
 
 extern "C" FlatPtr do_init_context(Thread* thread, u32 flags)

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2020, Liav A. <liavalb@hotmail.co.il>
+ * Copyright (c) 2020-2022, Liav A. <liavalb@hotmail.co.il>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -15,21 +15,21 @@ namespace Kernel {
 #define EBR_CHS_CONTAINER 0x05
 #define EBR_LBA_CONTAINER 0x0F
 
-Result<NonnullOwnPtr<MBRPartitionTable>, PartitionTable::Error> MBRPartitionTable::try_to_initialize(const StorageDevice& device)
+ErrorOr<NonnullOwnPtr<MBRPartitionTable>> MBRPartitionTable::try_to_initialize(StorageDevice const& device)
 {
-    auto table = make<MBRPartitionTable>(device);
+    auto table = TRY(adopt_nonnull_own_or_enomem(new (nothrow) MBRPartitionTable(device)));
     if (table->contains_ebr())
-        return { PartitionTable::Error::ConatinsEBR };
+        return Error::from_errno(ENOTSUP);
     if (table->is_protective_mbr())
-        return { PartitionTable::Error::MBRProtective };
+        return Error::from_errno(ENOTSUP);
     if (!table->is_valid())
-        return { PartitionTable::Error::Invalid };
+        return Error::from_errno(EINVAL);
     return table;
 }
 
-OwnPtr<MBRPartitionTable> MBRPartitionTable::try_to_initialize(const StorageDevice& device, u32 start_lba)
+OwnPtr<MBRPartitionTable> MBRPartitionTable::try_to_initialize(StorageDevice const& device, u32 start_lba)
 {
-    auto table = make<MBRPartitionTable>(device, start_lba);
+    auto table = adopt_nonnull_own_or_enomem(new (nothrow) MBRPartitionTable(device, start_lba)).release_value_but_fixme_should_propagate_errors();
     if (!table->is_valid())
         return {};
     return table;
@@ -44,10 +44,10 @@ bool MBRPartitionTable::read_boot_record()
     return m_header_valid;
 }
 
-MBRPartitionTable::MBRPartitionTable(const StorageDevice& device, u32 start_lba)
+MBRPartitionTable::MBRPartitionTable(StorageDevice const& device, u32 start_lba)
     : PartitionTable(device)
     , m_start_lba(start_lba)
-    , m_cached_header(ByteBuffer::create_zeroed(m_device->block_size()).release_value()) // FIXME: Do something sensible if this fails because of OOM.
+    , m_cached_header(ByteBuffer::create_zeroed(m_device->block_size()).release_value_but_fixme_should_propagate_errors()) // FIXME: Do something sensible if this fails because of OOM.
 {
     if (!read_boot_record() || !initialize())
         return;
@@ -60,15 +60,15 @@ MBRPartitionTable::MBRPartitionTable(const StorageDevice& device, u32 start_lba)
         if (entry.offset == 0x00) {
             continue;
         }
-        m_partitions.empend(entry.offset, (entry.offset + entry.length), entry.type);
+        MUST(m_partitions.try_empend(entry.offset, (entry.offset + entry.length), entry.type));
     }
     m_valid = true;
 }
 
-MBRPartitionTable::MBRPartitionTable(const StorageDevice& device)
+MBRPartitionTable::MBRPartitionTable(StorageDevice const& device)
     : PartitionTable(device)
     , m_start_lba(0)
-    , m_cached_header(ByteBuffer::create_zeroed(m_device->block_size()).release_value()) // FIXME: Do something sensible if this fails because of OOM.
+    , m_cached_header(ByteBuffer::create_zeroed(m_device->block_size()).release_value_but_fixme_should_propagate_errors()) // FIXME: Do something sensible if this fails because of OOM.
 {
     if (!read_boot_record() || contains_ebr() || is_protective_mbr() || !initialize())
         return;
@@ -79,18 +79,16 @@ MBRPartitionTable::MBRPartitionTable(const StorageDevice& device)
         if (entry.offset == 0x00) {
             continue;
         }
-        m_partitions.empend(entry.offset, (entry.offset + entry.length), entry.type);
+        MUST(m_partitions.try_empend(entry.offset, (entry.offset + entry.length), entry.type));
     }
     m_valid = true;
 }
 
-MBRPartitionTable::~MBRPartitionTable()
-{
-}
+MBRPartitionTable::~MBRPartitionTable() = default;
 
-const MBRPartitionTable::Header& MBRPartitionTable::header() const
+MBRPartitionTable::Header const& MBRPartitionTable::header() const
 {
-    return *(const MBRPartitionTable::Header*)m_cached_header.data();
+    return *(MBRPartitionTable::Header const*)m_cached_header.data();
 }
 
 bool MBRPartitionTable::initialize()

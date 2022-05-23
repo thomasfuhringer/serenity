@@ -1,12 +1,11 @@
 /*
- * Copyright (c) 2018-2020, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2018-2022, Andreas Kling <kling@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #include <AK/Demangle.h>
-#include <LibGfx/FontDatabase.h>
-#include <LibGfx/Painter.h>
+#include <LibGfx/Font/FontDatabase.h>
 #include <LibWeb/DOM/Document.h>
 #include <LibWeb/Dump.h>
 #include <LibWeb/HTML/BrowsingContext.h>
@@ -34,22 +33,31 @@ Node::~Node()
         m_dom_node->set_layout_node({}, nullptr);
 }
 
+// https://www.w3.org/TR/css-display-3/#out-of-flow
+bool Node::is_out_of_flow(FormattingContext const& formatting_context) const
+{
+    // A layout node is out of flow if either:
+
+    // 1. It is floated (which requires that floating is not inhibited).
+    if (!formatting_context.inhibits_floating() && computed_values().float_() != CSS::Float::None)
+        return true;
+
+    // 2. It is "absolutely positioned".
+    if (is_absolutely_positioned())
+        return true;
+
+    return false;
+}
+
 bool Node::can_contain_boxes_with_position_absolute() const
 {
     return computed_values().position() != CSS::Position::Static || is<InitialContainingBlock>(*this);
 }
 
-const BlockContainer* Node::containing_block() const
+BlockContainer const* Node::containing_block() const
 {
-    auto nearest_block_ancestor = [this] {
-        auto* ancestor = parent();
-        while (ancestor && !is<BlockContainer>(*ancestor))
-            ancestor = ancestor->parent();
-        return static_cast<const BlockContainer*>(ancestor);
-    };
-
     if (is<TextNode>(*this))
-        return nearest_block_ancestor();
+        return first_ancestor_of_type<BlockContainer>();
 
     auto position = computed_values().position();
 
@@ -59,13 +67,13 @@ const BlockContainer* Node::containing_block() const
             ancestor = ancestor->parent();
         while (ancestor && (!is<BlockContainer>(*ancestor) || ancestor->is_anonymous()))
             ancestor = ancestor->containing_block();
-        return static_cast<const BlockContainer*>(ancestor);
+        return static_cast<BlockContainer const*>(ancestor);
     }
 
     if (position == CSS::Position::Fixed)
         return &root();
 
-    return nearest_block_ancestor();
+    return first_ancestor_of_type<BlockContainer>();
 }
 
 bool Node::establishes_stacking_context() const
@@ -77,18 +85,9 @@ bool Node::establishes_stacking_context() const
     auto position = computed_values().position();
     if (position == CSS::Position::Absolute || position == CSS::Position::Relative || position == CSS::Position::Fixed || position == CSS::Position::Sticky)
         return true;
+    if (!computed_values().transformations().is_empty())
+        return true;
     return computed_values().opacity() < 1.0f;
-}
-
-HitTestResult Node::hit_test(const Gfx::IntPoint& position, HitTestType type) const
-{
-    HitTestResult result;
-    for_each_child_in_paint_order([&](auto& child) {
-        auto child_result = child.hit_test(position, type);
-        if (child_result.layout_node)
-            result = child_result;
-    });
-    return result;
 }
 
 HTML::BrowsingContext const& Node::browsing_context() const
@@ -103,7 +102,7 @@ HTML::BrowsingContext& Node::browsing_context()
     return *document().browsing_context();
 }
 
-const InitialContainingBlock& Node::root() const
+InitialContainingBlock const& Node::root() const
 {
     VERIFY(document().layout_node());
     return *document().layout_node();
@@ -115,17 +114,10 @@ InitialContainingBlock& Node::root()
     return *document().layout_node();
 }
 
-void Node::split_into_lines(InlineFormattingContext& context, LayoutMode layout_mode)
-{
-    for_each_child([&](auto& child) {
-        child.split_into_lines(context, layout_mode);
-    });
-}
-
 void Node::set_needs_display()
 {
     if (auto* block = containing_block()) {
-        block->for_each_fragment([&](auto& fragment) {
+        block->paint_box()->for_each_fragment([&](auto& fragment) {
             if (&fragment.layout_node() == this || is_ancestor_of(fragment.layout_node())) {
                 browsing_context().set_needs_display(enclosing_int_rect(fragment.absolute_rect()));
             }
@@ -137,11 +129,11 @@ void Node::set_needs_display()
 Gfx::FloatPoint Node::box_type_agnostic_position() const
 {
     if (is<Box>(*this))
-        return verify_cast<Box>(*this).absolute_position();
+        return verify_cast<Box>(*this).paint_box()->absolute_position();
     VERIFY(is_inline());
     Gfx::FloatPoint position;
     if (auto* block = containing_block()) {
-        block->for_each_fragment([&](auto& fragment) {
+        block->paint_box()->for_each_fragment([&](auto& fragment) {
             if (&fragment.layout_node() == this || is_ancestor_of(fragment.layout_node())) {
                 position = fragment.absolute_rect().location();
                 return IterationDecision::Break;
@@ -183,11 +175,11 @@ bool Node::is_fixed_position() const
     return position == CSS::Position::Fixed;
 }
 
-NodeWithStyle::NodeWithStyle(DOM::Document& document, DOM::Node* node, NonnullRefPtr<CSS::StyleProperties> specified_style)
+NodeWithStyle::NodeWithStyle(DOM::Document& document, DOM::Node* node, NonnullRefPtr<CSS::StyleProperties> computed_style)
     : Node(document, node)
 {
     m_has_style = true;
-    apply_style(*specified_style);
+    apply_style(*computed_style);
 }
 
 NodeWithStyle::NodeWithStyle(DOM::Document& document, DOM::Node* node, CSS::ComputedValues computed_values)
@@ -198,43 +190,74 @@ NodeWithStyle::NodeWithStyle(DOM::Document& document, DOM::Node* node, CSS::Comp
     m_font = Gfx::FontDatabase::default_font();
 }
 
-void NodeWithStyle::apply_style(const CSS::StyleProperties& specified_style)
+void NodeWithStyle::did_insert_into_layout_tree(CSS::StyleProperties const& style)
+{
+    // https://drafts.csswg.org/css-sizing-3/#definite
+    auto is_definite_size = [&](CSS::PropertyID property_id, bool width) {
+        // A size that can be determined without performing layout; that is,
+        // a <length>,
+        // a measure of text (without consideration of line-wrapping),
+        // a size of the initial containing block,
+        // or a <percentage> or other formula (such as the “stretch-fit” sizing of non-replaced blocks [CSS2]) that is resolved solely against definite sizes.
+        auto maybe_value = style.property(property_id);
+
+        auto const* containing_block = this->containing_block();
+        auto containing_block_has_definite_size = containing_block && (width ? containing_block->m_has_definite_width : containing_block->m_has_definite_height);
+
+        if (maybe_value->has_auto()) {
+            // NOTE: The width of a non-flex-item block is considered definite if it's auto and the containing block has definite width.
+            if (width && is_block_container() && parent() && !parent()->computed_values().display().is_flex_inside())
+                return containing_block_has_definite_size;
+            return false;
+        }
+
+        auto maybe_length_percentage = style.length_percentage(property_id);
+        if (!maybe_length_percentage.has_value())
+            return false;
+        auto length_percentage = maybe_length_percentage.release_value();
+        if (length_percentage.is_length())
+            return true;
+        if (length_percentage.is_percentage())
+            return containing_block_has_definite_size;
+        // FIXME: Determine if calc() value is definite.
+        return false;
+    };
+
+    m_has_definite_width = is_definite_size(CSS::PropertyID::Width, true);
+    m_has_definite_height = is_definite_size(CSS::PropertyID::Height, false);
+}
+
+void NodeWithStyle::apply_style(const CSS::StyleProperties& computed_style)
 {
     auto& computed_values = static_cast<CSS::MutableComputedValues&>(m_computed_values);
 
-    m_font = specified_style.computed_font();
-    m_line_height = specified_style.line_height(*this);
+    // NOTE: We have to be careful that font-related properties get set in the right order.
+    //       m_font is used by Length::to_px() when resolving sizes against this layout node.
+    //       That's why it has to be set before everything else.
+    m_font = computed_style.computed_font();
+    computed_values.set_font_size(computed_style.property(CSS::PropertyID::FontSize)->to_length().to_px(*this));
+    computed_values.set_font_weight(computed_style.property(CSS::PropertyID::FontWeight)->to_integer());
+    m_line_height = computed_style.line_height(*this);
+
+    computed_values.set_vertical_align(computed_style.vertical_align());
 
     {
-        constexpr int default_font_size = 10;
-        auto parent_font_size = parent() == nullptr ? default_font_size : parent()->font_size();
-        auto length = specified_style.length_or_fallback(CSS::PropertyID::FontSize, CSS::Length(default_font_size, CSS::Length::Type::Px));
-        // FIXME: em sizes return 0 here, for some reason
-        m_font_size = length.resolved_or_zero(*this, parent_font_size).to_px(*this);
-        if (m_font_size == 0)
-            m_font_size = default_font_size;
-    }
-
-    {
-        auto attachments = specified_style.property(CSS::PropertyID::BackgroundAttachment);
-        auto clips = specified_style.property(CSS::PropertyID::BackgroundClip);
-        auto images = specified_style.property(CSS::PropertyID::BackgroundImage);
-        auto origins = specified_style.property(CSS::PropertyID::BackgroundOrigin);
-        auto positions = specified_style.property(CSS::PropertyID::BackgroundPosition);
-        auto repeats = specified_style.property(CSS::PropertyID::BackgroundRepeat);
-        auto sizes = specified_style.property(CSS::PropertyID::BackgroundSize);
+        auto attachments = computed_style.property(CSS::PropertyID::BackgroundAttachment);
+        auto clips = computed_style.property(CSS::PropertyID::BackgroundClip);
+        auto images = computed_style.property(CSS::PropertyID::BackgroundImage);
+        auto origins = computed_style.property(CSS::PropertyID::BackgroundOrigin);
+        auto positions = computed_style.property(CSS::PropertyID::BackgroundPosition);
+        auto repeats = computed_style.property(CSS::PropertyID::BackgroundRepeat);
+        auto sizes = computed_style.property(CSS::PropertyID::BackgroundSize);
 
         auto count_layers = [](auto maybe_style_value) -> size_t {
-            if (maybe_style_value.has_value() && maybe_style_value.value()->is_value_list())
-                return maybe_style_value.value()->as_value_list().size();
+            if (maybe_style_value->is_value_list())
+                return maybe_style_value->as_value_list().size();
             else
                 return 1;
         };
 
-        auto value_for_layer = [](auto maybe_style_value, size_t layer_index) -> RefPtr<CSS::StyleValue> {
-            if (!maybe_style_value.has_value())
-                return nullptr;
-            auto& style_value = maybe_style_value.value();
+        auto value_for_layer = [](auto& style_value, size_t layer_index) -> RefPtr<CSS::StyleValue> {
             if (style_value->is_value_list())
                 return style_value->as_value_list().value_at(layer_index, true);
             return style_value;
@@ -335,142 +358,173 @@ void NodeWithStyle::apply_style(const CSS::StyleProperties& specified_style)
 
         computed_values.set_background_layers(move(layers));
     }
-    computed_values.set_background_color(specified_style.color_or_fallback(CSS::PropertyID::BackgroundColor, *this, CSS::InitialValues::background_color()));
+    computed_values.set_background_color(computed_style.color_or_fallback(CSS::PropertyID::BackgroundColor, *this, CSS::InitialValues::background_color()));
 
-    computed_values.set_box_sizing(specified_style.box_sizing());
+    if (auto box_sizing = computed_style.box_sizing(); box_sizing.has_value())
+        computed_values.set_box_sizing(box_sizing.release_value());
+
+    if (auto maybe_font_variant = computed_style.font_variant(); maybe_font_variant.has_value())
+        computed_values.set_font_variant(maybe_font_variant.release_value());
 
     // FIXME: BorderXRadius properties are now BorderRadiusStyleValues, so make use of that.
-    auto border_bottom_left_radius = specified_style.property(CSS::PropertyID::BorderBottomLeftRadius);
-    if (border_bottom_left_radius.has_value())
-        computed_values.set_border_bottom_left_radius(border_bottom_left_radius.value()->to_length());
+    auto border_bottom_left_radius = computed_style.property(CSS::PropertyID::BorderBottomLeftRadius);
+    if (border_bottom_left_radius->is_border_radius())
+        computed_values.set_border_bottom_left_radius(border_bottom_left_radius->as_border_radius().horizontal_radius());
 
-    auto border_bottom_right_radius = specified_style.property(CSS::PropertyID::BorderBottomRightRadius);
-    if (border_bottom_right_radius.has_value())
-        computed_values.set_border_bottom_right_radius(border_bottom_right_radius.value()->to_length());
+    auto border_bottom_right_radius = computed_style.property(CSS::PropertyID::BorderBottomRightRadius);
+    if (border_bottom_right_radius->is_border_radius())
+        computed_values.set_border_bottom_right_radius(border_bottom_right_radius->as_border_radius().horizontal_radius());
 
-    auto border_top_left_radius = specified_style.property(CSS::PropertyID::BorderTopLeftRadius);
-    if (border_top_left_radius.has_value())
-        computed_values.set_border_top_left_radius(border_top_left_radius.value()->to_length());
+    auto border_top_left_radius = computed_style.property(CSS::PropertyID::BorderTopLeftRadius);
+    if (border_top_left_radius->is_border_radius())
+        computed_values.set_border_top_left_radius(border_top_left_radius->as_border_radius().horizontal_radius());
 
-    auto border_top_right_radius = specified_style.property(CSS::PropertyID::BorderTopRightRadius);
-    if (border_top_right_radius.has_value())
-        computed_values.set_border_top_right_radius(border_top_right_radius.value()->to_length());
+    auto border_top_right_radius = computed_style.property(CSS::PropertyID::BorderTopRightRadius);
+    if (border_top_right_radius->is_border_radius())
+        computed_values.set_border_top_right_radius(border_top_right_radius->as_border_radius().horizontal_radius());
 
-    computed_values.set_display(specified_style.display());
+    computed_values.set_display(computed_style.display());
 
-    auto flex_direction = specified_style.flex_direction();
+    auto flex_direction = computed_style.flex_direction();
     if (flex_direction.has_value())
         computed_values.set_flex_direction(flex_direction.value());
 
-    auto flex_wrap = specified_style.flex_wrap();
+    auto flex_wrap = computed_style.flex_wrap();
     if (flex_wrap.has_value())
         computed_values.set_flex_wrap(flex_wrap.value());
 
-    auto flex_basis = specified_style.flex_basis();
+    auto flex_basis = computed_style.flex_basis();
     if (flex_basis.has_value())
         computed_values.set_flex_basis(flex_basis.value());
 
-    computed_values.set_flex_grow(specified_style.flex_grow());
-    computed_values.set_flex_shrink(specified_style.flex_shrink());
+    computed_values.set_flex_grow(computed_style.flex_grow());
+    computed_values.set_flex_shrink(computed_style.flex_shrink());
+    computed_values.set_order(computed_style.order());
 
-    auto justify_content = specified_style.justify_content();
+    auto justify_content = computed_style.justify_content();
     if (justify_content.has_value())
         computed_values.set_justify_content(justify_content.value());
 
-    auto align_items = specified_style.align_items();
+    auto align_items = computed_style.align_items();
     if (align_items.has_value())
         computed_values.set_align_items(align_items.value());
 
-    auto position = specified_style.position();
+    auto position = computed_style.position();
     if (position.has_value())
         computed_values.set_position(position.value());
 
-    auto text_align = specified_style.text_align();
+    auto text_align = computed_style.text_align();
     if (text_align.has_value())
         computed_values.set_text_align(text_align.value());
 
-    auto white_space = specified_style.white_space();
+    auto text_justify = computed_style.text_justify();
+    if (text_align.has_value())
+        computed_values.set_text_justify(text_justify.value());
+
+    auto white_space = computed_style.white_space();
     if (white_space.has_value())
         computed_values.set_white_space(white_space.value());
 
-    auto float_ = specified_style.float_();
+    auto float_ = computed_style.float_();
     if (float_.has_value())
         computed_values.set_float(float_.value());
 
-    auto clear = specified_style.clear();
+    auto clear = computed_style.clear();
     if (clear.has_value())
         computed_values.set_clear(clear.value());
 
-    auto overflow_x = specified_style.overflow_x();
+    auto overflow_x = computed_style.overflow_x();
     if (overflow_x.has_value())
         computed_values.set_overflow_x(overflow_x.value());
 
-    auto overflow_y = specified_style.overflow_y();
+    auto overflow_y = computed_style.overflow_y();
     if (overflow_y.has_value())
         computed_values.set_overflow_y(overflow_y.value());
 
-    auto cursor = specified_style.cursor();
+    auto cursor = computed_style.cursor();
     if (cursor.has_value())
         computed_values.set_cursor(cursor.value());
 
-    auto pointer_events = specified_style.pointer_events();
+    auto image_rendering = computed_style.image_rendering();
+    if (image_rendering.has_value())
+        computed_values.set_image_rendering(image_rendering.value());
+
+    auto pointer_events = computed_style.pointer_events();
     if (pointer_events.has_value())
         computed_values.set_pointer_events(pointer_events.value());
 
-    auto text_decoration_line = specified_style.text_decoration_line();
-    if (text_decoration_line.has_value())
-        computed_values.set_text_decoration_line(text_decoration_line.value());
+    computed_values.set_text_decoration_line(computed_style.text_decoration_line());
 
-    auto text_transform = specified_style.text_transform();
+    auto text_decoration_style = computed_style.text_decoration_style();
+    if (text_decoration_style.has_value())
+        computed_values.set_text_decoration_style(text_decoration_style.value());
+
+    auto text_transform = computed_style.text_transform();
     if (text_transform.has_value())
         computed_values.set_text_transform(text_transform.value());
 
-    if (auto list_style_type = specified_style.list_style_type(); list_style_type.has_value())
+    if (auto list_style_type = computed_style.list_style_type(); list_style_type.has_value())
         computed_values.set_list_style_type(list_style_type.value());
 
-    auto list_style_image = specified_style.property(CSS::PropertyID::ListStyleImage);
-    if (list_style_image.has_value() && list_style_image.value()->is_image()) {
-        m_list_style_image = list_style_image.value()->as_image();
+    auto list_style_image = computed_style.property(CSS::PropertyID::ListStyleImage);
+    if (list_style_image->is_image()) {
+        m_list_style_image = list_style_image->as_image();
         m_list_style_image->load_bitmap(document());
     }
 
-    computed_values.set_color(specified_style.color_or_fallback(CSS::PropertyID::Color, *this, CSS::InitialValues::color()));
+    computed_values.set_color(computed_style.color_or_fallback(CSS::PropertyID::Color, *this, CSS::InitialValues::color()));
 
-    computed_values.set_z_index(specified_style.z_index());
-    computed_values.set_opacity(specified_style.opacity());
-    if (computed_values.opacity() == 0)
+    // FIXME: The default text decoration color value is `currentcolor`, but since we can't resolve that easily,
+    //        we just manually grab the value from `color`. This makes it dependent on `color` being
+    //        specified first, so it's far from ideal.
+    computed_values.set_text_decoration_color(computed_style.color_or_fallback(CSS::PropertyID::TextDecorationColor, *this, computed_values.color()));
+    if (auto maybe_text_decoration_thickness = computed_style.length_percentage(CSS::PropertyID::TextDecorationThickness); maybe_text_decoration_thickness.has_value())
+        computed_values.set_text_decoration_thickness(maybe_text_decoration_thickness.release_value());
+
+    computed_values.set_text_shadow(computed_style.text_shadow());
+
+    computed_values.set_z_index(computed_style.z_index());
+    computed_values.set_opacity(computed_style.opacity());
+
+    if (auto maybe_visibility = computed_style.visibility(); maybe_visibility.has_value())
+        computed_values.set_visibility(maybe_visibility.release_value());
+
+    if (computed_values.opacity() == 0 || computed_values.visibility() != CSS::Visibility::Visible)
         m_visible = false;
 
-    if (auto width = specified_style.property(CSS::PropertyID::Width); width.has_value() && !width.value()->has_auto())
-        m_has_definite_width = true;
-    computed_values.set_width(specified_style.length_or_fallback(CSS::PropertyID::Width, {}));
-    computed_values.set_min_width(specified_style.length_or_fallback(CSS::PropertyID::MinWidth, {}));
-    computed_values.set_max_width(specified_style.length_or_fallback(CSS::PropertyID::MaxWidth, {}));
+    if (auto maybe_length_percentage = computed_style.length_percentage(CSS::PropertyID::Width); maybe_length_percentage.has_value())
+        computed_values.set_width(maybe_length_percentage.release_value());
+    if (auto maybe_length_percentage = computed_style.length_percentage(CSS::PropertyID::MinWidth); maybe_length_percentage.has_value())
+        computed_values.set_min_width(maybe_length_percentage.release_value());
+    if (auto maybe_length_percentage = computed_style.length_percentage(CSS::PropertyID::MaxWidth); maybe_length_percentage.has_value())
+        computed_values.set_max_width(maybe_length_percentage.release_value());
 
-    if (auto height = specified_style.property(CSS::PropertyID::Height); height.has_value() && !height.value()->has_auto())
-        m_has_definite_height = true;
-    computed_values.set_height(specified_style.length_or_fallback(CSS::PropertyID::Height, {}));
-    computed_values.set_min_height(specified_style.length_or_fallback(CSS::PropertyID::MinHeight, {}));
-    computed_values.set_max_height(specified_style.length_or_fallback(CSS::PropertyID::MaxHeight, {}));
+    if (auto maybe_length_percentage = computed_style.length_percentage(CSS::PropertyID::Height); maybe_length_percentage.has_value())
+        computed_values.set_height(maybe_length_percentage.release_value());
+    if (auto maybe_length_percentage = computed_style.length_percentage(CSS::PropertyID::MinHeight); maybe_length_percentage.has_value())
+        computed_values.set_min_height(maybe_length_percentage.release_value());
+    if (auto maybe_length_percentage = computed_style.length_percentage(CSS::PropertyID::MaxHeight); maybe_length_percentage.has_value())
+        computed_values.set_max_height(maybe_length_percentage.release_value());
 
-    computed_values.set_offset(specified_style.length_box(CSS::PropertyID::Left, CSS::PropertyID::Top, CSS::PropertyID::Right, CSS::PropertyID::Bottom, CSS::Length::make_auto()));
-    computed_values.set_margin(specified_style.length_box(CSS::PropertyID::MarginLeft, CSS::PropertyID::MarginTop, CSS::PropertyID::MarginRight, CSS::PropertyID::MarginBottom, CSS::Length::make_px(0)));
-    computed_values.set_padding(specified_style.length_box(CSS::PropertyID::PaddingLeft, CSS::PropertyID::PaddingTop, CSS::PropertyID::PaddingRight, CSS::PropertyID::PaddingBottom, CSS::Length::make_px(0)));
+    computed_values.set_inset(computed_style.length_box(CSS::PropertyID::Left, CSS::PropertyID::Top, CSS::PropertyID::Right, CSS::PropertyID::Bottom, CSS::Length::make_auto()));
+    computed_values.set_margin(computed_style.length_box(CSS::PropertyID::MarginLeft, CSS::PropertyID::MarginTop, CSS::PropertyID::MarginRight, CSS::PropertyID::MarginBottom, CSS::Length::make_px(0)));
+    computed_values.set_padding(computed_style.length_box(CSS::PropertyID::PaddingLeft, CSS::PropertyID::PaddingTop, CSS::PropertyID::PaddingRight, CSS::PropertyID::PaddingBottom, CSS::Length::make_px(0)));
 
-    computed_values.set_box_shadow(specified_style.box_shadow());
+    computed_values.set_box_shadow(computed_style.box_shadow());
 
-    computed_values.set_transformations(specified_style.transformations());
+    computed_values.set_transformations(computed_style.transformations());
+    computed_values.set_transform_origin(computed_style.transform_origin());
 
     auto do_border_style = [&](CSS::BorderData& border, CSS::PropertyID width_property, CSS::PropertyID color_property, CSS::PropertyID style_property) {
         // FIXME: The default border color value is `currentcolor`, but since we can't resolve that easily,
         //        we just manually grab the value from `color`. This makes it dependent on `color` being
         //        specified first, so it's far from ideal.
-        border.color = specified_style.color_or_fallback(color_property, *this, computed_values.color());
-        border.line_style = specified_style.line_style(style_property).value_or(CSS::LineStyle::None);
+        border.color = computed_style.color_or_fallback(color_property, *this, computed_values.color());
+        border.line_style = computed_style.line_style(style_property).value_or(CSS::LineStyle::None);
         if (border.line_style == CSS::LineStyle::None)
             border.width = 0;
         else
-            border.width = specified_style.length_or_fallback(width_property, {}).resolved_or_zero(*this, 0).to_px(*this);
+            border.width = computed_style.length_or_fallback(width_property, CSS::Length::make_px(0)).to_px(*this);
     };
 
     do_border_style(computed_values.border_left(), CSS::PropertyID::BorderLeftWidth, CSS::PropertyID::BorderLeftColor, CSS::PropertyID::BorderLeftStyle);
@@ -478,44 +532,19 @@ void NodeWithStyle::apply_style(const CSS::StyleProperties& specified_style)
     do_border_style(computed_values.border_right(), CSS::PropertyID::BorderRightWidth, CSS::PropertyID::BorderRightColor, CSS::PropertyID::BorderRightStyle);
     do_border_style(computed_values.border_bottom(), CSS::PropertyID::BorderBottomWidth, CSS::PropertyID::BorderBottomColor, CSS::PropertyID::BorderBottomStyle);
 
-    if (auto fill = specified_style.property(CSS::PropertyID::Fill); fill.has_value())
-        computed_values.set_fill(fill.value()->to_color(*this));
-    if (auto stroke = specified_style.property(CSS::PropertyID::Stroke); stroke.has_value())
-        computed_values.set_stroke(stroke.value()->to_color(*this));
-    if (auto stroke_width = specified_style.property(CSS::PropertyID::StrokeWidth); stroke_width.has_value()) {
-        // FIXME: Converting to pixels isn't really correct - values should be in "user units"
-        //        https://svgwg.org/svg2-draft/coords.html#TermUserUnits
-        if (stroke_width.value()->is_numeric())
-            computed_values.set_stroke_width(CSS::Length::make_px(stroke_width.value()->to_number()));
-        else
-            computed_values.set_stroke_width(stroke_width.value()->to_length());
-    }
-}
+    computed_values.set_content(computed_style.content());
 
-void Node::handle_mousedown(Badge<EventHandler>, const Gfx::IntPoint&, unsigned, unsigned)
-{
-}
-
-void Node::handle_mouseup(Badge<EventHandler>, const Gfx::IntPoint&, unsigned, unsigned)
-{
-}
-
-void Node::handle_mousemove(Badge<EventHandler>, const Gfx::IntPoint&, unsigned, unsigned)
-{
-}
-
-bool Node::handle_mousewheel(Badge<EventHandler>, const Gfx::IntPoint&, unsigned, unsigned, int wheel_delta)
-{
-    if (auto* containing_block = this->containing_block()) {
-        if (!containing_block->is_scrollable())
-            return false;
-        auto new_offset = containing_block->scroll_offset();
-        new_offset.translate_by(0, wheel_delta);
-        containing_block->set_scroll_offset(new_offset);
-        return true;
-    }
-
-    return false;
+    if (auto fill = computed_style.property(CSS::PropertyID::Fill); fill->has_color())
+        computed_values.set_fill(fill->to_color(*this));
+    if (auto stroke = computed_style.property(CSS::PropertyID::Stroke); stroke->has_color())
+        computed_values.set_stroke(stroke->to_color(*this));
+    auto stroke_width = computed_style.property(CSS::PropertyID::StrokeWidth);
+    // FIXME: Converting to pixels isn't really correct - values should be in "user units"
+    //        https://svgwg.org/svg2-draft/coords.html#TermUserUnits
+    if (stroke_width->is_numeric())
+        computed_values.set_stroke_width(CSS::Length::make_px(stroke_width->to_number()));
+    else
+        computed_values.set_stroke_width(stroke_width->to_length());
 }
 
 bool Node::is_root_element() const
@@ -530,6 +559,25 @@ String Node::class_name() const
     return demangle(typeid(*this).name());
 }
 
+String Node::debug_description() const
+{
+    StringBuilder builder;
+    builder.append(class_name().substring_view(13));
+    if (dom_node()) {
+        builder.appendff("<{}>", dom_node()->node_name());
+        if (dom_node()->is_element()) {
+            auto& element = static_cast<DOM::Element const&>(*dom_node());
+            if (auto id = element.get_attribute(HTML::AttributeNames::id); !id.is_null())
+                builder.appendff("#{}", id);
+            for (auto const& class_name : element.class_names())
+                builder.appendff(".{}", class_name);
+        }
+    } else {
+        builder.append("(anonymous)");
+    }
+    return builder.to_string();
+}
+
 bool Node::is_inline_block() const
 {
     return is_inline() && is<BlockContainer>(*this);
@@ -539,9 +587,18 @@ NonnullRefPtr<NodeWithStyle> NodeWithStyle::create_anonymous_wrapper() const
 {
     auto wrapper = adopt_ref(*new BlockContainer(const_cast<DOM::Document&>(document()), nullptr, m_computed_values.clone_inherited_values()));
     wrapper->m_font = m_font;
-    wrapper->m_font_size = m_font_size;
     wrapper->m_line_height = m_line_height;
     return wrapper;
+}
+
+void Node::set_paintable(RefPtr<Painting::Paintable> paintable)
+{
+    m_paintable = move(paintable);
+}
+
+RefPtr<Painting::Paintable> Node::create_paintable() const
+{
+    return nullptr;
 }
 
 }

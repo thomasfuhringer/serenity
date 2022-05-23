@@ -7,9 +7,13 @@
 #pragma once
 
 #include <AK/ByteReader.h>
-#include <AK/String.h>
+#include <AK/Endian.h>
 #include <AK/Types.h>
 #include <LibCrypto/Hash/HashFunction.h>
+
+#ifndef KERNEL
+#    include <AK/String.h>
+#endif
 
 namespace Crypto {
 namespace Authentication {
@@ -20,7 +24,7 @@ struct GHashDigest {
     constexpr static size_t Size = 16;
     u8 data[Size];
 
-    const u8* immutable_data() const { return data; }
+    u8 const* immutable_data() const { return data; }
     size_t data_length() { return Size; }
 };
 
@@ -29,7 +33,7 @@ public:
     using TagType = GHashDigest;
 
     template<size_t N>
-    explicit GHash(const char (&key)[N])
+    explicit GHash(char const (&key)[N])
         : GHash({ key, N })
     {
     }
@@ -44,7 +48,12 @@ public:
 
     constexpr static size_t digest_size() { return TagType::Size; }
 
-    String class_name() const { return "GHash"; }
+#ifndef KERNEL
+    String class_name() const
+    {
+        return "GHash";
+    }
+#endif
 
     TagType process(ReadonlyBytes aad, ReadonlyBytes cipher);
 

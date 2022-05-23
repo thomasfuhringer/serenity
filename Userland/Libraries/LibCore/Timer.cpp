@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2018-2020, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2022, the SerenityOS developers.
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -18,10 +19,6 @@ Timer::Timer(int interval_ms, Function<void()>&& timeout_handler, Object* parent
     , on_timeout(move(timeout_handler))
 {
     start(interval_ms);
-}
-
-Timer::~Timer()
-{
 }
 
 void Timer::start()
@@ -56,6 +53,14 @@ void Timer::stop()
         return;
     stop_timer();
     m_active = false;
+}
+
+void Timer::set_active(bool active)
+{
+    if (active)
+        start();
+    else
+        stop();
 }
 
 void Timer::timer_event(TimerEvent&)

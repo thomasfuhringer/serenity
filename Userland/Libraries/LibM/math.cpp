@@ -1,11 +1,15 @@
 /*
  * Copyright (c) 2018-2020, Andreas Kling <kling@serenityos.org>
  * Copyright (c) 2021, Mițca Dumitru <dumitru0mitca@gmail.com>
+ * Copyright (c) 2022, the SerenityOS developers.
+ * Copyright (c) 2022, Leon Albrecht <leon.a@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <AK/BuiltinWrappers.h>
 #include <AK/ExtraMathConstants.h>
+#include <AK/FPControl.h>
 #include <AK/Math.h>
 #include <AK/Platform.h>
 #include <AK/StdLibExtras.h>
@@ -62,11 +66,11 @@ union FloatExtractor;
 // This assumes long double is 80 bits, which is true with GCC on Intel platforms
 template<>
 union FloatExtractor<long double> {
-    static const int mantissa_bits = 64;
-    static const unsigned long long mantissa_max = ~0u;
-    static const int exponent_bias = 16383;
-    static const int exponent_bits = 15;
-    static const unsigned exponent_max = 32767;
+    static constexpr int mantissa_bits = 64;
+    static constexpr unsigned long long mantissa_max = ~0u;
+    static constexpr int exponent_bias = 16383;
+    static constexpr int exponent_bits = 15;
+    static constexpr unsigned exponent_max = 32767;
     struct {
         unsigned long long mantissa;
         unsigned exponent : 15;
@@ -78,11 +82,11 @@ union FloatExtractor<long double> {
 
 template<>
 union FloatExtractor<double> {
-    static const int mantissa_bits = 52;
-    static const unsigned long long mantissa_max = (1ull << 52) - 1;
-    static const int exponent_bias = 1023;
-    static const int exponent_bits = 11;
-    static const unsigned exponent_max = 2047;
+    static constexpr int mantissa_bits = 52;
+    static constexpr unsigned long long mantissa_max = (1ull << 52) - 1;
+    static constexpr int exponent_bias = 1023;
+    static constexpr int exponent_bits = 11;
+    static constexpr unsigned exponent_max = 2047;
     struct {
         unsigned long long mantissa : 52;
         unsigned exponent : 11;
@@ -93,11 +97,11 @@ union FloatExtractor<double> {
 
 template<>
 union FloatExtractor<float> {
-    static const int mantissa_bits = 23;
-    static const unsigned mantissa_max = (1 << 23) - 1;
-    static const int exponent_bias = 127;
-    static const int exponent_bits = 8;
-    static const unsigned exponent_max = 255;
+    static constexpr int mantissa_bits = 23;
+    static constexpr unsigned mantissa_max = (1 << 23) - 1;
+    static constexpr int exponent_bias = 127;
+    static constexpr int exponent_bits = 8;
+    static constexpr unsigned exponent_max = 255;
     struct {
         unsigned long long mantissa : 23;
         unsigned exponent : 8;
@@ -112,49 +116,56 @@ static FloatType internal_to_integer(FloatType x, RoundingMode rounding_mode)
 {
     if (!isfinite(x))
         return x;
+
     using Extractor = FloatExtractor<decltype(x)>;
     Extractor extractor;
     extractor.d = x;
+
     auto unbiased_exponent = extractor.exponent - Extractor::exponent_bias;
-    bool round = false;
-    bool guard = false;
+
+    bool has_half_fraction = false;
+    bool has_nonhalf_fraction = false;
     if (unbiased_exponent < 0) {
         // it was easier to special case [0..1) as it saves us from
         // handling subnormals, underflows, etc
         if (unbiased_exponent == -1) {
-            round = true;
+            has_half_fraction = true;
         }
-        guard = extractor.mantissa != 0;
+
+        has_nonhalf_fraction = unbiased_exponent < -1 || extractor.mantissa != 0;
         extractor.mantissa = 0;
         extractor.exponent = 0;
     } else {
         if (unbiased_exponent >= Extractor::mantissa_bits)
             return x;
+
         auto dead_bitcount = Extractor::mantissa_bits - unbiased_exponent;
         auto dead_mask = (1ull << dead_bitcount) - 1;
         auto dead_bits = extractor.mantissa & dead_mask;
         extractor.mantissa &= ~dead_mask;
 
-        auto guard_mask = dead_mask >> 1;
-        guard = (dead_bits & guard_mask) != 0;
-        round = (dead_bits & ~guard_mask) != 0;
+        auto nonhalf_fraction_mask = dead_mask >> 1;
+        has_nonhalf_fraction = (dead_bits & nonhalf_fraction_mask) != 0;
+        has_half_fraction = (dead_bits & ~nonhalf_fraction_mask) != 0;
     }
+
     bool should_round = false;
     switch (rounding_mode) {
     case RoundingMode::ToEven:
-        should_round = round;
+        should_round = has_half_fraction;
         break;
     case RoundingMode::Up:
         if (!extractor.sign)
-            should_round = guard || round;
+            should_round = has_nonhalf_fraction || has_half_fraction;
         break;
     case RoundingMode::Down:
         if (extractor.sign)
-            should_round = guard || round;
+            should_round = has_nonhalf_fraction || has_half_fraction;
         break;
     case RoundingMode::ToZero:
         break;
     }
+
     if (should_round) {
         // We could do this ourselves, but this saves us from manually
         // handling overflow.
@@ -278,7 +289,7 @@ static FloatT internal_scalbn(FloatT x, int exponent) NOEXCEPT
         return extractor.d;
     }
 
-    unsigned leading_mantissa_zeroes = extractor.mantissa == 0 ? 32 : __builtin_clz(extractor.mantissa);
+    unsigned leading_mantissa_zeroes = extractor.mantissa == 0 ? 32 : count_leading_zeroes(extractor.mantissa);
     int shift = min((int)leading_mantissa_zeroes, exponent);
     exponent = max(exponent - shift, 0);
 
@@ -331,17 +342,17 @@ static FloatT internal_gamma(FloatT x) NOEXCEPT
 
 extern "C" {
 
-float nanf(const char* s) NOEXCEPT
+float nanf(char const* s) NOEXCEPT
 {
     return __builtin_nanf(s);
 }
 
-double nan(const char* s) NOEXCEPT
+double nan(char const* s) NOEXCEPT
 {
     return __builtin_nan(s);
 }
 
-long double nanl(const char* s) NOEXCEPT
+long double nanl(char const* s) NOEXCEPT
 {
     return __builtin_nanl(s);
 }
@@ -450,7 +461,7 @@ float truncf(float x) NOEXCEPT
 
 long double rintl(long double value)
 {
-    double res;
+    long double res;
     asm(
         "frndint\n"
         : "=t"(res)
@@ -468,7 +479,7 @@ double rint(double value)
 }
 float rintf(float value)
 {
-    double res;
+    float res;
     asm(
         "frndint\n"
         : "=t"(res)
@@ -619,6 +630,8 @@ long double frexpl(long double x, int* exp) NOEXCEPT
     return scalbnl(x, -(*exp));
 }
 
+#if !(ARCH(I386) || ARCH(X86_64))
+
 double round(double value) NOEXCEPT
 {
     return internal_to_integer(value, RoundingMode::ToEven);
@@ -693,6 +706,117 @@ long double ceill(long double value) NOEXCEPT
 {
     return internal_to_integer(value, RoundingMode::Up);
 }
+
+#else
+
+double round(double x) NOEXCEPT
+{
+    // Note: This is break-tie-away-from-zero, so not the hw's understanding of
+    //       "nearest", which would be towards even.
+    if (x == 0.)
+        return x;
+    if (x > 0.)
+        return floor(x + .5);
+    return ceil(x - .5);
+}
+
+float roundf(float x) NOEXCEPT
+{
+    if (x == 0.f)
+        return x;
+    if (x > 0.f)
+        return floorf(x + .5f);
+    return ceilf(x - .5f);
+}
+
+long double roundl(long double x) NOEXCEPT
+{
+    if (x == 0.L)
+        return x;
+    if (x > 0.L)
+        return floorl(x + .5L);
+    return ceill(x - .5L);
+}
+
+long lroundf(float value) NOEXCEPT
+{
+    return static_cast<long>(roundf(value));
+}
+
+long lround(double value) NOEXCEPT
+{
+    return static_cast<long>(round(value));
+}
+
+long lroundl(long double value) NOEXCEPT
+{
+    return static_cast<long>(roundl(value));
+}
+
+long long llroundf(float value) NOEXCEPT
+{
+    return static_cast<long long>(roundf(value));
+}
+
+long long llround(double value) NOEXCEPT
+{
+    return static_cast<long long>(round(value));
+}
+
+long long llroundd(long double value) NOEXCEPT
+{
+    return static_cast<long long>(roundl(value));
+}
+
+float floorf(float value) NOEXCEPT
+{
+    AK::X87RoundingModeScope scope { AK::RoundingMode::DOWN };
+    asm("frndint"
+        : "+t"(value));
+    return value;
+}
+
+double floor(double value) NOEXCEPT
+{
+    AK::X87RoundingModeScope scope { AK::RoundingMode::DOWN };
+    asm("frndint"
+        : "+t"(value));
+    return value;
+}
+
+long double floorl(long double value) NOEXCEPT
+{
+    AK::X87RoundingModeScope scope { AK::RoundingMode::DOWN };
+    asm("frndint"
+        : "+t"(value));
+    return value;
+}
+
+float ceilf(float value) NOEXCEPT
+{
+    AK::X87RoundingModeScope scope { AK::RoundingMode::UP };
+    asm("frndint"
+        : "+t"(value));
+    return value;
+}
+
+double ceil(double value) NOEXCEPT
+{
+    AK::X87RoundingModeScope scope { AK::RoundingMode::UP };
+    asm("frndint"
+        : "+t"(value));
+    return value;
+}
+
+long double ceill(long double value) NOEXCEPT
+{
+    AK::X87RoundingModeScope scope { AK::RoundingMode::UP };
+    asm("frndint"
+        : "+t"(value));
+    return value;
+}
+
+#endif
 
 long double modfl(long double x, long double* intpart) NOEXCEPT
 {

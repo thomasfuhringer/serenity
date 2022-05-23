@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2020, the SerenityOS developers.
+ * Copyright (c) 2020-2022, the SerenityOS developers.
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -7,6 +7,7 @@
 #include "HelpWindow.h"
 #include "SpreadsheetWidget.h"
 #include <AK/LexicalPath.h>
+#include <AK/QuickSort.h>
 #include <LibGUI/BoxLayout.h>
 #include <LibGUI/Frame.h>
 #include <LibGUI/ListView.h>
@@ -15,7 +16,7 @@
 #include <LibGUI/Splitter.h>
 #include <LibMarkdown/Document.h>
 #include <LibWeb/Layout/Node.h>
-#include <LibWeb/OutOfProcessWebView.h>
+#include <LibWebView/OutOfProcessWebView.h>
 
 namespace Spreadsheet {
 
@@ -23,7 +24,7 @@ class HelpListModel final : public GUI::Model {
 public:
     static NonnullRefPtr<HelpListModel> create() { return adopt_ref(*new HelpListModel); }
 
-    virtual ~HelpListModel() override { }
+    virtual ~HelpListModel() override = default;
 
     virtual int row_count(const GUI::ModelIndex& = GUI::ModelIndex()) const override { return m_keys.size(); }
     virtual int column_count(const GUI::ModelIndex& = GUI::ModelIndex()) const override { return 1; }
@@ -39,12 +40,13 @@ public:
 
     String key(const GUI::ModelIndex& index) const { return m_keys[index.row()]; }
 
-    void set_from(const JsonObject& object)
+    void set_from(JsonObject const& object)
     {
         m_keys.clear();
         object.for_each_member([this](auto& name, auto&) {
             m_keys.append(name);
         });
+        AK::quick_sort(m_keys);
         invalidate();
     }
 
@@ -78,7 +80,7 @@ HelpWindow::HelpWindow(GUI::Window* parent)
     m_listview->set_activates_on_selection(true);
     m_listview->set_model(HelpListModel::create());
 
-    m_webview = splitter.add<Web::OutOfProcessWebView>();
+    m_webview = splitter.add<WebView::OutOfProcessWebView>();
     m_webview->on_link_click = [this](auto& url, auto&, auto&&) {
         VERIFY(url.protocol() == "spreadsheet");
         if (url.host() == "example") {
@@ -110,7 +112,7 @@ HelpWindow::HelpWindow(GUI::Window* parent)
             window->set_title(String::formatted("Spreadsheet Help - Example {} for {}", name, entry));
             window->on_close = [window = window.ptr()] { window->remove_from_parent(); };
 
-            auto& widget = window->set_main_widget<SpreadsheetWidget>(NonnullRefPtrVector<Sheet> {}, false);
+            auto& widget = window->set_main_widget<SpreadsheetWidget>(window, NonnullRefPtrVector<Sheet> {}, false);
             auto sheet = Sheet::from_json(value.as_object(), widget.workbook());
             if (!sheet) {
                 GUI::MessageBox::show_error(this, String::formatted("Corrupted example '{}' in '{}'", name, url.path()));
@@ -183,8 +185,8 @@ String HelpWindow::render(StringView key)
         VERIFY(examples.is_object());
         markdown_builder.append("# EXAMPLES\n");
         examples.as_object().for_each_member([&](auto& text, auto& description_value) {
-            dbgln("- {}\n\n```js\n{}\n```\n", description_value.to_string(), text);
-            markdown_builder.appendff("- {}\n\n```js\n{}\n```\n", description_value.to_string(), text);
+            dbgln("```js\n{}\n```\n\n- {}\n", text, description_value.to_string());
+            markdown_builder.appendff("```js\n{}\n```\n\n- {}\n", text, description_value.to_string());
         });
     }
 
@@ -197,9 +199,5 @@ void HelpWindow::set_docs(JsonObject&& docs)
     m_docs = move(docs);
     static_cast<HelpListModel*>(m_listview->model())->set_from(m_docs);
     m_listview->update();
-}
-
-HelpWindow::~HelpWindow()
-{
 }
 }

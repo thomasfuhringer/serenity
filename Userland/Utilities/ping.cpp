@@ -7,6 +7,8 @@
 #include <AK/Assertions.h>
 #include <AK/ByteBuffer.h>
 #include <LibCore/ArgsParser.h>
+#include <LibCore/System.h>
+#include <LibMain/Main.h>
 #include <arpa/inet.h>
 #include <errno.h>
 #include <netdb.h>
@@ -22,14 +24,18 @@
 #include <time.h>
 #include <unistd.h>
 
-static int total_pings;
+static uint32_t total_pings;
 static int successful_pings;
-static int count;
+static Optional<size_t> count;
 static uint32_t total_ms;
 static int min_ms;
 static int max_ms;
-static const char* host;
+static char const* host;
 static int payload_size = -1;
+// variable part of header can be 0 to 40 bytes
+// https://datatracker.ietf.org/doc/html/rfc791#section-3.1
+static constexpr int max_optional_header_size_in_bytes = 40;
+static constexpr int min_header_size_in_bytes = 5;
 
 static void closing_statistics()
 {
@@ -51,49 +57,36 @@ static void closing_statistics()
     exit(0);
 };
 
-int main(int argc, char** argv)
+ErrorOr<int> serenity_main(Main::Arguments arguments)
 {
-    if (pledge("stdio id inet unix sigaction", nullptr) < 0) {
-        perror("pledge");
-        return 1;
-    }
+    TRY(Core::System::pledge("stdio id inet unix sigaction"));
 
     Core::ArgsParser args_parser;
     args_parser.add_positional_argument(host, "Host to ping", "host");
     args_parser.add_option(count, "Stop after sending specified number of ECHO_REQUEST packets.", "count", 'c', "count");
     args_parser.add_option(payload_size, "Amount of bytes to send as payload in the ECHO_REQUEST packets.", "size", 's', "size");
-    args_parser.parse(argc, argv);
+    args_parser.parse(arguments);
+
+    if (count.has_value() && (count.value() < 1 || count.value() > UINT32_MAX)) {
+        warnln("invalid count argument: '{}': out of range: 1 <= value <= {}", count.value(), UINT32_MAX);
+        return 1;
+    }
 
     if (payload_size < 0) {
         // Use the default.
         payload_size = 32 - sizeof(struct icmphdr);
     }
 
-    int fd = socket(AF_INET, SOCK_RAW, IPPROTO_ICMP);
-    if (fd < 0) {
-        perror("socket");
-        return 1;
-    }
+    int fd = TRY(Core::System::socket(AF_INET, SOCK_RAW, IPPROTO_ICMP));
 
-    if (setgid(getgid()) || setuid(getuid())) {
-        warnln("Failed to drop privileges.");
-        return 1;
-    }
-
-    if (pledge("stdio inet unix sigaction", nullptr) < 0) {
-        perror("pledge");
-        return 1;
-    }
+    TRY(Core::System::drop_privileges());
+    TRY(Core::System::pledge("stdio inet unix sigaction"));
 
     struct timeval timeout {
         1, 0
     };
 
-    int rc = setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
-    if (rc < 0) {
-        perror("setsockopt");
-        return 1;
-    }
+    TRY(Core::System::setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout)));
 
     auto* hostent = gethostbyname(host);
     if (!hostent) {
@@ -101,34 +94,24 @@ int main(int argc, char** argv)
         return 1;
     }
 
-    if (pledge("stdio inet sigaction", nullptr) < 0) {
-        perror("pledge");
-        return 1;
-    }
+    TRY(Core::System::pledge("stdio inet sigaction"));
 
     pid_t pid = getpid();
 
-    sockaddr_in peer_address;
-    memset(&peer_address, 0, sizeof(peer_address));
+    sockaddr_in peer_address {};
     peer_address.sin_family = AF_INET;
     peer_address.sin_port = 0;
-
-    peer_address.sin_addr.s_addr = *(const in_addr_t*)hostent->h_addr_list[0];
+    peer_address.sin_addr.s_addr = *(in_addr_t const*)hostent->h_addr_list[0];
 
     uint16_t seq = 1;
 
-    sighandler_t ret = signal(SIGINT, [](int) {
+    TRY(Core::System::signal(SIGINT, [](int) {
         closing_statistics();
-    });
-
-    if (ret == SIG_ERR) {
-        perror("failed to install SIGINT handler");
-        return 1;
-    }
+    }));
 
     for (;;) {
         auto ping_packet_result = ByteBuffer::create_zeroed(sizeof(struct icmphdr) + payload_size);
-        if (!ping_packet_result.has_value()) {
+        if (ping_packet_result.is_error()) {
             warnln("failed to allocate a large enough buffer for the ping packet");
             return 1;
         }
@@ -149,37 +132,38 @@ int main(int argc, char** argv)
         struct timeval tv_send;
         gettimeofday(&tv_send, nullptr);
 
-        rc = sendto(fd, ping_packet.data(), ping_packet.size(), 0, (const struct sockaddr*)&peer_address, sizeof(sockaddr_in));
-        if (rc < 0) {
-            perror("sendto");
-            return 1;
-        }
-
-        if (count && total_pings == count)
+        if (count.has_value() && total_pings == count.value())
             closing_statistics();
         else
             total_pings++;
 
+        TRY(Core::System::sendto(fd, ping_packet.data(), ping_packet.size(), 0, (const struct sockaddr*)&peer_address, sizeof(sockaddr_in)));
+
         for (;;) {
-            // FIXME: IPv4 headers are not actually fixed-size, handle other sizes.
-            auto pong_packet_result = ByteBuffer::create_uninitialized(sizeof(struct ip) + sizeof(struct icmphdr) + payload_size);
-            if (!pong_packet_result.has_value()) {
+            auto pong_packet_result = ByteBuffer::create_uninitialized(
+                sizeof(struct ip) + max_optional_header_size_in_bytes + sizeof(struct icmphdr) + payload_size);
+            if (pong_packet_result.is_error()) {
                 warnln("failed to allocate a large enough buffer for the pong packet");
                 return 1;
             }
             auto& pong_packet = pong_packet_result.value();
-            struct icmphdr* pong_hdr = reinterpret_cast<struct icmphdr*>(pong_packet.data() + sizeof(struct ip));
             socklen_t peer_address_size = sizeof(peer_address);
-            rc = recvfrom(fd, pong_packet.data(), pong_packet.size(), 0, (struct sockaddr*)&peer_address, &peer_address_size);
-            if (rc < 0) {
-                if (errno == EAGAIN) {
+            auto result = Core::System::recvfrom(fd, pong_packet.data(), pong_packet.size(), 0, (struct sockaddr*)&peer_address, &peer_address_size);
+            if (result.is_error()) {
+                if (result.error().code() == EAGAIN) {
                     outln("Request (seq={}) timed out.", ntohs(ping_hdr->un.echo.sequence));
                     break;
                 }
-                perror("recvfrom");
-                return 1;
+                return result.release_error();
             }
 
+            i8 internet_header_length = *pong_packet.data() & 0x0F;
+            if (internet_header_length < min_header_size_in_bytes) {
+                outln("ping: illegal ihl field value {:x}", internet_header_length);
+                continue;
+            }
+
+            struct icmphdr* pong_hdr = reinterpret_cast<struct icmphdr*>(pong_packet.data() + (internet_header_length * 4));
             if (pong_hdr->type != ICMP_ECHOREPLY)
                 continue;
             if (pong_hdr->code != 0)
@@ -215,7 +199,7 @@ int main(int argc, char** argv)
                 ntohs(pong_hdr->un.echo.id),
                 ntohs(pong_hdr->un.echo.sequence),
                 pong_hdr->un.echo.sequence != ping_hdr->un.echo.sequence ? "(!)" : "",
-                ms, rc);
+                ms, result.value());
 
             // If this was a response to an earlier packet, we still need to wait for the current one.
             if (pong_hdr->un.echo.sequence != ping_hdr->un.echo.sequence)

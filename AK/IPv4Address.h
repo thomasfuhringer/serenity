@@ -7,10 +7,17 @@
 #pragma once
 
 #include <AK/Endian.h>
+#include <AK/Format.h>
 #include <AK/Optional.h>
-#include <AK/String.h>
 #include <AK/StringView.h>
 #include <AK/Vector.h>
+
+#ifdef KERNEL
+#    include <AK/Error.h>
+#    include <Kernel/KString.h>
+#else
+#    include <AK/String.h>
+#endif
 
 namespace AK {
 
@@ -48,6 +55,16 @@ public:
         return octet(SubnetClass(i));
     }
 
+#ifdef KERNEL
+    ErrorOr<NonnullOwnPtr<Kernel::KString>> to_string() const
+    {
+        return Kernel::KString::formatted("{}.{}.{}.{}",
+            octet(SubnetClass::A),
+            octet(SubnetClass::B),
+            octet(SubnetClass::C),
+            octet(SubnetClass::D));
+    }
+#else
     String to_string() const
     {
         return String::formatted("{}.{}.{}.{}",
@@ -65,13 +82,14 @@ public:
             octet(SubnetClass::B),
             octet(SubnetClass::A));
     }
+#endif
 
     static Optional<IPv4Address> from_string(StringView string)
     {
         if (string.is_null())
             return {};
 
-        const auto parts = string.split_view('.');
+        auto const parts = string.split_view('.');
 
         u32 a {};
         u32 b {};
@@ -104,8 +122,8 @@ public:
     constexpr in_addr_t to_in_addr_t() const { return m_data; }
     constexpr u32 to_u32() const { return m_data; }
 
-    constexpr bool operator==(const IPv4Address& other) const = default;
-    constexpr bool operator!=(const IPv4Address& other) const = default;
+    constexpr bool operator==(IPv4Address const& other) const = default;
+    constexpr bool operator!=(IPv4Address const& other) const = default;
 
     constexpr bool is_zero() const
     {
@@ -117,7 +135,7 @@ private:
     {
         NetworkOrdered<u32> address(m_data);
         constexpr auto bits_per_byte = 8;
-        const auto bits_to_shift = bits_per_byte * int(subnet);
+        auto const bits_to_shift = bits_per_byte * int(subnet);
         return (m_data >> bits_to_shift) & 0x0000'00FF;
     }
 
@@ -128,9 +146,18 @@ static_assert(sizeof(IPv4Address) == 4);
 
 template<>
 struct Traits<IPv4Address> : public GenericTraits<IPv4Address> {
-    static constexpr unsigned hash(const IPv4Address& address) { return int_hash(address.to_u32()); }
+    static constexpr unsigned hash(IPv4Address const& address) { return int_hash(address.to_u32()); }
 };
 
+#ifdef KERNEL
+template<>
+struct Formatter<IPv4Address> : Formatter<ErrorOr<NonnullOwnPtr<Kernel::KString>>> {
+    ErrorOr<void> format(FormatBuilder& builder, IPv4Address value)
+    {
+        return Formatter<ErrorOr<NonnullOwnPtr<Kernel::KString>>>::format(builder, value.to_string());
+    }
+};
+#else
 template<>
 struct Formatter<IPv4Address> : Formatter<String> {
     ErrorOr<void> format(FormatBuilder& builder, IPv4Address value)
@@ -138,6 +165,7 @@ struct Formatter<IPv4Address> : Formatter<String> {
         return Formatter<String>::format(builder, value.to_string());
     }
 };
+#endif
 
 }
 

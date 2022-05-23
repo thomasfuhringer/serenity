@@ -16,7 +16,7 @@ struct TCPFlags {
         FIN = 0x01,
         SYN = 0x02,
         RST = 0x04,
-        PUSH = 0x08,
+        PSH = 0x08,
         ACK = 0x10,
         URG = 0x20
     };
@@ -78,7 +78,7 @@ public:
     u16 urgent() const { return m_urgent; }
     void set_urgent(u16 urgent) { m_urgent = urgent; }
 
-    const void* payload() const { return ((const u8*)this) + header_size(); }
+    void const* payload() const { return ((u8 const*)this) + header_size(); }
     void* payload() { return ((u8*)this) + header_size(); }
 
 private:

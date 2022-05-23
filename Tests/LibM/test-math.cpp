@@ -120,7 +120,7 @@ union Extractor {
     };
     double d;
 
-    bool operator==(const Extractor& other) const
+    bool operator==(Extractor const& other) const
     {
         return other.sign == sign && other.exponent == exponent && other.mantissa == mantissa;
     }
@@ -227,7 +227,7 @@ TEST_CASE(gamma)
     EXPECT(isnan(tgamma(-5)));
 
     // TODO: investigate Stirling approximation implementation of gamma function
-    //EXPECT_APPROXIMATE(tgamma(0.5), sqrt(M_PI));
+    // EXPECT_APPROXIMATE(tgamma(0.5), sqrt(M_PI));
     EXPECT_EQ(tgammal(21.0l), 2'432'902'008'176'640'000.0l);
     EXPECT_EQ(tgamma(19.0), 6'402'373'705'728'000.0);
     EXPECT_EQ(tgammaf(11.0f), 3628800.0f);
@@ -266,4 +266,26 @@ TEST_CASE(acos)
     EXPECT_APPROXIMATE(acos(0), 0.5 * M_PI);
     EXPECT_APPROXIMATE(acos(1), 0);
     EXPECT(isnan(acos(1.1)));
+}
+
+TEST_CASE(floor)
+{
+    EXPECT_EQ(floor(0.125), 0);
+    EXPECT_EQ(floor(-0.125), -1.0);
+    EXPECT_EQ(floor(0.5), 0);
+    EXPECT_EQ(floor(-0.5), -1.0);
+    EXPECT_EQ(floor(0.25), 0);
+    EXPECT_EQ(floor(-0.25), -1.0);
+    EXPECT_EQ(floor(-3.0 / 2.0), -2.0);
+}
+
+TEST_CASE(ceil)
+{
+    EXPECT_EQ(ceil(0.125), 1.0);
+    EXPECT_EQ(ceil(-0.125), 0);
+    EXPECT_EQ(ceil(0.5), 1.0);
+    EXPECT_EQ(ceil(-0.5), 0);
+    EXPECT_EQ(ceil(0.25), 1.0);
+    EXPECT_EQ(ceil(-0.25), 0);
+    EXPECT_EQ(ceil(-3.0 / 2.0), -1.0);
 }

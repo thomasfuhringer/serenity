@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2021, the SerenityOS developers.
+ * Copyright (c) 2021-2022, the SerenityOS developers.
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -26,7 +26,7 @@
 #include <LibGUI/TabWidget.h>
 #include <LibGUI/TableView.h>
 #include <LibGUI/ValueSlider.h>
-#include <LibGfx/FontDatabase.h>
+#include <LibGfx/Font/FontDatabase.h>
 #include <LibGfx/Palette.h>
 
 GalleryWidget::GalleryWidget()
@@ -34,7 +34,6 @@ GalleryWidget::GalleryWidget()
     load_from_gml(window_gml);
 
     auto& tab_widget = *find_descendant_of_type_named<GUI::TabWidget>("tab_widget");
-    tab_widget.set_reorder_allowed(true);
 
     auto basics_tab = tab_widget.try_add_tab<GUI::Widget>("Basics").release_value_but_fixme_should_propagate_errors();
     basics_tab->load_from_gml(basics_tab_gml);
@@ -56,7 +55,7 @@ GalleryWidget::GalleryWidget()
     m_frame_shape_combobox = basics_tab->find_descendant_of_type_named<GUI::ComboBox>("frame_shape_combobox");
     m_frame_shape_combobox->set_model(*GUI::ItemListModel<String>::create(m_frame_shapes));
 
-    m_frame_shape_combobox->on_change = [&](auto&, const auto& index) {
+    m_frame_shape_combobox->on_change = [&](auto&, auto const& index) {
         m_label_frame->set_frame_shape(static_cast<Gfx::FrameShape>((index.row() - 1) % 3 + 1));
         m_label_frame->set_frame_shadow(static_cast<Gfx::FrameShadow>((index.row() - 1) / 3));
         m_label_frame->update();
@@ -99,7 +98,7 @@ GalleryWidget::GalleryWidget()
 
     m_font_button->on_click = [&](auto) {
         auto picker = GUI::FontPicker::try_create(window(), &m_text_editor->font(), false).release_value_but_fixme_should_propagate_errors();
-        if (picker->exec() == GUI::Dialog::ExecOK) {
+        if (picker->exec() == GUI::Dialog::ExecResult::OK) {
             m_text_editor->set_font(picker->font());
         }
     };
@@ -119,7 +118,7 @@ GalleryWidget::GalleryWidget()
 
     m_input_button->on_click = [&](auto) {
         String value;
-        if (GUI::InputBox::show(window(), value, "Enter input:", "Input") == GUI::InputBox::ExecOK && !value.is_empty())
+        if (GUI::InputBox::show(window(), value, "Enter input:", "Input") == GUI::InputBox::ExecResult::OK && !value.is_empty())
             m_text_editor->set_text(value);
     };
 
@@ -153,7 +152,7 @@ GalleryWidget::GalleryWidget()
     m_msgbox_icon_combobox->set_model(*GUI::ItemListModel<String>::create(m_msgbox_icons));
     m_msgbox_icon_combobox->set_selected_index(0);
 
-    m_msgbox_icon_combobox->on_change = [&](auto&, const auto& index) {
+    m_msgbox_icon_combobox->on_change = [&](auto&, auto const& index) {
         m_msgbox_type = static_cast<GUI::MessageBox::Type>(index.row());
     };
 
@@ -161,7 +160,7 @@ GalleryWidget::GalleryWidget()
     m_msgbox_buttons_combobox->set_model(*GUI::ItemListModel<String>::create(m_msgbox_buttons));
     m_msgbox_buttons_combobox->set_selected_index(0);
 
-    m_msgbox_buttons_combobox->on_change = [&](auto&, const auto& index) {
+    m_msgbox_buttons_combobox->on_change = [&](auto&, auto const& index) {
         m_msgbox_input_type = static_cast<GUI::MessageBox::InputType>(index.row());
     };
 
@@ -237,7 +236,7 @@ GalleryWidget::GalleryWidget()
     m_wizard_output = wizards_tab->find_descendant_of_type_named<GUI::TextEditor>("wizard_output");
     m_wizard_output->set_should_hide_unnecessary_scrollbars(true);
 
-    const char* serenityos_ascii = {
+    char const* serenityos_ascii = {
         "   ____                 _ __       ____  ____\n"
         "  / __/__ _______ ___  (_) /___ __/ __ \\/ __/\n"
         " _\\ \\/ -_) __/ -_) _ \\/ / __/ // / /_/ /\\ \\\n"
@@ -245,7 +244,7 @@ GalleryWidget::GalleryWidget()
         "                           /___/\n"
     };
 
-    const char* wizard_ascii = {
+    char const* wizard_ascii = {
         "              _,-'|\n"
         "           ,-'._  |\n"
         " .||,      |####\\ |\n"
@@ -278,11 +277,11 @@ GalleryWidget::GalleryWidget()
         m_wizard_output->set_text(sb.to_string());
 
         auto wizard = DemoWizardDialog::try_create(window()).release_value_but_fixme_should_propagate_errors();
-        int result = wizard->exec();
+        auto result = wizard->exec();
 
-        sb.append(String::formatted("\nWizard execution complete.\nDialog ExecResult code: {}", result));
-        if (result == GUI::Dialog::ExecResult::ExecOK)
-            sb.append(String::formatted(" (ExecOK)\n'Installation' location: \"{}\"", wizard->page_1_location()));
+        sb.append(String::formatted("\nWizard execution complete.\nDialog ExecResult code: {}", to_underlying(result)));
+        if (result == GUI::Dialog::ExecResult::OK)
+            sb.append(String::formatted(" (ExecResult::OK)\n'Installation' location: \"{}\"", wizard->page_1_location()));
         m_wizard_output->set_text(sb.string_view());
     };
 
@@ -296,7 +295,7 @@ GalleryWidget::GalleryWidget()
     m_cursors_tableview->set_column_headers_visible(false);
     m_cursors_tableview->set_highlight_key_column(false);
 
-    auto sorting_proxy_model = GUI::SortingProxyModel::create(MouseCursorModel::create());
+    auto sorting_proxy_model = MUST(GUI::SortingProxyModel::create(MouseCursorModel::create()));
     sorting_proxy_model->set_sort_role(GUI::ModelRole::Display);
 
     m_cursors_tableview->set_model(sorting_proxy_model);
@@ -319,7 +318,7 @@ GalleryWidget::GalleryWidget()
     m_icons_tableview->set_column_headers_visible(false);
     m_icons_tableview->set_highlight_key_column(false);
 
-    auto sorting_proxy_icons_model = GUI::SortingProxyModel::create(FileIconsModel::create());
+    auto sorting_proxy_icons_model = MUST(GUI::SortingProxyModel::create(FileIconsModel::create()));
     sorting_proxy_icons_model->set_sort_role(GUI::ModelRole::Display);
 
     m_icons_tableview->set_model(sorting_proxy_icons_model);
@@ -327,8 +326,4 @@ GalleryWidget::GalleryWidget()
     m_icons_tableview->model()->invalidate();
     m_icons_tableview->set_column_width(0, 36);
     m_icons_tableview->set_column_width(1, 20);
-}
-
-GalleryWidget::~GalleryWidget()
-{
 }

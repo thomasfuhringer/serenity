@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2021, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2022, the SerenityOS developers.
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -17,14 +18,6 @@
 #include <LibGUI/ValueSlider.h>
 
 namespace PixelPaint {
-
-RectangleSelectTool::RectangleSelectTool()
-{
-}
-
-RectangleSelectTool::~RectangleSelectTool()
-{
-}
 
 void RectangleSelectTool::on_mousedown(Layer*, MouseEvent& event)
 {
@@ -115,6 +108,13 @@ void RectangleSelectTool::on_keydown(GUI::KeyEvent& key_event)
         m_moving_mode = MovingMode::MovingOrigin;
     else if (key_event.key() == KeyCode::Key_Control)
         m_moving_mode = MovingMode::AroundCenter;
+
+    if (key_event.key() == KeyCode::Key_Escape) {
+        if (m_selecting)
+            m_selecting = false;
+        else
+            m_editor->selection().clear();
+    }
 }
 
 void RectangleSelectTool::on_keyup(GUI::KeyEvent& key_event)
@@ -134,7 +134,7 @@ void RectangleSelectTool::on_second_paint(Layer const*, GUI::PaintEvent& event)
     painter.add_clip_rect(event.rect());
 
     auto rect_in_image = Gfx::IntRect::from_two_points(m_selection_start, m_selection_end);
-    auto rect_in_editor = m_editor->image_rect_to_editor_rect(rect_in_image);
+    auto rect_in_editor = m_editor->content_to_frame_rect(rect_in_image);
 
     m_editor->selection().draw_marching_ants(painter, rect_in_editor.to_type<int>());
 }
@@ -157,7 +157,7 @@ GUI::Widget* RectangleSelectTool::get_properties_widget()
     feather_label.set_text_alignment(Gfx::TextAlignment::CenterLeft);
     feather_label.set_fixed_size(80, 20);
 
-    const int feather_slider_max = 100;
+    int const feather_slider_max = 100;
     auto& feather_slider = feather_container.add<GUI::ValueSlider>(Orientation::Horizontal, "%");
     feather_slider.set_range(0, feather_slider_max);
     feather_slider.set_value((int)floorf(m_edge_feathering * (float)feather_slider_max));

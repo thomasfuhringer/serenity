@@ -1,6 +1,7 @@
 /*
  * Copyright (c) 2018-2021, Andreas Kling <kling@serenityos.org>
  * Copyright (c) 2021, Sam Atkins <atkinssj@serenityos.org>
+ * Copyright (c) 2022, Jelle Raaijmakers <jelle@gmta.nl>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -696,6 +697,48 @@ public:
         return Rect<U>(*this);
     }
 
+    template<FloatingPoint U>
+    [[nodiscard]] ALWAYS_INLINE Rect<U> to_rounded() const
+    {
+        // FIXME: We may get away with `rint[lf]?()` here.
+        //        This would even give us some more control of these internals,
+        //        while the break-tie algorithm does not really matter
+        if constexpr (IsSame<T, float>) {
+            return {
+                static_cast<U>(roundf(x())),
+                static_cast<U>(roundf(y())),
+                static_cast<U>(roundf(width())),
+                static_cast<U>(roundf(height())),
+            };
+        }
+        if constexpr (IsSame<T, double>) {
+            return {
+                static_cast<U>(round(x())),
+                static_cast<U>(round(y())),
+                static_cast<U>(round(width())),
+                static_cast<U>(round(height())),
+            };
+        }
+
+        return {
+            static_cast<U>(roundl(x())),
+            static_cast<U>(roundl(y())),
+            static_cast<U>(roundl(width())),
+            static_cast<U>(roundl(height())),
+        };
+    }
+
+    template<Integral I>
+    ALWAYS_INLINE Rect<I> to_rounded() const
+    {
+        return {
+            round_to<I>(x()),
+            round_to<I>(y()),
+            round_to<I>(width()),
+            round_to<I>(height()),
+        };
+    }
+
     [[nodiscard]] String to_string() const;
 
 private:
@@ -715,11 +758,6 @@ using FloatRect = Rect<float>;
     return Gfx::IntRect::from_two_points({ x1, y1 }, { x2, y2 });
 }
 
-[[nodiscard]] ALWAYS_INLINE IntRect rounded_int_rect(FloatRect const& float_rect)
-{
-    return IntRect { floorf(float_rect.x()), floorf(float_rect.y()), roundf(float_rect.width()), roundf(float_rect.height()) };
-}
-
 }
 
 namespace AK {
@@ -736,7 +774,7 @@ struct Formatter<Gfx::Rect<T>> : Formatter<StringView> {
 
 namespace IPC {
 
-bool encode(Encoder&, const Gfx::IntRect&);
+bool encode(Encoder&, Gfx::IntRect const&);
 ErrorOr<void> decode(Decoder&, Gfx::IntRect&);
 
 }

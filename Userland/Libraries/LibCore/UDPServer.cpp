@@ -38,7 +38,7 @@ UDPServer::~UDPServer()
     ::close(m_fd);
 }
 
-bool UDPServer::bind(const IPv4Address& address, u16 port)
+bool UDPServer::bind(IPv4Address const& address, u16 port)
 {
     if (m_bound)
         return false;
@@ -46,7 +46,7 @@ bool UDPServer::bind(const IPv4Address& address, u16 port)
     auto saddr = SocketAddress(address, port);
     auto in = saddr.to_sockaddr_in();
 
-    if (::bind(m_fd, (const sockaddr*)&in, sizeof(in)) != 0) {
+    if (::bind(m_fd, (sockaddr const*)&in, sizeof(in)) != 0) {
         perror("UDPServer::bind");
         return false;
     }
@@ -64,7 +64,7 @@ bool UDPServer::bind(const IPv4Address& address, u16 port)
 ByteBuffer UDPServer::receive(size_t size, sockaddr_in& in)
 {
     // FIXME: Handle possible OOM situation.
-    auto buf = ByteBuffer::create_uninitialized(size).release_value();
+    auto buf = ByteBuffer::create_uninitialized(size).release_value_but_fixme_should_propagate_errors();
     socklen_t in_len = sizeof(in);
     ssize_t rlen = ::recvfrom(m_fd, buf.data(), size, 0, (sockaddr*)&in, &in_len);
     if (rlen < 0) {
@@ -100,6 +100,20 @@ Optional<u16> UDPServer::local_port() const
         return {};
 
     return ntohs(address.sin_port);
+}
+
+ErrorOr<size_t> UDPServer::send(ReadonlyBytes buffer, sockaddr_in const& to)
+{
+    if (m_fd < 0) {
+        return Error::from_errno(EBADF);
+    }
+
+    auto result = ::sendto(m_fd, buffer.data(), buffer.size(), 0, (sockaddr const*)&to, sizeof(to));
+    if (result < 0) {
+        return Error::from_errno(errno);
+    }
+
+    return result;
 }
 
 }

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2021, Linus Groh <linusg@serenityos.org>
+ * Copyright (c) 2021-2022, Linus Groh <linusg@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -7,6 +7,7 @@
 #pragma once
 
 #include <LibJS/Runtime/Object.h>
+#include <LibJS/Runtime/Temporal/AbstractOperations.h>
 
 namespace JS::Temporal {
 
@@ -39,7 +40,7 @@ struct ISOYearMonth {
     u8 reference_iso_day;
 };
 
-ThrowCompletionOr<PlainYearMonth*> to_temporal_year_month(GlobalObject& global_object, Value item, Object* options = nullptr);
+ThrowCompletionOr<PlainYearMonth*> to_temporal_year_month(GlobalObject& global_object, Value item, Object const* options = nullptr);
 ThrowCompletionOr<ISOYearMonth> regulate_iso_year_month(GlobalObject&, double year, double month, StringView overflow);
 bool is_valid_iso_month(u8 month);
 bool iso_year_month_within_limits(i32 year, u8 month);
@@ -47,5 +48,7 @@ ISOYearMonth balance_iso_year_month(double year, double month);
 ISOYearMonth constrain_iso_year_month(double year, double month);
 ThrowCompletionOr<PlainYearMonth*> create_temporal_year_month(GlobalObject&, i32 iso_year, u8 iso_month, Object& calendar, u8 reference_iso_day, FunctionObject const* new_target = nullptr);
 ThrowCompletionOr<String> temporal_year_month_to_string(GlobalObject&, PlainYearMonth&, StringView show_calendar);
+ThrowCompletionOr<Duration*> difference_temporal_plain_year_month(GlobalObject&, DifferenceOperation, PlainYearMonth&, Value other, Value options);
+ThrowCompletionOr<PlainYearMonth*> add_duration_to_or_subtract_duration_from_plain_year_month(GlobalObject&, ArithmeticOperation, PlainYearMonth&, Value temporal_duration_like, Value options_value);
 
 }

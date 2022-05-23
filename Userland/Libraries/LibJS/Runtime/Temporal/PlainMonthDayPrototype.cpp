@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2021, Linus Groh <linusg@serenityos.org>
+ * Copyright (c) 2021-2022, Linus Groh <linusg@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -121,8 +121,8 @@ JS_DEFINE_NATIVE_FUNCTION(PlainMonthDayPrototype::with)
     // 11. Set fields to ? PrepareTemporalFields(fields, fieldNames, «»).
     fields = TRY(prepare_temporal_fields(global_object, *fields, field_names, {}));
 
-    // 12. Return ? MonthDayFromFields(calendar, fields, options).
-    return TRY(month_day_from_fields(global_object, calendar, *fields, options));
+    // 12. Return ? CalendarMonthDayFromFields(calendar, fields, options).
+    return TRY(calendar_month_day_from_fields(global_object, calendar, *fields, options));
 }
 
 // 10.3.7 Temporal.PlainMonthDay.prototype.equals ( other ), https://tc39.es/proposal-temporal/#sec-temporal.plainmonthday.prototype.equals
@@ -245,14 +245,14 @@ JS_DEFINE_NATIVE_FUNCTION(PlainMonthDayPrototype::to_plain_date)
     // 11. Set mergedFields to ? PrepareTemporalFields(mergedFields, mergedFieldNames, «»).
     merged_fields = TRY(prepare_temporal_fields(global_object, *merged_fields, merged_field_names, {}));
 
-    // 12. Let options be ! OrdinaryObjectCreate(null).
+    // 12. Let options be OrdinaryObjectCreate(null).
     auto* options = Object::create(global_object, nullptr);
 
     // 13. Perform ! CreateDataPropertyOrThrow(options, "overflow", "reject").
     MUST(options->create_data_property_or_throw(vm.names.overflow, js_string(vm, vm.names.reject.as_string())));
 
-    // 14. Return ? DateFromFields(calendar, mergedFields, options).
-    return TRY(date_from_fields(global_object, calendar, *merged_fields, *options));
+    // 14. Return ? CalendarDateFromFields(calendar, mergedFields, options).
+    return TRY(calendar_date_from_fields(global_object, calendar, *merged_fields, options));
 }
 
 // 10.3.13 Temporal.PlainMonthDay.prototype.getISOFields ( ), https://tc39.es/proposal-temporal/#sec-temporal.plainmonthday.prototype.getisofields
@@ -262,7 +262,7 @@ JS_DEFINE_NATIVE_FUNCTION(PlainMonthDayPrototype::get_iso_fields)
     // 2. Perform ? RequireInternalSlot(monthDay, [[InitializedTemporalMonthDay]]).
     auto* month_day = TRY(typed_this_object(global_object));
 
-    // 3. Let fields be ! OrdinaryObjectCreate(%Object.prototype%).
+    // 3. Let fields be OrdinaryObjectCreate(%Object.prototype%).
     auto* fields = Object::create(global_object, global_object.object_prototype());
 
     // 4. Perform ! CreateDataPropertyOrThrow(fields, "calendar", monthDay.[[Calendar]]).

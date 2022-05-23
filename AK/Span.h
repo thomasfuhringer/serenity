@@ -6,6 +6,7 @@
 
 #pragma once
 
+#include <AK/Array.h>
 #include <AK/Assertions.h>
 #include <AK/Iterator.h>
 #include <AK/TypedTransfer.h>
@@ -29,6 +30,21 @@ public:
     template<size_t size>
     ALWAYS_INLINE constexpr Span(T (&values)[size])
         : m_values(values)
+        , m_size(size)
+    {
+    }
+
+    template<size_t size>
+    ALWAYS_INLINE constexpr Span(Array<T, size>& array)
+        : m_values(array.data())
+        , m_size(size)
+    {
+    }
+
+    template<size_t size>
+    requires(IsConst<T>)
+        ALWAYS_INLINE constexpr Span(Array<T, size> const& array)
+        : m_values(array.data())
         , m_size(size)
     {
     }
@@ -144,7 +160,7 @@ public:
     {
         // make sure we're not told to write past the end
         VERIFY(offset + data_size <= size());
-        __builtin_memcpy(this->data() + offset, data, data_size);
+        __builtin_memmove(this->data() + offset, data, data_size);
     }
 
     ALWAYS_INLINE constexpr size_t copy_to(Span<RemoveConst<T>> other) const
@@ -196,6 +212,16 @@ public:
         return this->m_values[index];
     }
 
+    [[nodiscard]] ALWAYS_INLINE constexpr T const& last() const
+    {
+        return this->at(this->size() - 1);
+    }
+
+    [[nodiscard]] ALWAYS_INLINE constexpr T& last()
+    {
+        return this->at(this->size() - 1);
+    }
+
     [[nodiscard]] ALWAYS_INLINE constexpr T const& operator[](size_t index) const
     {
         return at(index);
@@ -217,6 +243,19 @@ public:
     ALWAYS_INLINE constexpr operator Span<T const>() const
     {
         return { data(), size() };
+    }
+};
+
+template<typename T>
+struct Traits<Span<T>> : public GenericTraits<Span<T>> {
+    static unsigned hash(Span<T> const& span)
+    {
+        unsigned hash = 0;
+        for (auto const& value : span) {
+            auto value_hash = Traits<T>::hash(value);
+            hash = pair_int_hash(hash, value_hash);
+        }
+        return hash;
     }
 };
 

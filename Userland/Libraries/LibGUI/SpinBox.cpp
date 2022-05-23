@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2018-2020, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2022, the SerenityOS developers.
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -18,7 +19,10 @@ SpinBox::SpinBox()
     set_fixed_height(22);
     m_editor = add<TextBox>();
     m_editor->set_text("0");
-    m_editor->on_change = [this] {
+    m_editor->on_change = [this, weak_this = make_weak_ptr()] {
+        if (!weak_this)
+            return;
+
         auto value = m_editor->text().to_uint();
         if (value.has_value())
             set_value(value.value());
@@ -30,6 +34,10 @@ SpinBox::SpinBox()
     };
     m_editor->on_down_pressed = [this] {
         set_value(m_value - 1);
+    };
+    m_editor->on_return_pressed = [this] {
+        if (on_return_pressed)
+            on_return_pressed();
     };
 
     m_increment_button = add<Button>();
@@ -47,10 +55,6 @@ SpinBox::SpinBox()
 
     REGISTER_INT_PROPERTY("min", min, set_min);
     REGISTER_INT_PROPERTY("max", max, set_max);
-}
-
-SpinBox::~SpinBox()
-{
 }
 
 void SpinBox::set_value(int value, AllowCallback allow_callback)
@@ -87,7 +91,7 @@ void SpinBox::set_range(int min, int max, AllowCallback allow_callback)
 
 void SpinBox::mousewheel_event(MouseEvent& event)
 {
-    auto wheel_delta = event.wheel_delta() / abs(event.wheel_delta());
+    auto wheel_delta = event.wheel_delta_y() / abs(event.wheel_delta_y());
     if (event.modifiers() == KeyModifier::Mod_Ctrl)
         wheel_delta *= 6;
     set_value(m_value - wheel_delta);

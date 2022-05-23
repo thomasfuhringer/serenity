@@ -6,6 +6,7 @@
 
 #include <LibAudio/FlacLoader.h>
 #include <LibAudio/Loader.h>
+#include <LibAudio/MP3Loader.h>
 #include <LibAudio/WavLoader.h>
 
 namespace Audio {
@@ -27,10 +28,15 @@ Result<NonnullOwnPtr<LoaderPlugin>, LoaderError> Loader::try_create(StringView p
     if (!initstate1.is_error())
         return plugin;
 
+    plugin = adopt_own(*new MP3LoaderPlugin(path));
+    auto initstate2 = plugin->initialize();
+    if (!initstate2.is_error())
+        return plugin;
+
     return LoaderError { "No loader plugin available" };
 }
 
-Result<NonnullOwnPtr<LoaderPlugin>, LoaderError> Loader::try_create(ByteBuffer const& buffer)
+Result<NonnullOwnPtr<LoaderPlugin>, LoaderError> Loader::try_create(Bytes& buffer)
 {
     NonnullOwnPtr<LoaderPlugin> plugin = adopt_own(*new WavLoaderPlugin(buffer));
     if (auto initstate = plugin->initialize(); !initstate.is_error())

@@ -18,11 +18,7 @@ SetIterator::SetIterator(Set& set, Object::PropertyKind iteration_kind, Object& 
     : Object(prototype)
     , m_set(set)
     , m_iteration_kind(iteration_kind)
-    , m_iterator(set.values().begin())
-{
-}
-
-SetIterator::~SetIterator()
+    , m_iterator(static_cast<Set const&>(set).begin())
 {
 }
 

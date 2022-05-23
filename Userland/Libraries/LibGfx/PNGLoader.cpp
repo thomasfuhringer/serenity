@@ -1,29 +1,25 @@
 /*
  * Copyright (c) 2018-2020, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2022, the SerenityOS developers.
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <AK/Array.h>
 #include <AK/Debug.h>
 #include <AK/Endian.h>
 #include <AK/Vector.h>
 #include <LibCompress/Zlib.h>
 #include <LibGfx/PNGLoader.h>
-#include <fcntl.h>
-#include <stdio.h>
 #include <string.h>
-#include <sys/mman.h>
-#include <sys/stat.h>
-#include <unistd.h>
 
 #ifdef __serenity__
 #    include <LibCompress/Deflate.h>
-#    include <serenity.h>
 #endif
 
 namespace Gfx {
 
-static const u8 png_header[8] = { 0x89, 'P', 'N', 'G', 13, 10, 26, 10 };
+static constexpr Array<u8, 8> png_header = { 0x89, 'P', 'N', 'G', 13, 10, 26, 10 };
 
 struct PNG_IHDR {
     NetworkOrdered<u32> width;
@@ -60,10 +56,12 @@ struct [[gnu::packed]] Triplet {
     T r;
     T g;
     T b;
+
+    bool operator==(Triplet const& other) const = default;
 };
 
 template<typename T>
-struct [[gnu::packed]] Quad {
+struct [[gnu::packed]] Quartet {
     T r;
     T g;
     T b;
@@ -85,7 +83,7 @@ struct PNGLoadingContext {
         BitmapDecoded,
     };
     State state { State::NotDecoded };
-    const u8* data { nullptr };
+    u8 const* data { nullptr };
     size_t data_size { 0 };
     int width { -1 };
     int height { -1 };
@@ -121,7 +119,7 @@ struct PNGLoadingContext {
 
 class Streamer {
 public:
-    Streamer(const u8* data, size_t size)
+    Streamer(u8 const* data, size_t size)
         : m_data_ptr(data)
         , m_size_remaining(size)
     {
@@ -132,7 +130,7 @@ public:
     {
         if (m_size_remaining < sizeof(T))
             return false;
-        value = *((const NetworkOrdered<T>*)m_data_ptr);
+        value = *((NetworkOrdered<T> const*)m_data_ptr);
         m_data_ptr += sizeof(T);
         m_size_remaining -= sizeof(T);
         return true;
@@ -161,7 +159,7 @@ public:
     bool at_end() const { return !m_size_remaining; }
 
 private:
-    const u8* m_data_ptr { nullptr };
+    u8 const* m_data_ptr { nullptr };
     size_t m_size_remaining { 0 };
 };
 
@@ -181,7 +179,7 @@ ALWAYS_INLINE static u8 paeth_predictor(int a, int b, int c)
 }
 
 union [[gnu::packed]] Pixel {
-    RGBA32 rgba { 0 };
+    ARGB32 rgba { 0 };
     u8 v[4];
     struct {
         u8 r;
@@ -193,9 +191,9 @@ union [[gnu::packed]] Pixel {
 static_assert(AssertSize<Pixel, 4>());
 
 template<bool has_alpha, u8 filter_type>
-ALWAYS_INLINE static void unfilter_impl(Gfx::Bitmap& bitmap, int y, const void* dummy_scanline_data)
+ALWAYS_INLINE static void unfilter_impl(Gfx::Bitmap& bitmap, int y, void const* dummy_scanline_data)
 {
-    auto* dummy_scanline = (const Pixel*)dummy_scanline_data;
+    auto* dummy_scanline = (Pixel const*)dummy_scanline_data;
     if constexpr (filter_type == 0) {
         auto* pixels = (Pixel*)bitmap.scanline(y);
         for (int i = 0; i < bitmap.width(); ++i) {
@@ -210,7 +208,7 @@ ALWAYS_INLINE static void unfilter_impl(Gfx::Bitmap& bitmap, int y, const void* 
         for (int i = 1; i < bitmap.width(); ++i) {
             auto& x = pixels[i];
             swap(x.r, x.b);
-            auto& a = (const Pixel&)pixels[i - 1];
+            auto& a = (Pixel const&)pixels[i - 1];
             x.v[0] += a.v[0];
             x.v[1] += a.v[1];
             x.v[2] += a.v[2];
@@ -221,11 +219,11 @@ ALWAYS_INLINE static void unfilter_impl(Gfx::Bitmap& bitmap, int y, const void* 
     }
     if constexpr (filter_type == 2) {
         auto* pixels = (Pixel*)bitmap.scanline(y);
-        auto* pixels_y_minus_1 = y == 0 ? dummy_scanline : (const Pixel*)bitmap.scanline(y - 1);
+        auto* pixels_y_minus_1 = y == 0 ? dummy_scanline : (Pixel const*)bitmap.scanline(y - 1);
         for (int i = 0; i < bitmap.width(); ++i) {
             auto& x = pixels[i];
             swap(x.r, x.b);
-            const Pixel& b = pixels_y_minus_1[i];
+            Pixel const& b = pixels_y_minus_1[i];
             x.v[0] += b.v[0];
             x.v[1] += b.v[1];
             x.v[2] += b.v[2];
@@ -236,14 +234,14 @@ ALWAYS_INLINE static void unfilter_impl(Gfx::Bitmap& bitmap, int y, const void* 
     }
     if constexpr (filter_type == 3) {
         auto* pixels = (Pixel*)bitmap.scanline(y);
-        auto* pixels_y_minus_1 = y == 0 ? dummy_scanline : (const Pixel*)bitmap.scanline(y - 1);
+        auto* pixels_y_minus_1 = y == 0 ? dummy_scanline : (Pixel const*)bitmap.scanline(y - 1);
         for (int i = 0; i < bitmap.width(); ++i) {
             auto& x = pixels[i];
             swap(x.r, x.b);
             Pixel a;
             if (i != 0)
                 a = pixels[i - 1];
-            const Pixel& b = pixels_y_minus_1[i];
+            Pixel const& b = pixels_y_minus_1[i];
             x.v[0] = x.v[0] + ((a.v[0] + b.v[0]) / 2);
             x.v[1] = x.v[1] + ((a.v[1] + b.v[1]) / 2);
             x.v[2] = x.v[2] + ((a.v[2] + b.v[2]) / 2);
@@ -259,7 +257,7 @@ ALWAYS_INLINE static void unfilter_impl(Gfx::Bitmap& bitmap, int y, const void* 
             auto& x = pixels[i];
             swap(x.r, x.b);
             Pixel a;
-            const Pixel& b = pixels_y_minus_1[i];
+            Pixel const& b = pixels_y_minus_1[i];
             Pixel c;
             if (i != 0) {
                 a = pixels[i - 1];
@@ -293,7 +291,7 @@ template<typename T>
 ALWAYS_INLINE static void unpack_grayscale_with_alpha(PNGLoadingContext& context)
 {
     for (int y = 0; y < context.height; ++y) {
-        auto* tuples = reinterpret_cast<const Tuple<T>*>(context.scanlines[y].data.data());
+        auto* tuples = reinterpret_cast<Tuple<T> const*>(context.scanlines[y].data.data());
         for (int i = 0; i < context.width; ++i) {
             auto& pixel = (Pixel&)context.bitmap->scanline(y)[i];
             pixel.r = tuples[i].gray;
@@ -308,13 +306,31 @@ template<typename T>
 ALWAYS_INLINE static void unpack_triplets_without_alpha(PNGLoadingContext& context)
 {
     for (int y = 0; y < context.height; ++y) {
-        auto* triplets = reinterpret_cast<const Triplet<T>*>(context.scanlines[y].data.data());
+        auto* triplets = reinterpret_cast<Triplet<T> const*>(context.scanlines[y].data.data());
         for (int i = 0; i < context.width; ++i) {
             auto& pixel = (Pixel&)context.bitmap->scanline(y)[i];
             pixel.r = triplets[i].r;
             pixel.g = triplets[i].g;
             pixel.b = triplets[i].b;
             pixel.a = 0xff;
+        }
+    }
+}
+
+template<typename T>
+ALWAYS_INLINE static void unpack_triplets_with_transparency_value(PNGLoadingContext& context, Triplet<T> transparency_value)
+{
+    for (int y = 0; y < context.height; ++y) {
+        auto* triplets = reinterpret_cast<Triplet<T> const*>(context.scanlines[y].data.data());
+        for (int i = 0; i < context.width; ++i) {
+            auto& pixel = (Pixel&)context.bitmap->scanline(y)[i];
+            pixel.r = triplets[i].r;
+            pixel.g = triplets[i].g;
+            pixel.b = triplets[i].b;
+            if (triplets[i] == transparency_value)
+                pixel.a = 0x00;
+            else
+                pixel.a = 0xff;
         }
     }
 }
@@ -358,12 +374,24 @@ NEVER_INLINE FLATTEN static ErrorOr<void> unfilter(PNGLoadingContext& context)
         }
         break;
     case 2:
-        if (context.bit_depth == 8) {
-            unpack_triplets_without_alpha<u8>(context);
-        } else if (context.bit_depth == 16) {
-            unpack_triplets_without_alpha<u16>(context);
+        if (context.palette_transparency_data.size() == 6) {
+            if (context.bit_depth == 8) {
+                unpack_triplets_with_transparency_value<u8>(context, Triplet<u8> { context.palette_transparency_data[0], context.palette_transparency_data[2], context.palette_transparency_data[4] });
+            } else if (context.bit_depth == 16) {
+                u16 tr = context.palette_transparency_data[0] | context.palette_transparency_data[1] << 8;
+                u16 tg = context.palette_transparency_data[2] | context.palette_transparency_data[3] << 8;
+                u16 tb = context.palette_transparency_data[4] | context.palette_transparency_data[5] << 8;
+                unpack_triplets_with_transparency_value<u16>(context, Triplet<u16> { tr, tg, tb });
+            } else {
+                VERIFY_NOT_REACHED();
+            }
         } else {
-            VERIFY_NOT_REACHED();
+            if (context.bit_depth == 8)
+                unpack_triplets_without_alpha<u8>(context);
+            else if (context.bit_depth == 16)
+                unpack_triplets_without_alpha<u16>(context);
+            else
+                VERIFY_NOT_REACHED();
         }
         break;
     case 6:
@@ -373,13 +401,13 @@ NEVER_INLINE FLATTEN static ErrorOr<void> unfilter(PNGLoadingContext& context)
             }
         } else if (context.bit_depth == 16) {
             for (int y = 0; y < context.height; ++y) {
-                auto* triplets = reinterpret_cast<const Quad<u16>*>(context.scanlines[y].data.data());
+                auto* quartets = reinterpret_cast<Quartet<u16> const*>(context.scanlines[y].data.data());
                 for (int i = 0; i < context.width; ++i) {
                     auto& pixel = (Pixel&)context.bitmap->scanline(y)[i];
-                    pixel.r = triplets[i].r & 0xFF;
-                    pixel.g = triplets[i].g & 0xFF;
-                    pixel.b = triplets[i].b & 0xFF;
-                    pixel.a = triplets[i].a & 0xFF;
+                    pixel.r = quartets[i].r & 0xFF;
+                    pixel.g = quartets[i].g & 0xFF;
+                    pixel.b = quartets[i].b & 0xFF;
+                    pixel.a = quartets[i].a & 0xFF;
                 }
             }
         } else {
@@ -434,7 +462,7 @@ NEVER_INLINE FLATTEN static ErrorOr<void> unfilter(PNGLoadingContext& context)
         break;
     }
 
-    u8 dummy_scanline[context.width * sizeof(RGBA32)];
+    u8 dummy_scanline[context.width * sizeof(ARGB32)];
     memset(dummy_scanline, 0, sizeof(dummy_scanline));
 
     for (int y = 0; y < context.height; ++y) {
@@ -490,7 +518,7 @@ static bool decode_png_header(PNGLoadingContext& context)
         return false;
     }
 
-    if (memcmp(context.data, png_header, sizeof(png_header)) != 0) {
+    if (memcmp(context.data, png_header.span().data(), sizeof(png_header)) != 0) {
         dbgln_if(PNG_DEBUG, "Invalid PNG header");
         context.state = PNGLoadingContext::State::Error;
         return false;
@@ -510,7 +538,7 @@ static bool decode_png_size(PNGLoadingContext& context)
             return false;
     }
 
-    const u8* data_ptr = context.data + sizeof(png_header);
+    u8 const* data_ptr = context.data + sizeof(png_header);
     size_t data_remaining = context.data_size - sizeof(png_header);
 
     Streamer streamer(data_ptr, data_remaining);
@@ -538,7 +566,7 @@ static bool decode_png_chunks(PNGLoadingContext& context)
             return false;
     }
 
-    const u8* data_ptr = context.data + sizeof(png_header);
+    u8 const* data_ptr = context.data + sizeof(png_header);
     int data_remaining = context.data_size - sizeof(png_header);
 
     context.compressed_data.ensure_capacity(context.data_size);
@@ -714,7 +742,7 @@ static ErrorOr<void> decode_png_bitmap(PNGLoadingContext& context)
         return Error::from_string_literal("PNGImageDecoderPlugin: Didn't see an IHDR chunk."sv);
 
     if (context.color_type == 3 && context.palette_data.is_empty())
-        return Error::from_string_literal("PNGImageDecoderPlugin: Didn't see a PLTE chunk for a palettized image, or it was empty."sv);
+        return Error::from_string_literal("PNGImageDecoderPlugin: Didn't see a PLTE chunk for a palletized image, or it was empty."sv);
 
     auto result = Compress::Zlib::decompress_all(context.compressed_data.span());
     if (!result.has_value()) {
@@ -833,13 +861,15 @@ static bool process_IDAT(ReadonlyBytes data, PNGLoadingContext& context)
 
 static bool process_PLTE(ReadonlyBytes data, PNGLoadingContext& context)
 {
-    context.palette_data.append((const PaletteEntry*)data.data(), data.size() / 3);
+    context.palette_data.append((PaletteEntry const*)data.data(), data.size() / 3);
     return true;
 }
 
 static bool process_tRNS(ReadonlyBytes data, PNGLoadingContext& context)
 {
     switch (context.color_type) {
+    case 0:
+    case 2:
     case 3:
         context.palette_transparency_data.append(data.data(), data.size());
         break;
@@ -872,27 +902,25 @@ static bool process_chunk(Streamer& streamer, PNGLoadingContext& context)
     }
     dbgln_if(PNG_DEBUG, "Chunk type: '{}', size: {}, crc: {:x}", chunk_type, chunk_size, chunk_crc);
 
-    if (!strcmp((const char*)chunk_type, "IHDR"))
+    if (!strcmp((char const*)chunk_type, "IHDR"))
         return process_IHDR(chunk_data, context);
-    if (!strcmp((const char*)chunk_type, "IDAT"))
+    if (!strcmp((char const*)chunk_type, "IDAT"))
         return process_IDAT(chunk_data, context);
-    if (!strcmp((const char*)chunk_type, "PLTE"))
+    if (!strcmp((char const*)chunk_type, "PLTE"))
         return process_PLTE(chunk_data, context);
-    if (!strcmp((const char*)chunk_type, "tRNS"))
+    if (!strcmp((char const*)chunk_type, "tRNS"))
         return process_tRNS(chunk_data, context);
     return true;
 }
 
-PNGImageDecoderPlugin::PNGImageDecoderPlugin(const u8* data, size_t size)
+PNGImageDecoderPlugin::PNGImageDecoderPlugin(u8 const* data, size_t size)
 {
     m_context = make<PNGLoadingContext>();
     m_context->data = data;
     m_context->data_size = size;
 }
 
-PNGImageDecoderPlugin::~PNGImageDecoderPlugin()
-{
-}
+PNGImageDecoderPlugin::~PNGImageDecoderPlugin() = default;
 
 IntSize PNGImageDecoderPlugin::size()
 {

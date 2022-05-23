@@ -11,12 +11,19 @@
 #include <AK/Function.h>
 #include <AK/Types.h>
 
+#include <Kernel/Arch/DeferredCallEntry.h>
+#include <Kernel/Arch/PageDirectory.h>
+#include <Kernel/Arch/ProcessorSpecificDataID.h>
 #include <Kernel/Arch/x86/ASM_wrapper.h>
 #include <Kernel/Arch/x86/CPUID.h>
 #include <Kernel/Arch/x86/DescriptorTable.h>
-#include <Kernel/Arch/x86/PageDirectory.h>
+#include <Kernel/Arch/x86/SIMDState.h>
 #include <Kernel/Arch/x86/TSS.h>
 #include <Kernel/Forward.h>
+#include <Kernel/KString.h>
+
+#include <AK/Platform.h>
+VALIDATE_IS_X86()
 
 namespace Kernel {
 
@@ -25,19 +32,30 @@ struct ProcessorMessage;
 struct ProcessorMessageEntry;
 
 #if ARCH(X86_64)
+#    define MSR_EFER 0xc0000080
+#    define MSR_STAR 0xc0000081
+#    define MSR_LSTAR 0xc0000082
+#    define MSR_SFMASK 0xc0000084
 #    define MSR_FS_BASE 0xc0000100
 #    define MSR_GS_BASE 0xc0000101
 #endif
 #define MSR_IA32_EFER 0xc0000080
+#define MSR_IA32_PAT 0x277
 
 // FIXME: Find a better place for these
 extern "C" void thread_context_first_enter(void);
 extern "C" void exit_kernel_thread(void);
 extern "C" void do_assume_context(Thread* thread, u32 flags);
 
-struct [[gnu::aligned(16)]] FPUState
+struct [[gnu::aligned(64), gnu::packed]] FPUState
 {
-    u8 buffer[512];
+    SIMD::LegacyRegion legacy_region;
+    SIMD::Header xsave_header;
+
+    // FIXME: This should be dynamically allocated! For now, we only save the `YMM` registers here,
+    // so this will do for now. The size of the area is queried via CPUID(EAX=0dh, ECX=2):EAX.
+    // https://www.intel.com/content/dam/develop/external/us/en/documents/36945
+    u8 ext_save_area[256];
 };
 
 class Processor;
@@ -53,8 +71,13 @@ class Processor {
 
     Processor* m_self;
 
+#if ARCH(X86_64)
+    // Saved user stack for the syscall instruction.
+    void* m_user_stack;
+#endif
+
     DescriptorTablePointer m_gdtr;
-    Descriptor m_gdt[256];
+    alignas(Descriptor) Descriptor m_gdt[256];
     u32 m_gdt_length;
 
     u32 m_cpu;
@@ -64,10 +87,13 @@ class Processor {
 
     TSS m_tss;
     static FPUState s_clean_fpu_state;
-    CPUFeature m_features;
+    CPUFeature::Type m_features;
     static Atomic<u32> g_total_processors;
     u8 m_physical_address_bit_width;
     u8 m_virtual_address_bit_width;
+#if ARCH(X86_64)
+    bool m_has_qemu_hvf_quirk;
+#endif
 
     ProcessorInfo* m_info;
     Thread* m_current_thread;
@@ -109,8 +135,6 @@ class Processor {
     void cpu_detect();
     void cpu_setup();
 
-    String features_string() const;
-
 public:
     Processor() = default;
 
@@ -139,6 +163,11 @@ public:
         return *g_total_processors.ptr();
     }
 
+    ALWAYS_INLINE static u64 read_cpu_counter()
+    {
+        return read_tsc();
+    }
+
     ALWAYS_INLINE static void pause()
     {
         asm volatile("pause");
@@ -163,9 +192,7 @@ public:
 
     Descriptor& get_gdt_entry(u16 selector);
     void flush_gdt();
-    const DescriptorTablePointer& get_gdtr();
-
-    static size_t processor_count() { return processors().size(); }
+    DescriptorTablePointer const& get_gdtr();
 
     template<IteratorFunction<Processor&> Callback>
     static inline IterationDecision for_each(Callback callback)
@@ -191,6 +218,17 @@ public:
         return IterationDecision::Continue;
     }
 
+    static inline ErrorOr<void> try_for_each(Function<ErrorOr<void>(Processor&)> callback)
+    {
+        auto& procs = processors();
+        size_t count = procs.size();
+        for (size_t i = 0; i < count; i++) {
+            if (procs[i] != nullptr)
+                TRY(callback(*procs[i]));
+        }
+        return {};
+    }
+
     ALWAYS_INLINE u8 physical_address_bit_width() const { return m_physical_address_bit_width; }
     ALWAYS_INLINE u8 virtual_address_bit_width() const { return m_virtual_address_bit_width; }
 
@@ -199,6 +237,17 @@ public:
     u64 time_spent_idle() const;
 
     static bool is_smp_enabled();
+
+#if ARCH(X86_64)
+    static constexpr u64 user_stack_offset()
+    {
+        return __builtin_offsetof(Processor, m_user_stack);
+    }
+    static constexpr u64 kernel_stack_offset()
+    {
+        return __builtin_offsetof(Processor, m_tss) + __builtin_offsetof(TSS, rsp0l);
+    }
+#endif
 
     ALWAYS_INLINE static Processor& current()
     {
@@ -358,9 +407,19 @@ public:
 
     static void deferred_call_queue(Function<void()> callback);
 
-    ALWAYS_INLINE bool has_feature(CPUFeature f) const
+    ALWAYS_INLINE bool has_nx() const
     {
-        return (static_cast<u32>(m_features) & static_cast<u32>(f)) != 0;
+        return has_feature(CPUFeature::NX);
+    }
+
+    ALWAYS_INLINE bool has_pat() const
+    {
+        return has_feature(CPUFeature::PAT);
+    }
+
+    ALWAYS_INLINE bool has_feature(CPUFeature::Type const& feature) const
+    {
+        return m_features.has_flag(feature);
     }
 
     void check_invoke_scheduler();
@@ -374,7 +433,7 @@ public:
     NEVER_INLINE void switch_context(Thread*& from_thread, Thread*& to_thread);
     [[noreturn]] static void assume_context(Thread& thread, FlatPtr flags);
     FlatPtr init_context(Thread& thread, bool leave_crit);
-    static Vector<FlatPtr> capture_stack_trace(Thread& thread, size_t max_frames = 0);
+    static ErrorOr<Vector<FlatPtr, 32>> capture_stack_trace(Thread& thread, size_t max_frames = 0);
 
     static StringView platform_string();
 };

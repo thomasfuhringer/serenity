@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2021, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2022, the SerenityOS developers.
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -22,17 +23,13 @@ TimelineContainer::TimelineContainer(GUI::Widget& header_container, TimelineView
     update_widget_sizes();
     update_widget_positions();
 
-    int initial_height = min(300, timeline_view.height() + frame_thickness() * 2);
+    int initial_height = min(300, timeline_view.height() + horizontal_scrollbar().max_height() + frame_thickness() * 2);
     set_fixed_height(initial_height);
 
     m_timeline_view->on_scale_change = [this] {
         update_widget_sizes();
         update_widget_positions();
     };
-}
-
-TimelineContainer::~TimelineContainer()
-{
 }
 
 void TimelineContainer::did_scroll()

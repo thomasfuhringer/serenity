@@ -15,7 +15,7 @@ Client& Client::the()
 {
     if (!s_the || !s_the->is_open()) {
         VERIFY(Core::EventLoop::has_been_instantiated());
-        s_the = Client::construct();
+        s_the = Client::try_create().release_value_but_fixme_should_propagate_errors();
     }
     return *s_the;
 }
@@ -57,17 +57,17 @@ bool Client::read_bool(StringView domain, StringView group, StringView key, bool
 
 void Client::write_string(StringView domain, StringView group, StringView key, StringView value)
 {
-    async_write_string_value(domain, group, key, value);
+    write_string_value(domain, group, key, value);
 }
 
 void Client::write_i32(StringView domain, StringView group, StringView key, i32 value)
 {
-    async_write_i32_value(domain, group, key, value);
+    write_i32_value(domain, group, key, value);
 }
 
 void Client::write_bool(StringView domain, StringView group, StringView key, bool value)
 {
-    async_write_bool_value(domain, group, key, value);
+    write_bool_value(domain, group, key, value);
 }
 
 void Client::remove_key(StringView domain, StringView group, StringView key)
@@ -96,7 +96,7 @@ void Client::notify_changed_bool_value(String const& domain, String const& group
     });
 }
 
-void Client::notify_removed_key(const String& domain, const String& group, const String& key)
+void Client::notify_removed_key(String const& domain, String const& group, String const& key)
 {
     Listener::for_each([&](auto& listener) {
         listener.config_key_was_removed(domain, group, key);

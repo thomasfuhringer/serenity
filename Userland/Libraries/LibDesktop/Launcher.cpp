@@ -9,12 +9,12 @@
 #include <LaunchServer/LaunchClientEndpoint.h>
 #include <LaunchServer/LaunchServerEndpoint.h>
 #include <LibDesktop/Launcher.h>
-#include <LibIPC/ServerConnection.h>
+#include <LibIPC/ConnectionToServer.h>
 #include <stdlib.h>
 
 namespace Desktop {
 
-auto Launcher::Details::from_details_str(const String& details_str) -> NonnullRefPtr<Details>
+auto Launcher::Details::from_details_str(String const& details_str) -> NonnullRefPtr<Details>
 {
     auto details = adopt_ref(*new Details);
     auto json = JsonValue::from_string(details_str).release_value_but_fixme_should_propagate_errors();
@@ -33,21 +33,26 @@ auto Launcher::Details::from_details_str(const String& details_str) -> NonnullRe
     return details;
 }
 
-class LaunchServerConnection final
-    : public IPC::ServerConnection<LaunchClientEndpoint, LaunchServerEndpoint>
+class ConnectionToLaunchServer final
+    : public IPC::ConnectionToServer<LaunchClientEndpoint, LaunchServerEndpoint>
     , public LaunchClientEndpoint {
-    C_OBJECT(LaunchServerConnection)
+    IPC_CLIENT_CONNECTION(ConnectionToLaunchServer, "/tmp/portal/launch")
 private:
-    LaunchServerConnection()
-        : IPC::ServerConnection<LaunchClientEndpoint, LaunchServerEndpoint>(*this, "/tmp/portal/launch")
+    ConnectionToLaunchServer(NonnullOwnPtr<Core::Stream::LocalSocket> socket)
+        : IPC::ConnectionToServer<LaunchClientEndpoint, LaunchServerEndpoint>(*this, move(socket))
     {
     }
 };
 
-static LaunchServerConnection& connection()
+static ConnectionToLaunchServer& connection()
 {
-    static auto connection = LaunchServerConnection::construct();
+    static auto connection = ConnectionToLaunchServer::try_create().release_value_but_fixme_should_propagate_errors();
     return connection;
+}
+
+void Launcher::ensure_connection()
+{
+    [[maybe_unused]] auto& conn = connection();
 }
 
 ErrorOr<void> Launcher::add_allowed_url(URL const& url)
@@ -82,12 +87,12 @@ ErrorOr<void> Launcher::seal_allowlist()
     return {};
 }
 
-bool Launcher::open(const URL& url, const String& handler_name)
+bool Launcher::open(const URL& url, String const& handler_name)
 {
     return connection().open_url(url, handler_name);
 }
 
-bool Launcher::open(const URL& url, const Details& details)
+bool Launcher::open(const URL& url, Details const& details)
 {
     VERIFY(details.launcher_type != LauncherType::Application); // Launcher should not be used to execute arbitrary applications
     return open(url, details.executable);

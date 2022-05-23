@@ -1,12 +1,11 @@
 /*
- * Copyright (c) 2021, Linus Groh <linusg@serenityos.org>
+ * Copyright (c) 2021-2022, Linus Groh <linusg@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #include <LibJS/Runtime/AbstractOperations.h>
 #include <LibJS/Runtime/Error.h>
-#include <LibJS/Runtime/MarkedValueList.h>
 #include <LibJS/Runtime/NativeFunction.h>
 #include <LibJS/Runtime/PromiseReaction.h>
 
@@ -32,8 +31,7 @@ ThrowCompletionOr<PromiseCapability> new_promise_capability(GlobalObject& global
     } promise_capability_functions;
 
     // 4. Let executorClosure be a new Abstract Closure with parameters (resolve, reject) that captures promiseCapability and performs the following steps when called:
-    // 5. Let executor be ! CreateBuiltinFunction(executorClosure, 2, "", « »).
-    auto* executor = NativeFunction::create(global_object, "", [&promise_capability_functions](auto& vm, auto& global_object) -> ThrowCompletionOr<Value> {
+    auto executor_closure = [&promise_capability_functions](auto& vm, auto& global_object) -> ThrowCompletionOr<Value> {
         auto resolve = vm.argument(0);
         auto reject = vm.argument(1);
 
@@ -54,14 +52,13 @@ ThrowCompletionOr<PromiseCapability> new_promise_capability(GlobalObject& global
 
         // e. Return undefined.
         return js_undefined();
-    });
-    executor->define_direct_property(vm.names.length, Value(2), Attribute::Configurable);
-    executor->define_direct_property(vm.names.name, js_string(vm, String::empty()), Attribute::Configurable);
+    };
+
+    // 5. Let executor be CreateBuiltinFunction(executorClosure, 2, "", « »).
+    auto* executor = NativeFunction::create(global_object, move(executor_closure), 2, "");
 
     // 6. Let promise be ? Construct(C, « executor »).
-    MarkedValueList arguments(vm.heap());
-    arguments.append(executor);
-    auto* promise = TRY(construct(global_object, constructor.as_function(), move(arguments)));
+    auto* promise = TRY(construct(global_object, constructor.as_function(), executor));
 
     // 7. If IsCallable(promiseCapability.[[Resolve]]) is false, throw a TypeError exception.
     if (!promise_capability_functions.resolve.is_function())
@@ -95,10 +92,6 @@ void PromiseReaction::visit_edges(Cell::Visitor& visitor)
         visitor.visit(capability.promise);
         visitor.visit(capability.resolve);
         visitor.visit(capability.reject);
-    }
-    if (m_handler.has_value()) {
-        auto& handler = m_handler.value();
-        visitor.visit(handler.callback);
     }
 }
 

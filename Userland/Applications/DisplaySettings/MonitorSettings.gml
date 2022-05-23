@@ -1,6 +1,5 @@
 @GUI::Widget {
     fill_with_background_color: true
-
     layout: @GUI::VerticalBoxLayout {
         margins: [8]
     }
@@ -24,7 +23,7 @@
         @GUI::Label {
             text: "Screen:"
             text_alignment: "CenterLeft"
-            fixed_width: 95
+            fixed_width: 55
         }
 
         @GUI::ComboBox {
@@ -36,14 +35,11 @@
         layout: @GUI::VerticalBoxLayout {
             margins: [14, 14, 4]
         }
-
         title: "Screen settings"
 
         @GUI::Widget {
             shrink_to_fit: true
-
-            layout: @GUI::HorizontalBoxLayout {
-            }
+            layout: @GUI::HorizontalBoxLayout {}
 
             @GUI::Label {
                 text: "Resolution:"
@@ -54,6 +50,13 @@
             @GUI::ComboBox {
                 name: "resolution_combo"
             }
+
+            @GUI::Label {
+                name: "display_dpi"
+                text: "96 dpi"
+                text_alignment: "CenterMiddle"
+                fixed_width: 50
+            }
         }
 
         @GUI::Widget {
@@ -62,9 +65,7 @@
 
         @GUI::Widget {
             shrink_to_fit: true
-
-            layout: @GUI::HorizontalBoxLayout {
-            }
+            layout: @GUI::HorizontalBoxLayout {}
 
             @GUI::Label {
                 text: "Display scale:"

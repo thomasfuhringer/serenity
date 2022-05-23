@@ -59,9 +59,9 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
     TRY(Core::System::unveil("/bin", "x"));
     TRY(Core::System::unveil(nullptr, nullptr));
 
-    const char* section = nullptr;
-    const char* name = nullptr;
-    const char* pager = nullptr;
+    char const* section = nullptr;
+    char const* name = nullptr;
+    char const* pager = nullptr;
 
     Core::ArgsParser args_parser;
     args_parser.set_general_help("Read manual pages. Try 'man man' to get started.");
@@ -70,11 +70,11 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
     args_parser.add_option(pager, "Pager to pipe the man page to", "pager", 'P', "pager");
     args_parser.parse(arguments);
 
-    auto make_path = [name](const char* section) {
+    auto make_path = [name](char const* section) {
         return String::formatted("/usr/share/man/man{}/{}.md", section, name);
     };
     if (!section) {
-        const char* sections[] = {
+        char const* sections[] = {
             "1",
             "2",
             "3",
@@ -91,13 +91,15 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
                 break;
             }
         }
-        if (!section) {
-            warnln("No man page for {}", name);
-            exit(1);
-        }
     }
-
     auto filename = make_path(section);
+    if (section == nullptr) {
+        warnln("No man page for {}", name);
+        exit(1);
+    } else if (access(filename.characters(), R_OK) != 0) {
+        warnln("No man page for {} in section {}", name, section);
+        exit(1);
+    }
 
     String pager_command;
     if (pager)
@@ -114,13 +116,21 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
     auto buffer = file->read_all();
     auto source = String::copy(buffer);
 
-    outln("{}({})\t\tSerenityOS manual", name, section);
+    const String title("SerenityOS manual");
+
+    int spaces = view_width / 2 - String(name).length() - String(section).length() - title.length() / 2 - 4;
+    if (spaces < 0)
+        spaces = 0;
+    out("{}({})", name, section);
+    while (spaces--)
+        out(" ");
+    outln(title);
 
     auto document = Markdown::Document::parse(source);
     VERIFY(document);
 
     String rendered = document->render_for_terminal(view_width);
-    out("{}", rendered);
+    outln("{}", rendered);
 
     // FIXME: Remove this wait, it shouldn't be necessary but Shell does not
     //        resume properly without it. This wait also breaks <C-z> backgrounding

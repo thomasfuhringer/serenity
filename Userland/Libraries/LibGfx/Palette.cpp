@@ -1,6 +1,7 @@
 /*
  * Copyright (c) 2018-2020, Andreas Kling <kling@serenityos.org>
  * Copyright (c) 2021, Sam Atkins <atkinssj@serenityos.org>
+ * Copyright (c) 2022, Filiph Sandström <filiph.sandstrom@filfatstudios.com>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -21,12 +22,8 @@ PaletteImpl::PaletteImpl(Core::AnonymousBuffer buffer)
 {
 }
 
-Palette::Palette(const PaletteImpl& impl)
+Palette::Palette(PaletteImpl const& impl)
     : m_impl(impl)
-{
-}
-
-Palette::~Palette()
 {
 }
 
@@ -57,6 +54,14 @@ void Palette::set_color(ColorRole role, Color color)
     theme.color[(int)role] = color.value();
 }
 
+void Palette::set_alignment(AlignmentRole role, Gfx::TextAlignment value)
+{
+    if (m_impl->ref_count() != 1)
+        m_impl = m_impl->clone();
+    auto& theme = const_cast<SystemTheme&>(impl().theme());
+    theme.alignment[(int)role] = value;
+}
+
 void Palette::set_flag(FlagRole role, bool value)
 {
     if (m_impl->ref_count() != 1)
@@ -80,10 +85,6 @@ void Palette::set_path(PathRole role, String path)
     auto& theme = const_cast<SystemTheme&>(impl().theme());
     memcpy(theme.path[(int)role], path.characters(), min(path.length() + 1, sizeof(theme.path[(int)role])));
     theme.path[(int)role][sizeof(theme.path[(int)role]) - 1] = '\0';
-}
-
-PaletteImpl::~PaletteImpl()
-{
 }
 
 void PaletteImpl::replace_internal_buffer(Badge<GUI::Application>, Core::AnonymousBuffer buffer)

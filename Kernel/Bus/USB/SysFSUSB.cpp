@@ -13,37 +13,36 @@ namespace Kernel::USB {
 
 static SysFSUSBBusDirectory* s_procfs_usb_bus_directory;
 
-SysFSUSBDeviceInformation::SysFSUSBDeviceInformation(USB::Device& device)
-    : SysFSComponent(String::number(device.address()))
+SysFSUSBDeviceInformation::SysFSUSBDeviceInformation(NonnullOwnPtr<KString> device_name, USB::Device& device)
+    : SysFSComponent()
     , m_device(device)
+    , m_device_name(move(device_name))
 {
 }
 
-SysFSUSBDeviceInformation::~SysFSUSBDeviceInformation()
-{
-}
+SysFSUSBDeviceInformation::~SysFSUSBDeviceInformation() = default;
 
 ErrorOr<void> SysFSUSBDeviceInformation::try_generate(KBufferBuilder& builder)
 {
     VERIFY(m_lock.is_locked());
-    JsonArraySerializer array { builder };
+    auto array = TRY(JsonArraySerializer<>::try_create(builder));
 
-    auto obj = array.add_object();
-    obj.add("device_address", m_device->address());
-    obj.add("usb_spec_compliance_bcd", m_device->device_descriptor().usb_spec_compliance_bcd);
-    obj.add("device_class", m_device->device_descriptor().device_class);
-    obj.add("device_sub_class", m_device->device_descriptor().device_sub_class);
-    obj.add("device_protocol", m_device->device_descriptor().device_protocol);
-    obj.add("max_packet_size", m_device->device_descriptor().max_packet_size);
-    obj.add("vendor_id", m_device->device_descriptor().vendor_id);
-    obj.add("product_id", m_device->device_descriptor().product_id);
-    obj.add("device_release_bcd", m_device->device_descriptor().device_release_bcd);
-    obj.add("manufacturer_id_descriptor_index", m_device->device_descriptor().manufacturer_id_descriptor_index);
-    obj.add("product_string_descriptor_index", m_device->device_descriptor().product_string_descriptor_index);
-    obj.add("serial_number_descriptor_index", m_device->device_descriptor().serial_number_descriptor_index);
-    obj.add("num_configurations", m_device->device_descriptor().num_configurations);
-    obj.finish();
-    array.finish();
+    auto obj = TRY(array.add_object());
+    TRY(obj.add("device_address", m_device->address()));
+    TRY(obj.add("usb_spec_compliance_bcd", m_device->device_descriptor().usb_spec_compliance_bcd));
+    TRY(obj.add("device_class", m_device->device_descriptor().device_class));
+    TRY(obj.add("device_sub_class", m_device->device_descriptor().device_sub_class));
+    TRY(obj.add("device_protocol", m_device->device_descriptor().device_protocol));
+    TRY(obj.add("max_packet_size", m_device->device_descriptor().max_packet_size));
+    TRY(obj.add("vendor_id", m_device->device_descriptor().vendor_id));
+    TRY(obj.add("product_id", m_device->device_descriptor().product_id));
+    TRY(obj.add("device_release_bcd", m_device->device_descriptor().device_release_bcd));
+    TRY(obj.add("manufacturer_id_descriptor_index", m_device->device_descriptor().manufacturer_id_descriptor_index));
+    TRY(obj.add("product_string_descriptor_index", m_device->device_descriptor().product_string_descriptor_index));
+    TRY(obj.add("serial_number_descriptor_index", m_device->device_descriptor().serial_number_descriptor_index));
+    TRY(obj.add("num_configurations", m_device->device_descriptor().num_configurations));
+    TRY(obj.finish());
+    TRY(array.finish());
     return {};
 }
 
@@ -99,7 +98,7 @@ ErrorOr<void> SysFSUSBBusDirectory::traverse_as_directory(FileSystemID fsid, Fun
     TRY(callback({ ".", { fsid, component_index() }, 0 }));
     TRY(callback({ "..", { fsid, m_parent_directory->component_index() }, 0 }));
 
-    for (auto& device_node : m_device_nodes) {
+    for (auto const& device_node : m_device_nodes) {
         InodeIdentifier identifier = { fsid, device_node.component_index() };
         TRY(callback({ device_node.name(), identifier, 0 }));
     }
@@ -132,7 +131,13 @@ void SysFSUSBBusDirectory::plug(USB::Device& new_device)
     SpinlockLocker lock(m_lock);
     auto device_node = device_node_for(new_device);
     VERIFY(!device_node);
-    m_device_nodes.append(SysFSUSBDeviceInformation::create(new_device));
+    auto sysfs_usb_device_or_error = SysFSUSBDeviceInformation::create(new_device);
+    if (sysfs_usb_device_or_error.is_error()) {
+        dbgln("Failed to create SysFSUSBDevice for device id {}", new_device.address());
+        return;
+    }
+
+    m_device_nodes.append(sysfs_usb_device_or_error.release_value());
 }
 
 void SysFSUSBBusDirectory::unplug(USB::Device& deleted_device)
@@ -150,7 +155,7 @@ SysFSUSBBusDirectory& SysFSUSBBusDirectory::the()
 }
 
 UNMAP_AFTER_INIT SysFSUSBBusDirectory::SysFSUSBBusDirectory(SysFSBusDirectory& buses_directory)
-    : SysFSDirectory("usb"sv, buses_directory)
+    : SysFSDirectory(buses_directory)
 {
 }
 
@@ -161,9 +166,10 @@ UNMAP_AFTER_INIT void SysFSUSBBusDirectory::initialize()
     s_procfs_usb_bus_directory = directory;
 }
 
-NonnullRefPtr<SysFSUSBDeviceInformation> SysFSUSBDeviceInformation::create(USB::Device& device)
+ErrorOr<NonnullRefPtr<SysFSUSBDeviceInformation>> SysFSUSBDeviceInformation::create(USB::Device& device)
 {
-    return adopt_ref(*new SysFSUSBDeviceInformation(device));
+    auto device_name = TRY(KString::number(device.address()));
+    return adopt_nonnull_ref_or_enomem(new (nothrow) SysFSUSBDeviceInformation(move(device_name), device));
 }
 
 }

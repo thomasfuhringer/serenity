@@ -2,6 +2,7 @@ set(AK_TEST_SOURCES
     TestFixedPoint.cpp
     TestAllOf.cpp
     TestAnyOf.cpp
+    TestArbitrarySizedEnum.cpp
     TestArray.cpp
     TestAtomic.cpp
     TestBadge.cpp
@@ -10,6 +11,7 @@ set(AK_TEST_SOURCES
     TestBinarySearch.cpp
     TestBitCast.cpp
     TestBitmap.cpp
+    TestBuiltinWrappers.cpp
     TestByteBuffer.cpp
     TestCharacterTypes.cpp
     TestChecked.cpp
@@ -31,19 +33,22 @@ set(AK_TEST_SOURCES
     TestHashTable.cpp
     TestHex.cpp
     TestIPv4Address.cpp
+    TestIPv6Address.cpp
     TestIndexSequence.cpp
+    TestIntegerMath.cpp
     TestIntrusiveList.cpp
     TestIntrusiveRedBlackTree.cpp
     TestJSON.cpp
     TestLEB128.cpp
     TestLexicalPath.cpp
     TestMACAddress.cpp
-    TestMemMem.cpp
+    TestMemory.cpp
     TestMemoryStream.cpp
     TestNeverDestroyed.cpp
     TestNonnullRefPtr.cpp
     TestNumberFormat.cpp
     TestOptional.cpp
+    TestPrint.cpp
     TestQueue.cpp
     TestQuickSort.cpp
     TestRedBlackTree.cpp

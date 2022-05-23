@@ -1,44 +1,26 @@
 /*
  * Copyright (c) 2019-2020, Ryan Grieb <ryan.m.grieb@gmail.com>
- * Copyright (c) 2020-2021, the SerenityOS developers.
+ * Copyright (c) 2020-2022, the SerenityOS developers.
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <AK/DateConstants.h>
 #include <LibCore/DateTime.h>
 #include <LibGUI/Calendar.h>
 #include <LibGUI/Painter.h>
 #include <LibGUI/Window.h>
-#include <LibGfx/FontDatabase.h>
+#include <LibGfx/Font/FontDatabase.h>
 #include <LibGfx/Palette.h>
 
 REGISTER_WIDGET(GUI, Calendar);
 
 namespace GUI {
 
-static const char* long_day_names[] = {
-    "Sunday", "Monday", "Tuesday", "Wednesday",
-    "Thursday", "Friday", "Saturday"
-};
-
-static const char* short_day_names[] = { "Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat" };
-static const char* mini_day_names[] = { "Su", "Mo", "Tu", "We", "Th", "Fr", "Sa" };
-static const char* micro_day_names[] = { "S", "M", "T", "W", "T", "F", "S" };
-
-static const char* long_month_names[] = {
-    "January", "February", "March", "April", "May", "June",
-    "July", "August", "September", "October", "November", "December"
-};
-
-static const char* short_month_names[] = {
-    "Jan", "Feb", "Mar", "Apr", "May", "Jun",
-    "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"
-};
-
-static const auto extra_large_font = Gfx::BitmapFont::load_from_file("/res/fonts/MarietaRegular36.font");
-static const auto large_font = Gfx::BitmapFont::load_from_file("/res/fonts/MarietaRegular24.font");
-static const auto medium_font = Gfx::BitmapFont::load_from_file("/res/fonts/PebbletonRegular14.font");
-static const auto small_font = Gfx::BitmapFont::load_from_file("/res/fonts/KaticaRegular10.font");
+static auto const extra_large_font = Gfx::BitmapFont::load_from_file("/res/fonts/MarietaRegular36.font");
+static auto const large_font = Gfx::BitmapFont::load_from_file("/res/fonts/MarietaRegular24.font");
+static auto const medium_font = Gfx::BitmapFont::load_from_file("/res/fonts/PebbletonRegular14.font");
+static auto const small_font = Gfx::BitmapFont::load_from_file("/res/fonts/KaticaRegular10.font");
 
 Calendar::Calendar(Core::DateTime date_time, Mode mode)
     : m_selected_date(date_time)
@@ -60,10 +42,6 @@ Calendar::Calendar(Core::DateTime date_time, Mode mode)
     }
 
     update_tiles(m_selected_date.year(), m_selected_date.month());
-}
-
-Calendar::~Calendar()
-{
 }
 
 void Calendar::set_grid(bool show)
@@ -97,7 +75,7 @@ void Calendar::resize_event(GUI::ResizeEvent& event)
 
         set_show_year(false);
 
-        const int GRID_LINES = 6;
+        int const GRID_LINES = 6;
         int tile_width = (m_event_size.width() - GRID_LINES) / 7;
         int width_remainder = (m_event_size.width() - GRID_LINES) % 7;
         int y_offset = is_showing_days_of_the_week() ? 16 : 0;
@@ -146,10 +124,10 @@ void Calendar::resize_event(GUI::ResizeEvent& event)
 
         set_show_month_and_year(false);
 
-        const int VERT_GRID_LINES = 27;
-        const int HORI_GRID_LINES = 15;
-        const int THREADING = 3;
-        const int MONTH_TITLE = 19;
+        int const VERT_GRID_LINES = 27;
+        int const HORI_GRID_LINES = 15;
+        int const THREADING = 3;
+        int const MONTH_TITLE = 19;
         int tile_width = (m_event_size.width() - VERT_GRID_LINES) / 28;
         int width_remainder = (m_event_size.width() - VERT_GRID_LINES) % 28;
         int y_offset = is_showing_year() ? 22 : 0;
@@ -286,49 +264,50 @@ void Calendar::update_tiles(unsigned view_year, unsigned view_month)
 {
     set_view_date(view_year, view_month);
 
-    unsigned months;
-    mode() == Month ? months = 1 : months = 12;
+    auto now = Core::DateTime::now();
+    unsigned months = mode() == Month ? 1 : 12;
     for (unsigned i = 0; i < months; i++) {
         if (mode() == Year)
             view_month = i + 1;
+
+        auto first_day_of_current_month = Core::DateTime::create(view_year, view_month, 1);
+        unsigned start_of_month = first_day_of_current_month.weekday();
+        unsigned days_from_previous_month_to_show = start_of_month == 0 ? 7 : start_of_month;
+
         for (unsigned j = 0; j < 42; j++) {
-            auto date_time = Core::DateTime::create(view_year, view_month, 1);
-            unsigned start_of_month = date_time.weekday();
             unsigned year;
             unsigned month;
             unsigned day;
 
-            if (start_of_month == 0 && mode() != Year) {
+            if (j + 1 <= days_from_previous_month_to_show) {
+                // Day from previous month.
                 month = (view_month - 1 == 0) ? 12 : view_month - 1;
                 year = (month == 12) ? view_year - 1 : view_year;
-                date_time.set_time(year, month, 1);
-                day = (date_time.days_in_month() - 6 + j);
-            } else if (start_of_month > j) {
-                month = (view_month - 1 == 0) ? 12 : view_month - 1;
-                year = (month == 12) ? view_year - 1 : view_year;
-                date_time.set_time(year, month, 1);
-                day = (date_time.days_in_month() - (start_of_month) + j) + 1;
-            } else if ((j - start_of_month) + 1 > date_time.days_in_month()) {
+                day = days_in_month(year, month) + j + 1 - days_from_previous_month_to_show;
+            } else if (j + 1 > days_from_previous_month_to_show + first_day_of_current_month.days_in_month()) {
+                // Day from next month.
                 month = (view_month + 1) > 12 ? 1 : view_month + 1;
                 year = (month == 1) ? view_year + 1 : view_year;
-                day = ((j - start_of_month) + 1) - date_time.days_in_month();
+                day = j + 1 - days_from_previous_month_to_show - first_day_of_current_month.days_in_month();
             } else {
+                // Day from current month.
                 month = view_month;
                 year = view_year;
-                day = (j - start_of_month) + 1;
+                day = j + 1 - days_from_previous_month_to_show;
             }
-            date_time.set_time(year, month, day);
 
-            m_tiles[i][j].date_time = date_time;
-            m_tiles[i][j].is_outside_selected_month = (date_time.month() != view_month
-                || date_time.year() != view_year);
-            m_tiles[i][j].is_selected = (date_time.year() == m_selected_date.year()
-                && date_time.month() == m_selected_date.month()
-                && date_time.day() == m_selected_date.day()
+            m_tiles[i][j].year = year;
+            m_tiles[i][j].month = month;
+            m_tiles[i][j].day = day;
+            m_tiles[i][j].is_outside_selected_month = (month != view_month
+                || year != view_year);
+            m_tiles[i][j].is_selected = (year == m_selected_date.year()
+                && month == m_selected_date.month()
+                && day == m_selected_date.day()
                 && (mode() == Year ? !m_tiles[i][j].is_outside_selected_month : true));
-            m_tiles[i][j].is_today = (date_time.day() == Core::DateTime::now().day()
-                && date_time.month() == Core::DateTime::now().month()
-                && date_time.year() == Core::DateTime::now().year());
+            m_tiles[i][j].is_today = (day == now.day()
+                && month == now.month()
+                && year == now.year());
         }
     }
     update();
@@ -494,7 +473,7 @@ void Calendar::paint_event(GUI::PaintEvent& event)
                     text_rect = Gfx::IntRect(tile_rect);
                 }
 
-                auto display_date = String::number(m_tiles[0][i].date_time.day());
+                auto display_date = String::number(m_tiles[0][i].day);
                 if (m_tiles[0][i].is_selected && (width < 30 || height < 30))
                     painter.draw_rect(tile_rect, palette().base_text());
 
@@ -603,7 +582,7 @@ void Calendar::paint_event(GUI::PaintEvent& event)
                         set_font(small_font);
                     }
 
-                    auto display_date = String::number(m_tiles[l][i].date_time.day());
+                    auto display_date = String::number(m_tiles[l][i].day);
                     if (m_tiles[l][i].is_selected)
                         painter.draw_rect(tile_rect, palette().base_text());
 
@@ -709,7 +688,7 @@ void Calendar::mouseup_event(GUI::MouseEvent& event)
                     continue;
                 if (m_tiles[i][j].rect.contains(event.position())) {
                     m_previous_selected_date = m_selected_date;
-                    m_selected_date = m_tiles[i][j].date_time;
+                    m_selected_date = Core::DateTime::create(m_tiles[i][j].year, m_tiles[i][j].month, m_tiles[i][j].day);
                     update_tiles(m_selected_date.year(), m_selected_date.month());
                     if (on_tile_click)
                         on_tile_click();
@@ -745,7 +724,7 @@ void Calendar::doubleclick_event(GUI::MouseEvent& event)
     mode() == Month ? months = 1 : months = 12;
     for (int i = 0; i < months; i++) {
         for (int j = 0; j < 42; j++) {
-            if (m_tiles[i][j].date_time.day() != m_previous_selected_date.day())
+            if (m_tiles[i][j].day != m_previous_selected_date.day())
                 continue;
             if (mode() == Year && m_tiles[i][j].is_outside_selected_month)
                 continue;

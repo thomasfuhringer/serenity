@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2018-2020, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2022, the SerenityOS developers.
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -14,7 +15,7 @@ namespace GUI {
 class TextBox : public TextEditor {
     C_OBJECT(TextBox)
 public:
-    virtual ~TextBox() override;
+    virtual ~TextBox() override = default;
 
     Function<void()> on_up_pressed;
     Function<void()> on_down_pressed;
@@ -41,14 +42,29 @@ private:
 
 class PasswordBox : public TextBox {
     C_OBJECT(PasswordBox)
+public:
+    bool is_showing_reveal_button() const { return m_show_reveal_button; }
+    void set_show_reveal_button(bool show)
+    {
+        m_show_reveal_button = show;
+        update();
+    }
+
 private:
     PasswordBox();
+
+    virtual void paint_event(PaintEvent&) override;
+    virtual void mousedown_event(GUI::MouseEvent&) override;
+
+    Gfx::IntRect reveal_password_button_rect() const;
+
+    bool m_show_reveal_button { false };
 };
 
 class UrlBox : public TextBox {
     C_OBJECT(UrlBox)
 public:
-    virtual ~UrlBox() override;
+    virtual ~UrlBox() override = default;
 
     void set_focus_transition(bool focus_transition) { m_focus_transition = focus_transition; }
     bool is_focus_transition() const { return m_focus_transition; }

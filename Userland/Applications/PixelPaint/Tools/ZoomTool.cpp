@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2021, the SerenityOS developers.
+ * Copyright (c) 2021-2022, the SerenityOS developers.
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -12,14 +12,6 @@
 
 namespace PixelPaint {
 
-ZoomTool::ZoomTool()
-{
-}
-
-ZoomTool::~ZoomTool()
-{
-}
-
 void ZoomTool::on_mousedown(Layer*, MouseEvent& event)
 {
     auto& raw_event = event.raw_event();
@@ -27,7 +19,8 @@ void ZoomTool::on_mousedown(Layer*, MouseEvent& event)
         return;
 
     auto scale_factor = (raw_event.button() == GUI::MouseButton::Primary) ? m_sensitivity : -m_sensitivity;
-    m_editor->scale_centered_on_position(raw_event.position(), scale_factor);
+    auto new_scale = AK::exp2(scale_factor);
+    m_editor->scale_centered(new_scale, raw_event.position());
 }
 
 GUI::Widget* ZoomTool::get_properties_widget()

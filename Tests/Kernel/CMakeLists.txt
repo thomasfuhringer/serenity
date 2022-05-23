@@ -1,6 +1,5 @@
 set(TEST_SOURCES
     bind-local-socket-to-symlink.cpp
-    bxvga-mmap-kernel-into-userspace.cpp
     crash-fcntl-invalid-cmd.cpp
     elf-execve-mmap-race.cpp
     elf-symbolication-kernel-read-exploit.cpp
@@ -15,6 +14,7 @@ set(TEST_SOURCES
     path-resolution-race.cpp
     pthread-cond-timedwait-example.cpp
     setpgid-across-sessions-without-leader.cpp
+    siginfo-example.cpp
     stress-truncate.cpp
     stress-writeread.cpp
     uaf-close-while-blocked-in-read.cpp
@@ -33,6 +33,7 @@ serenity_test("crash.cpp" Kernel MAIN_ALREADY_DEFINED)
 
 set(LIBTEST_BASED_SOURCES
     TestEFault.cpp
+    TestInvalidUIDSet.cpp
     TestKernelAlarm.cpp
     TestKernelFilePermissions.cpp
     TestKernelPledge.cpp
@@ -41,6 +42,8 @@ set(LIBTEST_BASED_SOURCES
     TestMunMap.cpp
     TestProcFS.cpp
     TestProcFSWrite.cpp
+    TestSigAltStack.cpp
+    TestSigWait.cpp
 )
 
 foreach(libtest_source IN LISTS LIBTEST_BASED_SOURCES)

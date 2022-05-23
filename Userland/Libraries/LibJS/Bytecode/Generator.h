@@ -10,6 +10,7 @@
 #include <AK/OwnPtr.h>
 #include <AK/SinglyLinkedList.h>
 #include <LibJS/Bytecode/BasicBlock.h>
+#include <LibJS/Bytecode/CodeGenerationError.h>
 #include <LibJS/Bytecode/Executable.h>
 #include <LibJS/Bytecode/IdentifierTable.h>
 #include <LibJS/Bytecode/Label.h>
@@ -23,7 +24,12 @@ namespace JS::Bytecode {
 
 class Generator {
 public:
-    static Executable generate(ASTNode const&, FunctionKind = FunctionKind::Regular);
+    enum class SurroundingScopeKind {
+        Global,
+        Function,
+        Block,
+    };
+    static CodeGenerationErrorOr<NonnullOwnPtr<Executable>> generate(ASTNode const&, FunctionKind = FunctionKind::Normal);
 
     Register allocate_register();
 
@@ -71,8 +77,9 @@ public:
         return *static_cast<OpType*>(slot);
     }
 
-    void emit_load_from_reference(JS::ASTNode const&);
-    void emit_store_to_reference(JS::ASTNode const&);
+    CodeGenerationErrorOr<void> emit_load_from_reference(JS::ASTNode const&);
+    CodeGenerationErrorOr<void> emit_store_to_reference(JS::ASTNode const&);
+    CodeGenerationErrorOr<void> emit_delete_reference(JS::ASTNode const&);
 
     void begin_continuable_scope(Label continue_target);
     void end_continuable_scope();
@@ -116,9 +123,79 @@ public:
     bool is_in_generator_function() const { return m_enclosing_function_kind == FunctionKind::Generator; }
     bool is_in_async_function() const { return m_enclosing_function_kind == FunctionKind::Async; }
 
+    enum class BindingMode {
+        Lexical,
+        Var,
+        Global,
+    };
+    struct LexicalScope {
+        SurroundingScopeKind kind;
+        BindingMode mode;
+        HashTable<IdentifierTableIndex> known_bindings;
+    };
+
+    void register_binding(IdentifierTableIndex identifier, BindingMode mode = BindingMode::Lexical)
+    {
+        m_variable_scopes.last_matching([&](auto& x) { return x.mode == BindingMode::Global || x.mode == mode; })->known_bindings.set(identifier);
+    }
+    bool has_binding(IdentifierTableIndex identifier, Optional<BindingMode> const& specific_binding_mode = {})
+    {
+        for (auto index = m_variable_scopes.size(); index > 0; --index) {
+            auto& scope = m_variable_scopes[index - 1];
+
+            if (scope.mode != BindingMode::Global && specific_binding_mode.value_or(scope.mode) != scope.mode)
+                continue;
+
+            if (scope.known_bindings.contains(identifier))
+                return true;
+        }
+        return false;
+    }
+
+    void begin_variable_scope(BindingMode mode = BindingMode::Lexical, SurroundingScopeKind kind = SurroundingScopeKind::Block);
+    void end_variable_scope();
+
+    enum class BlockBoundaryType {
+        Break,
+        Continue,
+        Unwind,
+        LeaveLexicalEnvironment,
+        LeaveVariableEnvironment,
+    };
+    template<typename OpType>
+    void perform_needed_unwinds(bool is_break_node = false) requires(OpType::IsTerminator)
+    {
+        Optional<BlockBoundaryType> boundary_to_stop_at;
+        if constexpr (IsSame<OpType, Bytecode::Op::Return> || IsSame<OpType, Bytecode::Op::Yield>)
+            VERIFY(!is_break_node);
+        else if constexpr (IsSame<OpType, Bytecode::Op::Throw>)
+            boundary_to_stop_at = BlockBoundaryType::Unwind;
+        else
+            boundary_to_stop_at = is_break_node ? BlockBoundaryType::Break : BlockBoundaryType::Continue;
+
+        for (size_t i = m_boundaries.size(); i > 0; --i) {
+            auto boundary = m_boundaries[i - 1];
+            if (boundary_to_stop_at.has_value() && boundary == *boundary_to_stop_at)
+                break;
+            if (boundary == BlockBoundaryType::Unwind)
+                emit<Bytecode::Op::LeaveUnwindContext>();
+            else if (boundary == BlockBoundaryType::LeaveLexicalEnvironment)
+                emit<Bytecode::Op::LeaveEnvironment>(Bytecode::Op::EnvironmentMode::Lexical);
+            else if (boundary == BlockBoundaryType::LeaveVariableEnvironment)
+                emit<Bytecode::Op::LeaveEnvironment>(Bytecode::Op::EnvironmentMode::Var);
+        }
+    }
+
+    void start_boundary(BlockBoundaryType type) { m_boundaries.append(type); }
+    void end_boundary(BlockBoundaryType type)
+    {
+        VERIFY(m_boundaries.last() == type);
+        m_boundaries.take_last();
+    }
+
 private:
     Generator();
-    ~Generator();
+    ~Generator() = default;
 
     void grow(size_t);
     void* next_slot();
@@ -130,9 +207,11 @@ private:
 
     u32 m_next_register { 2 };
     u32 m_next_block { 1 };
-    FunctionKind m_enclosing_function_kind { FunctionKind::Regular };
+    FunctionKind m_enclosing_function_kind { FunctionKind::Normal };
     Vector<Label> m_continuable_scopes;
     Vector<Label> m_breakable_scopes;
+    Vector<LexicalScope> m_variable_scopes;
+    Vector<BlockBoundaryType> m_boundaries;
 };
 
 }

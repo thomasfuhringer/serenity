@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2020, the SerenityOS developers.
+ * Copyright (c) 2020-2022, the SerenityOS developers.
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -62,7 +62,7 @@ constexpr WriterBehavior default_behaviors()
 template<typename ContainerType, typename HeaderType = Vector<StringView>>
 class XSV {
 public:
-    XSV(OutputStream& output, const ContainerType& data, const WriterTraits& traits, const HeaderType& headers = {}, WriterBehavior behaviors = default_behaviors())
+    XSV(OutputStream& output, ContainerType const& data, WriterTraits const& traits, HeaderType const& headers = {}, WriterBehavior behaviors = default_behaviors())
         : m_data(data)
         , m_traits(traits)
         , m_behaviors(behaviors)
@@ -75,7 +75,7 @@ public:
         generate();
     }
 
-    virtual ~XSV() { }
+    virtual ~XSV() = default;
 
     bool has_error() const { return m_error != WriteError::None; }
     WriteError error() const { return m_error; }
@@ -188,10 +188,10 @@ private:
             set_error(WriteError::InternalError);
     }
 
-    const ContainerType& m_data;
-    const WriterTraits& m_traits;
+    ContainerType const& m_data;
+    WriterTraits const& m_traits;
     WriterBehavior m_behaviors;
-    const HeaderType& m_names;
+    HeaderType const& m_names;
     WriteError m_error { WriteError::None };
     OutputStream& m_output;
 };

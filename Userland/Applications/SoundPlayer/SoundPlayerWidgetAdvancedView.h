@@ -11,8 +11,9 @@
 #include "PlaybackManager.h"
 #include "Player.h"
 #include "VisualizationWidget.h"
+#include <AK/FixedArray.h>
 #include <AK/NonnullRefPtr.h>
-#include <LibAudio/ClientConnection.h>
+#include <LibAudio/ConnectionFromClient.h>
 #include <LibGUI/Splitter.h>
 #include <LibGUI/Widget.h>
 
@@ -32,6 +33,8 @@ public:
         auto new_visualization = T::construct();
         m_player_view->insert_child_before(new_visualization, *static_cast<Core::Object*>(m_playback_progress_slider.ptr()));
         m_visualization = new_visualization;
+        if (!loaded_filename().is_empty())
+            m_visualization->start_new_file(loaded_filename());
     }
 
     virtual void play_state_changed(PlayState) override;
@@ -42,14 +45,15 @@ public:
     virtual void playlist_loaded(StringView, bool) override;
     virtual void audio_load_error(StringView path, StringView error_reason) override;
     virtual void volume_changed(double) override;
+    virtual void mute_changed(bool) override;
     virtual void total_samples_changed(int) override;
-    virtual void sound_buffer_played(RefPtr<Audio::Buffer>, int sample_rate, int samples_played) override;
+    virtual void sound_buffer_played(FixedArray<Audio::Sample> const&, int sample_rate, int samples_played) override;
 
 protected:
     void keydown_event(GUI::KeyEvent&) override;
 
 private:
-    SoundPlayerWidgetAdvancedView(GUI::Window&, Audio::ClientConnection&);
+    SoundPlayerWidgetAdvancedView(GUI::Window&, Audio::ConnectionFromClient&);
 
     void sync_previous_next_buttons();
 

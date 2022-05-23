@@ -7,6 +7,7 @@
 #include <AK/GenericLexer.h>
 #include <AK/Singleton.h>
 #include <AK/StringBuilder.h>
+#include <Kernel/API/POSIX/errno.h>
 #include <Kernel/Debug.h>
 #include <Kernel/Devices/BlockDevice.h>
 #include <Kernel/Devices/DeviceManagement.h>
@@ -19,12 +20,10 @@
 #include <Kernel/KSyms.h>
 #include <Kernel/Process.h>
 #include <Kernel/Sections.h>
-#include <LibC/errno_numbers.h>
 
 namespace Kernel {
 
 static Singleton<VirtualFileSystem> s_the;
-static constexpr int symlink_recursion_limit { 5 }; // FIXME: increase?
 static constexpr int root_mount_flags = MS_NODEV | MS_NOSUID | MS_RDONLY;
 
 UNMAP_AFTER_INIT void VirtualFileSystem::initialize()
@@ -41,9 +40,7 @@ UNMAP_AFTER_INIT VirtualFileSystem::VirtualFileSystem()
 {
 }
 
-UNMAP_AFTER_INIT VirtualFileSystem::~VirtualFileSystem()
-{
-}
+UNMAP_AFTER_INIT VirtualFileSystem::~VirtualFileSystem() = default;
 
 InodeIdentifier VirtualFileSystem::root_inode_id() const
 {
@@ -53,7 +50,7 @@ InodeIdentifier VirtualFileSystem::root_inode_id() const
 
 ErrorOr<void> VirtualFileSystem::mount(FileSystem& fs, Custody& mount_point, int flags)
 {
-    return m_mounts.with_exclusive([&](auto& mounts) -> ErrorOr<void> {
+    return m_mounts.with([&](auto& mounts) -> ErrorOr<void> {
         auto& inode = mount_point.inode();
         dbgln("VirtualFileSystem: Mounting {} at inode {} with flags {}",
             fs.class_name(),
@@ -68,7 +65,7 @@ ErrorOr<void> VirtualFileSystem::mount(FileSystem& fs, Custody& mount_point, int
 
 ErrorOr<void> VirtualFileSystem::bind_mount(Custody& source, Custody& mount_point, int flags)
 {
-    return m_mounts.with_exclusive([&](auto& mounts) -> ErrorOr<void> {
+    return m_mounts.with([&](auto& mounts) -> ErrorOr<void> {
         dbgln("VirtualFileSystem: Bind-mounting inode {} at inode {}", source.inode().identifier(), mount_point.inode().identifier());
         // FIXME: check that this is not already a mount point
         Mount mount { source.inode(), mount_point, flags };
@@ -93,7 +90,7 @@ ErrorOr<void> VirtualFileSystem::unmount(Inode& guest_inode)
 {
     dbgln("VirtualFileSystem: unmount called with inode {}", guest_inode.identifier());
 
-    return m_mounts.with_exclusive([&](auto& mounts) -> ErrorOr<void> {
+    return m_mounts.with([&](auto& mounts) -> ErrorOr<void> {
         for (size_t i = 0; i < mounts.size(); ++i) {
             auto& mount = mounts[i];
             if (&mount.guest() != &guest_inode)
@@ -127,7 +124,7 @@ ErrorOr<void> VirtualFileSystem::mount_root(FileSystem& fs)
     auto pseudo_path = TRY(static_cast<FileBackedFileSystem&>(fs).file_description().pseudo_path());
     dmesgln("VirtualFileSystem: mounted root from {} ({})", fs.class_name(), pseudo_path);
 
-    m_mounts.with_exclusive([&](auto& mounts) {
+    m_mounts.with([&](auto& mounts) {
         mounts.append(move(mount));
     });
 
@@ -137,7 +134,7 @@ ErrorOr<void> VirtualFileSystem::mount_root(FileSystem& fs)
 
 auto VirtualFileSystem::find_mount_for_host(InodeIdentifier id) -> Mount*
 {
-    return m_mounts.with_exclusive([&](auto& mounts) -> Mount* {
+    return m_mounts.with([&](auto& mounts) -> Mount* {
         for (auto& mount : mounts) {
             if (mount.host() && mount.host()->identifier() == id)
                 return &mount;
@@ -148,7 +145,7 @@ auto VirtualFileSystem::find_mount_for_host(InodeIdentifier id) -> Mount*
 
 auto VirtualFileSystem::find_mount_for_guest(InodeIdentifier id) -> Mount*
 {
-    return m_mounts.with_exclusive([&](auto& mounts) -> Mount* {
+    return m_mounts.with([&](auto& mounts) -> Mount* {
         for (auto& mount : mounts) {
             if (mount.guest().identifier() == id)
                 return &mount;
@@ -196,6 +193,25 @@ ErrorOr<void> VirtualFileSystem::utime(StringView path, Custody& base, time_t at
 
     TRY(inode.set_atime(atime));
     TRY(inode.set_mtime(mtime));
+    return {};
+}
+
+ErrorOr<void> VirtualFileSystem::utimensat(StringView path, Custody& base, timespec const& atime, timespec const& mtime, int options)
+{
+    auto custody = TRY(resolve_path(path, base, nullptr, options));
+    auto& inode = custody->inode();
+    auto& current_process = Process::current();
+    if (!current_process.is_superuser() && inode.metadata().uid != current_process.euid())
+        return EACCES;
+    if (custody->is_readonly())
+        return EROFS;
+
+    // NOTE: A standard ext2 inode cannot store nanosecond timestamps.
+    if (atime.tv_nsec != UTIME_OMIT)
+        TRY(inode.set_atime(atime.tv_sec));
+    if (mtime.tv_nsec != UTIME_OMIT)
+        TRY(inode.set_mtime(mtime.tv_sec));
+
     return {};
 }
 
@@ -248,9 +264,6 @@ ErrorOr<NonnullRefPtr<OpenFileDescription>> VirtualFileSystem::open(StringView p
             return EACCES;
     }
 
-    if (auto preopen_fd = inode.preopen_fd())
-        return *preopen_fd;
-
     if (metadata.is_fifo()) {
         auto fifo = TRY(inode.fifo());
         if (options & O_WRONLY) {
@@ -282,8 +295,7 @@ ErrorOr<NonnullRefPtr<OpenFileDescription>> VirtualFileSystem::open(StringView p
         return description;
     }
 
-    // Check for read-only FS. Do this after handling preopen FD and devices,
-    // but before modifying the inode in any way.
+    // Check for read-only FS. Do this after handling devices, but before modifying the inode in any way.
     if ((options & O_WRONLY) && custody.is_readonly())
         return EROFS;
 
@@ -319,7 +331,7 @@ ErrorOr<void> VirtualFileSystem::mknod(StringView path, mode_t mode, dev_t dev, 
 
     auto basename = KLexicalPath::basename(path);
     dbgln_if(VFS_DEBUG, "VirtualFileSystem::mknod: '{}' mode={} dev={} in {}", basename, mode, dev, parent_inode.identifier());
-    TRY(parent_inode.create_child(basename, mode, dev, current_process.euid(), current_process.egid()));
+    (void)TRY(parent_inode.create_child(basename, mode, dev, current_process.euid(), current_process.egid()));
     return {};
 }
 
@@ -368,7 +380,9 @@ ErrorOr<void> VirtualFileSystem::mkdir(StringView path, mode_t mode, Custody& ba
     }
 
     RefPtr<Custody> parent_custody;
-    auto result = resolve_path(path, base, &parent_custody);
+    // FIXME: The errors returned by resolve_path_without_veil can leak information about paths that are not unveiled,
+    //        e.g. when the error is EACCESS or similar.
+    auto result = resolve_path_without_veil(path, base, &parent_custody);
     if (!result.is_error())
         return EEXIST;
     else if (!parent_custody)
@@ -376,6 +390,7 @@ ErrorOr<void> VirtualFileSystem::mkdir(StringView path, mode_t mode, Custody& ba
     // NOTE: If resolve_path fails with a non-null parent custody, the error should be ENOENT.
     VERIFY(result.error().code() == ENOENT);
 
+    TRY(validate_path_against_process_veil(*parent_custody, O_CREAT));
     auto& parent_inode = parent_custody->inode();
     auto& current_process = Process::current();
     if (!parent_inode.metadata().may_write(current_process))
@@ -385,7 +400,7 @@ ErrorOr<void> VirtualFileSystem::mkdir(StringView path, mode_t mode, Custody& ba
 
     auto basename = KLexicalPath::basename(path);
     dbgln_if(VFS_DEBUG, "VirtualFileSystem::mkdir: '{}' in {}", basename, parent_inode.identifier());
-    TRY(parent_inode.create_child(basename, S_IFDIR | mode, 0, current_process.euid(), current_process.egid()));
+    (void)TRY(parent_inode.create_child(basename, S_IFDIR | mode, 0, current_process.euid(), current_process.egid()));
     return {};
 }
 
@@ -439,9 +454,9 @@ ErrorOr<void> VirtualFileSystem::chmod(Custody& custody, mode_t mode)
     return inode.chmod(mode);
 }
 
-ErrorOr<void> VirtualFileSystem::chmod(StringView path, mode_t mode, Custody& base)
+ErrorOr<void> VirtualFileSystem::chmod(StringView path, mode_t mode, Custody& base, int options)
 {
-    auto custody = TRY(resolve_path(path, base));
+    auto custody = TRY(resolve_path(path, base, nullptr, options));
     return chmod(custody, mode);
 }
 
@@ -569,13 +584,13 @@ ErrorOr<void> VirtualFileSystem::chown(Custody& custody, UserID a_uid, GroupID a
     return inode.chown(new_uid, new_gid);
 }
 
-ErrorOr<void> VirtualFileSystem::chown(StringView path, UserID a_uid, GroupID a_gid, Custody& base)
+ErrorOr<void> VirtualFileSystem::chown(StringView path, UserID a_uid, GroupID a_gid, Custody& base, int options)
 {
-    auto custody = TRY(resolve_path(path, base));
+    auto custody = TRY(resolve_path(path, base, nullptr, options));
     return chown(custody, a_uid, a_gid);
 }
 
-static bool hard_link_allowed(const Inode& inode)
+static bool hard_link_allowed(Inode const& inode)
 {
     auto metadata = inode.metadata();
 
@@ -677,7 +692,7 @@ ErrorOr<void> VirtualFileSystem::symlink(StringView target, StringView linkpath,
 
     auto inode = TRY(parent_inode.create_child(basename, S_IFLNK | 0644, 0, current_process.euid(), current_process.egid()));
 
-    auto target_buffer = UserOrKernelBuffer::for_kernel_buffer(const_cast<u8*>((const u8*)target.characters_without_null_termination()));
+    auto target_buffer = UserOrKernelBuffer::for_kernel_buffer(const_cast<u8*>((u8 const*)target.characters_without_null_termination()));
     TRY(inode->write_bytes(0, target.length(), target_buffer, nullptr));
     return {};
 }
@@ -727,13 +742,12 @@ ErrorOr<void> VirtualFileSystem::rmdir(StringView path, Custody& base)
     return parent_inode.remove_child(KLexicalPath::basename(path));
 }
 
-void VirtualFileSystem::for_each_mount(Function<IterationDecision(Mount const&)> callback) const
+ErrorOr<void> VirtualFileSystem::for_each_mount(Function<ErrorOr<void>(Mount const&)> callback) const
 {
-    m_mounts.with_shared([&](auto& mounts) {
-        for (auto& mount : mounts) {
-            if (callback(mount) == IterationDecision::Break)
-                break;
-        }
+    return m_mounts.with([&](auto& mounts) -> ErrorOr<void> {
+        for (auto& mount : mounts)
+            TRY(callback(mount));
+        return {};
     });
 }
 
@@ -751,10 +765,10 @@ UnveilNode const& VirtualFileSystem::find_matching_unveiled_path(StringView path
 {
     auto& current_process = Process::current();
     VERIFY(current_process.veil_state() != VeilState::None);
-    auto& unveil_root = current_process.unveiled_paths();
-
-    auto path_parts = KLexicalPath::parts(path);
-    return unveil_root.traverse_until_last_accessible_node(path_parts.begin(), path_parts.end());
+    return current_process.unveil_data().with([&](auto const& unveil_data) -> UnveilNode const& {
+        auto path_parts = KLexicalPath::parts(path);
+        return unveil_data.paths.traverse_until_last_accessible_node(path_parts.begin(), path_parts.end());
+    });
 }
 
 ErrorOr<void> VirtualFileSystem::validate_path_against_process_veil(Custody const& custody, int options)
@@ -775,6 +789,13 @@ ErrorOr<void> VirtualFileSystem::validate_path_against_process_veil(StringView p
     VERIFY(path.starts_with('/'));
     VERIFY(!path.contains("/../"sv) && !path.ends_with("/.."sv));
     VERIFY(!path.contains("/./"sv) && !path.ends_with("/."sv));
+
+#ifdef SKIP_PATH_VALIDATION_FOR_COVERAGE_INSTRUMENTATION
+    // Skip veil validation against profile data when coverage is enabled for userspace
+    // so that all processes can write out coverage data even with veils in place
+    if (KLexicalPath::basename(path).ends_with(".profraw"sv))
+        return {};
+#endif
 
     auto& unveiled_path = find_matching_unveiled_path(path);
     if (unveiled_path.permissions() == UnveilAccess::None) {
@@ -832,12 +853,18 @@ ErrorOr<void> VirtualFileSystem::validate_path_against_process_veil(StringView p
 
 ErrorOr<NonnullRefPtr<Custody>> VirtualFileSystem::resolve_path(StringView path, Custody& base, RefPtr<Custody>* out_parent, int options, int symlink_recursion_level)
 {
+    // FIXME: The errors returned by resolve_path_without_veil can leak information about paths that are not unveiled,
+    //        e.g. when the error is EACCESS or similar.
     auto custody = TRY(resolve_path_without_veil(path, base, out_parent, options, symlink_recursion_level));
-    TRY(validate_path_against_process_veil(*custody, options));
+    if (auto result = validate_path_against_process_veil(*custody, options); result.is_error()) {
+        if (out_parent)
+            out_parent->clear();
+        return result.release_error();
+    }
     return custody;
 }
 
-static bool safe_to_follow_symlink(const Inode& inode, const InodeMetadata& parent_metadata)
+static bool safe_to_follow_symlink(Inode const& inode, InodeMetadata const& parent_metadata)
 {
     auto metadata = inode.metadata();
     if (Process::current().euid() == metadata.uid)
@@ -870,7 +897,7 @@ ErrorOr<NonnullRefPtr<Custody>> VirtualFileSystem::resolve_path_without_veil(Str
         if (path_lexer.is_eof())
             extra_iteration = false;
         auto part = path_lexer.consume_until('/');
-        path_lexer.consume_specific('/');
+        path_lexer.ignore();
 
         Custody& parent = custody;
         auto parent_metadata = parent.inode().metadata();
@@ -936,10 +963,10 @@ ErrorOr<NonnullRefPtr<Custody>> VirtualFileSystem::resolve_path_without_veil(Str
             // We prepend a "." to it to ensure that it's not empty and that
             // any initial slashes it might have get interpreted properly.
             StringBuilder remaining_path;
-            remaining_path.append('.');
-            remaining_path.append(path.substring_view_starting_after_substring(part));
+            TRY(remaining_path.try_append('.'));
+            TRY(remaining_path.try_append(path.substring_view_starting_after_substring(part)));
 
-            return resolve_path_without_veil(remaining_path.to_string(), symlink_target, out_parent, options, symlink_recursion_level + 1);
+            return resolve_path_without_veil(remaining_path.string_view(), symlink_target, out_parent, options, symlink_recursion_level + 1);
         }
     }
 

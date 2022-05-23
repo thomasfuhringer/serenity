@@ -12,6 +12,8 @@
 #include <LibCore/ArgsParser.h>
 #include <LibCore/EventLoop.h>
 #include <LibCore/File.h>
+#include <LibCore/System.h>
+#include <LibMain/Main.h>
 #include <LibProtocol/Request.h>
 #include <LibProtocol/RequestClient.h>
 #include <ctype.h>
@@ -143,11 +145,13 @@ private:
     ByteBuffer m_buffer;
 };
 
-int main(int argc, char** argv)
+ErrorOr<int> serenity_main(Main::Arguments arguments)
 {
-    const char* url_str = nullptr;
+    char const* url_str = nullptr;
     bool save_at_provided_name = false;
-    const char* data = nullptr;
+    bool should_follow_url = false;
+    char const* data = nullptr;
+    StringView proxy_spec;
     String method = "GET";
     HashMap<String, String, CaseInsensitiveStringTraits> request_headers;
 
@@ -157,6 +161,7 @@ int main(int argc, char** argv)
         "and thus supports at least http, https, and gemini.");
     args_parser.add_option(save_at_provided_name, "Write to a file named as the remote file", nullptr, 'O');
     args_parser.add_option(data, "(HTTP only) Send the provided data via an HTTP POST request", "data", 'd', "data");
+    args_parser.add_option(should_follow_url, "(HTTP only) Follow the Location header if a 3xx status is encountered", "follow", 'l');
     args_parser.add_option(Core::ArgsParser::Option {
         .requires_argument = true,
         .help_string = "Add a header entry to the request",
@@ -171,8 +176,9 @@ int main(int argc, char** argv)
             request_headers.set(header.substring_view(0, split.value()), header.substring_view(split.value() + 1));
             return true;
         } });
+    args_parser.add_option(proxy_spec, "Specify a proxy server to use for this request (proto://ip:port)", "proxy", 'p', "proxy");
     args_parser.add_positional_argument(url_str, "URL to download from", "url");
-    args_parser.parse(argc, argv);
+    args_parser.parse(arguments);
 
     if (data) {
         method = "POST";
@@ -185,96 +191,132 @@ int main(int argc, char** argv)
         return 1;
     }
 
+    Core::ProxyData proxy_data {};
+    if (!proxy_spec.is_empty())
+        proxy_data = TRY(Core::ProxyData::parse_url(proxy_spec));
+
     Core::EventLoop loop;
-    auto protocol_client = Protocol::RequestClient::construct();
-
-    auto request = protocol_client->start_request(method, url, request_headers, data ? StringView { data }.bytes() : ReadonlyBytes {});
-    if (!request) {
-        warnln("Failed to start request for '{}'", url_str);
-        return 1;
-    }
-
-    u32 previous_downloaded_size { 0 };
-    u32 previous_midpoint_downloaded_size { 0 };
-    timeval prev_time, prev_midpoint_time, current_time, time_diff;
-    static constexpr auto download_speed_rolling_average_time_in_ms = 4000;
-    gettimeofday(&prev_time, nullptr);
-
     bool received_actual_headers = false;
+    bool should_save_stream_data = false;
+    bool following_url = false;
 
-    request->on_progress = [&](Optional<u32> maybe_total_size, u32 downloaded_size) {
-        warn("\r\033[2K");
-        if (maybe_total_size.has_value()) {
-            warn("\033]9;{};{};\033\\", downloaded_size, maybe_total_size.value());
-            warn("Download progress: {} / {}", human_readable_size(downloaded_size), human_readable_size(maybe_total_size.value()));
-        } else {
-            warn("Download progress: {} / ???", human_readable_size(downloaded_size));
+    u32 previous_downloaded_size = 0;
+    u32 const report_time_in_ms = 100;
+    u32 const speed_update_time_in_ms = 4000;
+
+    timeval previous_time, current_time, time_diff;
+    gettimeofday(&previous_time, nullptr);
+
+    RefPtr<Protocol::Request> request;
+    auto protocol_client = TRY(Protocol::RequestClient::try_create());
+    auto output_stream = ConditionalOutputFileStream { [&] { return should_save_stream_data; }, stdout };
+
+    Function<void()> setup_request = [&] {
+        if (!request) {
+            warnln("Failed to start request for '{}'", url_str);
+            exit(1);
         }
 
-        gettimeofday(&current_time, nullptr);
-        timersub(&current_time, &prev_time, &time_diff);
+        request->on_progress = [&](Optional<u32> maybe_total_size, u32 downloaded_size) {
+            gettimeofday(&current_time, nullptr);
+            timersub(&current_time, &previous_time, &time_diff);
+            auto time_diff_ms = time_diff.tv_sec * 1000 + time_diff.tv_usec / 1000;
+            if (time_diff_ms < report_time_in_ms)
+                return;
 
-        auto time_diff_ms = time_diff.tv_sec * 1000 + time_diff.tv_usec / 1000;
-        auto size_diff = downloaded_size - previous_downloaded_size;
+            warn("\r\033[2K");
+            if (maybe_total_size.has_value()) {
+                warn("\033]9;{};{};\033\\", downloaded_size, maybe_total_size.value());
+                warn("Download progress: {} / {}", human_readable_size(downloaded_size), human_readable_size(maybe_total_size.value()));
+            } else {
+                warn("Download progress: {} / ???", human_readable_size(downloaded_size));
+            }
 
-        warn(" at {}/s", human_readable_size(((float)size_diff / (float)time_diff_ms) * 1000));
+            auto size_diff = downloaded_size - previous_downloaded_size;
+            if (time_diff_ms > speed_update_time_in_ms) {
+                previous_time = current_time;
+                previous_downloaded_size = downloaded_size;
+            }
 
-        if (time_diff_ms >= download_speed_rolling_average_time_in_ms) {
-            previous_downloaded_size = previous_midpoint_downloaded_size;
-            prev_time = prev_midpoint_time;
-        } else if (time_diff_ms >= download_speed_rolling_average_time_in_ms / 2) {
-            previous_midpoint_downloaded_size = downloaded_size;
-            prev_midpoint_time = current_time;
-        }
-    };
-
-    if (save_at_provided_name) {
+            warn(" at {}/s", human_readable_size(((float)size_diff / (float)time_diff_ms) * 1000));
+        };
         request->on_headers_received = [&](auto& response_headers, auto status_code) {
             if (received_actual_headers)
                 return;
             dbgln("Received headers! response code = {}", status_code.value_or(0));
             received_actual_headers = true; // And not trailers!
-            String output_name;
-            if (auto content_disposition = response_headers.get("Content-Disposition"); content_disposition.has_value()) {
-                auto& value = content_disposition.value();
-                ContentDispositionParser parser(value);
-                output_name = parser.filename();
+            should_save_stream_data = true;
+
+            if (!following_url && save_at_provided_name) {
+                String output_name;
+                if (auto content_disposition = response_headers.get("Content-Disposition"); content_disposition.has_value()) {
+                    auto& value = content_disposition.value();
+                    ContentDispositionParser parser(value);
+                    output_name = parser.filename();
+                }
+
+                if (output_name.is_empty())
+                    output_name = url.path();
+
+                LexicalPath path { output_name };
+                output_name = path.basename();
+
+                // The URL didn't have a name component, e.g. 'serenityos.org'
+                if (output_name.is_empty() || output_name == "/") {
+                    int i = -1;
+                    do {
+                        output_name = url.host();
+                        if (i > -1)
+                            output_name = String::formatted("{}.{}", output_name, i);
+                        ++i;
+                    } while (Core::File::exists(output_name));
+                }
+
+                if (freopen(output_name.characters(), "w", stdout) == nullptr) {
+                    perror("freopen");
+                    loop.quit(1);
+                    return;
+                }
             }
 
-            if (output_name.is_empty())
-                output_name = url.path();
+            auto status_code_value = status_code.value_or(0);
+            if (should_follow_url && status_code_value >= 300 && status_code_value < 400) {
+                if (auto location = response_headers.get("Location"); location.has_value()) {
+                    auto was_following_url = following_url;
+                    following_url = true;
+                    received_actual_headers = false;
+                    should_save_stream_data = false;
+                    request->on_finish = nullptr;
+                    request->on_headers_received = nullptr;
+                    request->on_progress = nullptr;
+                    request->stop();
 
-            LexicalPath path { output_name };
-            output_name = path.basename();
-
-            // The URL didn't have a name component, e.g. 'serenityos.org'
-            if (output_name.is_empty() || output_name == "/") {
-                int i = -1;
-                do {
-                    output_name = url.host();
-                    if (i > -1)
-                        output_name = String::formatted("{}.{}", output_name, i);
-                    ++i;
-                } while (Core::File::exists(output_name));
-            }
-
-            if (freopen(output_name.characters(), "w", stdout) == nullptr) {
-                perror("freopen");
-                loop.quit(1);
-                return;
+                    Core::deferred_invoke([&, was_following_url, url = location.value()] {
+                        warnln("{}Following to {}", was_following_url ? "" : "\n", url);
+                        request = protocol_client->start_request(method, url, request_headers, ReadonlyBytes {}, proxy_data);
+                        setup_request();
+                    });
+                }
+            } else {
+                following_url = false;
             }
         };
-    }
-    request->on_finish = [&](bool success, auto) {
-        warn("\033]9;-1;\033\\");
-        warnln();
-        if (!success)
-            warnln("Request failed :(");
-        loop.quit(0);
+        request->on_finish = [&](bool success, auto) {
+            if (following_url)
+                return;
+
+            warn("\033]9;-1;\033\\");
+            warnln();
+            if (!success)
+                warnln("Request failed :(");
+            loop.quit(0);
+        };
+
+        request->stream_into(output_stream);
     };
 
-    auto output_stream = ConditionalOutputFileStream { [&] { return save_at_provided_name ? received_actual_headers : true; }, stdout };
-    request->stream_into(output_stream);
+    request = protocol_client->start_request(method, url, request_headers, data ? StringView { data }.bytes() : ReadonlyBytes {}, proxy_data);
+    setup_request();
 
     dbgln("started request with id {}", request->id());
 

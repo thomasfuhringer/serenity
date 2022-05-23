@@ -8,9 +8,10 @@
 
 #include <AK/Forward.h>
 #include <AK/NonnullRefPtr.h>
+#include <AK/Utf8View.h>
 #include <AK/Vector.h>
 #include <LibGfx/Color.h>
-#include <LibGfx/FontDatabase.h>
+#include <LibGfx/Font/FontDatabase.h>
 #include <LibGfx/Forward.h>
 #include <LibGfx/Point.h>
 #include <LibGfx/Rect.h>
@@ -25,7 +26,7 @@ namespace Gfx {
 class Painter {
 public:
     explicit Painter(Gfx::Bitmap&);
-    ~Painter();
+    ~Painter() = default;
 
     enum class LineStyle {
         Solid,
@@ -56,9 +57,10 @@ public:
     void draw_scaled_bitmap(IntRect const& dst_rect, Gfx::Bitmap const&, FloatRect const& src_rect, float opacity = 1.0f, ScalingMode = ScalingMode::NearestNeighbor);
     void draw_triangle(IntPoint const&, IntPoint const&, IntPoint const&, Color);
     void draw_ellipse_intersecting(IntRect const&, Color, int thickness = 1);
-    void set_pixel(IntPoint const&, Color);
-    void set_pixel(int x, int y, Color color) { set_pixel({ x, y }, color); }
+    void set_pixel(IntPoint const&, Color, bool blend = false);
+    void set_pixel(int x, int y, Color color, bool blend = false) { set_pixel({ x, y }, color, blend); }
     void draw_line(IntPoint const&, IntPoint const&, Color, int thickness = 1, LineStyle style = LineStyle::Solid, Color alternate_color = Color::Transparent);
+    void draw_triangle_wave(IntPoint const&, IntPoint const&, Color color, int amplitude, int thickness = 1);
     void draw_quadratic_bezier_curve(IntPoint const& control_point, IntPoint const&, IntPoint const&, Color, int thickness = 1, LineStyle style = LineStyle::Solid);
     void draw_cubic_bezier_curve(IntPoint const& control_point_0, IntPoint const& control_point_1, IntPoint const&, IntPoint const&, Color, int thickness = 1, LineStyle style = LineStyle::Solid);
     void draw_elliptical_arc(IntPoint const& p1, IntPoint const& p2, IntPoint const& center, FloatPoint const& radii, float x_axis_rotation, float theta_1, float theta_delta, Color, int thickness = 1, LineStyle style = LineStyle::Solid);
@@ -74,15 +76,19 @@ public:
     void draw_text(IntRect const&, StringView, TextAlignment = TextAlignment::TopLeft, Color = Color::Black, TextElision = TextElision::None, TextWrapping = TextWrapping::DontWrap);
     void draw_text(IntRect const&, Utf32View const&, Font const&, TextAlignment = TextAlignment::TopLeft, Color = Color::Black, TextElision = TextElision::None, TextWrapping = TextWrapping::DontWrap);
     void draw_text(IntRect const&, Utf32View const&, TextAlignment = TextAlignment::TopLeft, Color = Color::Black, TextElision = TextElision::None, TextWrapping = TextWrapping::DontWrap);
-    void draw_text(Function<void(IntRect const&, u32)>, IntRect const&, StringView, Font const&, TextAlignment = TextAlignment::TopLeft, TextElision = TextElision::None, TextWrapping = TextWrapping::DontWrap);
-    void draw_text(Function<void(IntRect const&, u32)>, IntRect const&, Utf8View const&, Font const&, TextAlignment = TextAlignment::TopLeft, TextElision = TextElision::None, TextWrapping = TextWrapping::DontWrap);
-    void draw_text(Function<void(IntRect const&, u32)>, IntRect const&, Utf32View const&, Font const&, TextAlignment = TextAlignment::TopLeft, TextElision = TextElision::None, TextWrapping = TextWrapping::DontWrap);
+    void draw_text(Function<void(IntRect const&, Utf8CodePointIterator&)>, IntRect const&, StringView, Font const&, TextAlignment = TextAlignment::TopLeft, TextElision = TextElision::None, TextWrapping = TextWrapping::DontWrap);
+    void draw_text(Function<void(IntRect const&, Utf8CodePointIterator&)>, IntRect const&, Utf8View const&, Font const&, TextAlignment = TextAlignment::TopLeft, TextElision = TextElision::None, TextWrapping = TextWrapping::DontWrap);
+    void draw_text(Function<void(IntRect const&, Utf8CodePointIterator&)>, IntRect const&, Utf32View const&, Font const&, TextAlignment = TextAlignment::TopLeft, TextElision = TextElision::None, TextWrapping = TextWrapping::DontWrap);
     void draw_ui_text(Gfx::IntRect const&, StringView, Gfx::Font const&, TextAlignment, Gfx::Color);
     void draw_glyph(IntPoint const&, u32, Color);
     void draw_glyph(IntPoint const&, u32, Font const&, Color);
     void draw_emoji(IntPoint const&, Gfx::Bitmap const&, Font const&);
-    void draw_glyph_or_emoji(IntPoint const&, u32 code_point, Font const&, Color);
+    void draw_glyph_or_emoji(IntPoint const&, u32, Font const&, Color);
+    void draw_glyph_or_emoji(IntPoint const&, Utf8CodePointIterator&, Font const&, Color);
     void draw_circle_arc_intersecting(IntRect const&, IntPoint const&, int radius, Color, int thickness);
+
+    // Streamlined text drawing routine that does no wrapping/elision/alignment.
+    void draw_text_run(FloatPoint const& baseline_start, Utf8View const&, Font const&, Color);
 
     enum class CornerOrientation {
         TopLeft,
@@ -142,11 +148,12 @@ public:
 
     IntRect clip_rect() const { return state().clip_rect; }
 
+    int scale() const { return state().scale; }
+
 protected:
     IntPoint translation() const { return state().translation; }
     IntRect to_physical(IntRect const& r) const { return r.translated(translation()) * scale(); }
     IntPoint to_physical(IntPoint const& p) const { return p.translated(translation()) * scale(); }
-    int scale() const { return state().scale; }
     void set_physical_pixel_with_draw_op(u32& pixel, Color const&);
     void fill_physical_scanline_with_draw_op(int y, int x, int width, Color const& color);
     void fill_rect_with_draw_op(IntRect const&, Color);

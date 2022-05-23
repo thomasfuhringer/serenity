@@ -5,7 +5,7 @@
  */
 
 #include "SpiceAgent.h"
-#include "ClipboardServerConnection.h"
+#include "ConnectionToClipboardServer.h"
 #include <AK/String.h>
 #include <LibC/memory.h>
 #include <LibC/unistd.h>
@@ -16,7 +16,7 @@
 #include <LibGfx/PNGLoader.h>
 #include <LibGfx/PNGWriter.h>
 
-SpiceAgent::SpiceAgent(int fd, ClipboardServerConnection& connection)
+SpiceAgent::SpiceAgent(int fd, ConnectionToClipboardServer& connection)
     : m_fd(fd)
     , m_clipboard_connection(connection)
 {
@@ -41,7 +41,7 @@ SpiceAgent::SpiceAgent(int fd, ClipboardServerConnection& connection)
     send_message(buffer);
 }
 
-Optional<SpiceAgent::ClipboardType> SpiceAgent::mime_type_to_clipboard_type(const String& mime)
+Optional<SpiceAgent::ClipboardType> SpiceAgent::mime_type_to_clipboard_type(String const& mime)
 {
     if (mime == "text/plain")
         return ClipboardType::Text;
@@ -59,7 +59,7 @@ void SpiceAgent::on_message_received()
 {
     ChunkHeader header {};
     read_n(&header, sizeof(header));
-    auto buffer = ByteBuffer::create_uninitialized(header.size).release_value(); // FIXME: Handle possible OOM situation.
+    auto buffer = ByteBuffer::create_uninitialized(header.size).release_value_but_fixme_should_propagate_errors(); // FIXME: Handle possible OOM situation.
     read_n(buffer.data(), buffer.size());
     auto* message = reinterpret_cast<Message*>(buffer.data());
     switch (message->type) {
@@ -118,9 +118,9 @@ void SpiceAgent::on_message_received()
     case (u32)MessageType::Clipboard: {
         auto* clipboard_message = reinterpret_cast<Clipboard*>(message->data);
         auto type = (ClipboardType)clipboard_message->type;
-        auto data_buffer = ByteBuffer::create_uninitialized(message->size - sizeof(u32)).release_value(); // FIXME: Handle possible OOM situation.
+        auto data_buffer = ByteBuffer::create_uninitialized(message->size - sizeof(u32)).release_value_but_fixme_should_propagate_errors(); // FIXME: Handle possible OOM situation.
 
-        const auto total_bytes = message->size - sizeof(Clipboard);
+        auto const total_bytes = message->size - sizeof(Clipboard);
         auto bytes_copied = header.size - sizeof(Message) - sizeof(Clipboard);
         memcpy(data_buffer.data(), clipboard_message->data, bytes_copied);
 
@@ -206,10 +206,10 @@ SpiceAgent::Message* SpiceAgent::initialize_headers(u8* data, size_t additional_
     return message;
 }
 
-ByteBuffer SpiceAgent::AnnounceCapabilities::make_buffer(bool request, const Vector<Capability>& capabilities)
+ByteBuffer SpiceAgent::AnnounceCapabilities::make_buffer(bool request, Vector<Capability> const& capabilities)
 {
     size_t required_size = sizeof(ChunkHeader) + sizeof(Message) + sizeof(AnnounceCapabilities);
-    auto buffer = ByteBuffer::create_uninitialized(required_size).release_value(); // FIXME: Handle possible OOM situation.
+    auto buffer = ByteBuffer::create_uninitialized(required_size).release_value_but_fixme_should_propagate_errors(); // FIXME: Handle possible OOM situation.
     u8* data = buffer.data();
 
     auto* message = initialize_headers(data, sizeof(AnnounceCapabilities), MessageType::AnnounceCapabilities);
@@ -226,12 +226,12 @@ ByteBuffer SpiceAgent::AnnounceCapabilities::make_buffer(bool request, const Vec
     return buffer;
 }
 
-ByteBuffer SpiceAgent::ClipboardGrab::make_buffer(const Vector<ClipboardType>& types)
+ByteBuffer SpiceAgent::ClipboardGrab::make_buffer(Vector<ClipboardType> const& types)
 {
     VERIFY(types.size() > 0);
     size_t variable_data_size = sizeof(u32) * types.size();
     size_t required_size = sizeof(ChunkHeader) + sizeof(Message) + variable_data_size;
-    auto buffer = ByteBuffer::create_uninitialized(required_size).release_value(); // FIXME: Handle possible OOM situation.
+    auto buffer = ByteBuffer::create_uninitialized(required_size).release_value_but_fixme_should_propagate_errors(); // FIXME: Handle possible OOM situation.
     u8* data = buffer.data();
 
     auto* message = initialize_headers(data, variable_data_size, MessageType::ClipboardGrab);
@@ -249,7 +249,7 @@ ByteBuffer SpiceAgent::Clipboard::make_buffer(ClipboardType type, ReadonlyBytes 
 {
     size_t data_size = sizeof(Clipboard) + contents.size();
     size_t required_size = sizeof(ChunkHeader) + sizeof(Message) + data_size;
-    auto buffer = ByteBuffer::create_uninitialized(required_size).release_value(); // FIXME: Handle possible OOM situation.
+    auto buffer = ByteBuffer::create_uninitialized(required_size).release_value_but_fixme_should_propagate_errors(); // FIXME: Handle possible OOM situation.
     u8* data = buffer.data();
 
     auto* message = initialize_headers(data, data_size, MessageType::Clipboard);
@@ -267,7 +267,7 @@ ByteBuffer SpiceAgent::ClipboardRequest::make_buffer(ClipboardType type)
 {
     size_t data_size = sizeof(ClipboardRequest);
     size_t required_size = sizeof(ChunkHeader) + sizeof(Message) + data_size;
-    auto buffer = ByteBuffer::create_uninitialized(required_size).release_value(); // FIXME: Handle possible OOM situation.
+    auto buffer = ByteBuffer::create_uninitialized(required_size).release_value_but_fixme_should_propagate_errors(); // FIXME: Handle possible OOM situation.
     u8* data = buffer.data();
 
     auto* message = initialize_headers(data, data_size, MessageType::ClipboardRequest);

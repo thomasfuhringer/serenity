@@ -6,6 +6,8 @@
  */
 
 #include <AK/Assertions.h>
+#include <AK/CharacterTypes.h>
+#include <AK/Debug.h>
 #include <AK/Format.h>
 #include <AK/Utf8View.h>
 
@@ -22,7 +24,7 @@ Utf8CodePointIterator Utf8View::iterator_at_byte_offset(size_t byte_offset) cons
     return end();
 }
 
-size_t Utf8View::byte_offset_of(const Utf8CodePointIterator& it) const
+size_t Utf8View::byte_offset_of(Utf8CodePointIterator const& it) const
 {
     VERIFY(it.m_ptr >= begin_ptr());
     VERIFY(it.m_ptr <= end_ptr());
@@ -100,9 +102,9 @@ bool Utf8View::validate(size_t& valid_bytes) const
 {
     valid_bytes = 0;
     for (auto ptr = begin_ptr(); ptr < end_ptr(); ptr++) {
-        size_t code_point_length_in_bytes;
-        u32 value;
-        bool first_byte_makes_sense = decode_first_byte(*ptr, code_point_length_in_bytes, value);
+        size_t code_point_length_in_bytes = 0;
+        u32 code_point = 0;
+        bool first_byte_makes_sense = decode_first_byte(*ptr, code_point_length_in_bytes, code_point);
         if (!first_byte_makes_sense)
             return false;
 
@@ -112,7 +114,13 @@ bool Utf8View::validate(size_t& valid_bytes) const
                 return false;
             if (*ptr >> 6 != 2)
                 return false;
+
+            code_point <<= 6;
+            code_point |= *ptr & 63;
         }
+
+        if (!is_unicode(code_point))
+            return false;
 
         valid_bytes += code_point_length_in_bytes;
     }
@@ -129,7 +137,7 @@ size_t Utf8View::calculate_length() const
     return length;
 }
 
-bool Utf8View::starts_with(const Utf8View& start) const
+bool Utf8View::starts_with(Utf8View const& start) const
 {
     if (start.is_empty())
         return true;
@@ -156,7 +164,7 @@ bool Utf8View::contains(u32 needle) const
     return false;
 }
 
-Utf8View Utf8View::trim(const Utf8View& characters, TrimMode mode) const
+Utf8View Utf8View::trim(Utf8View const& characters, TrimMode mode) const
 {
     size_t substring_start = 0;
     size_t substring_length = byte_length();
@@ -196,7 +204,7 @@ Utf8CodePointIterator& Utf8CodePointIterator::operator++()
     if (code_point_length_in_bytes > m_length) {
         // We don't have enough data for the next code point. Skip one character and try again.
         // The rest of the code will output replacement characters as needed for any eventual extension bytes we might encounter afterwards.
-        dbgln("Expected code point size {} is too big for the remaining length {}. Moving forward one byte.", code_point_length_in_bytes, m_length);
+        dbgln_if(UTF8_DEBUG, "Expected code point size {} is too big for the remaining length {}. Moving forward one byte.", code_point_length_in_bytes, m_length);
         m_ptr += 1;
         m_length -= 1;
         return *this;
@@ -245,20 +253,20 @@ u32 Utf8CodePointIterator::operator*() const
 
     if (!first_byte_makes_sense) {
         // The first byte of the code point doesn't make sense: output a replacement character
-        dbgln("First byte doesn't make sense: {:#02x}.", m_ptr[0]);
+        dbgln_if(UTF8_DEBUG, "First byte doesn't make sense: {:#02x}.", m_ptr[0]);
         return 0xFFFD;
     }
 
     if (code_point_length_in_bytes > m_length) {
         // There is not enough data left for the full code point: output a replacement character
-        dbgln("Not enough bytes (need {}, have {}), first byte is: {:#02x}.", code_point_length_in_bytes, m_length, m_ptr[0]);
+        dbgln_if(UTF8_DEBUG, "Not enough bytes (need {}, have {}), first byte is: {:#02x}.", code_point_length_in_bytes, m_length, m_ptr[0]);
         return 0xFFFD;
     }
 
     for (size_t offset = 1; offset < code_point_length_in_bytes; offset++) {
         if (m_ptr[offset] >> 6 != 2) {
             // One of the extension bytes of the code point doesn't make sense: output a replacement character
-            dbgln("Extension byte {:#02x} in {} position after first byte {:#02x} doesn't make sense.", m_ptr[offset], offset, m_ptr[0]);
+            dbgln_if(UTF8_DEBUG, "Extension byte {:#02x} in {} position after first byte {:#02x} doesn't make sense.", m_ptr[offset], offset, m_ptr[0]);
             return 0xFFFD;
         }
 

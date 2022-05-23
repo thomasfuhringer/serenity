@@ -24,11 +24,9 @@ Transfer::Transfer(Pipe& pipe, u16 len, NonnullOwnPtr<Memory::Region> data_buffe
 {
 }
 
-Transfer::~Transfer()
-{
-}
+Transfer::~Transfer() = default;
 
-void Transfer::set_setup_packet(const USBRequestData& request)
+void Transfer::set_setup_packet(USBRequestData const& request)
 {
     // Kind of a nasty hack... Because the kernel isn't in the business
     // of handing out physical pointers that we can directly write to,
@@ -43,6 +41,15 @@ void Transfer::set_setup_packet(const USBRequestData& request)
     request_data->length = request.length;
 
     m_request = request;
+}
+
+ErrorOr<void> Transfer::write_buffer(u16 len, void* data)
+{
+    VERIFY(len <= m_data_buffer->size());
+    m_transfer_data_size = len;
+    memcpy(buffer().as_ptr(), data, len);
+
+    return {};
 }
 
 }

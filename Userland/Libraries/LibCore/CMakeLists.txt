@@ -5,35 +5,37 @@ set(SOURCES
     ConfigFile.cpp
     Command.cpp
     DateTime.cpp
+    Directory.cpp
     DirIterator.cpp
     ElapsedTimer.cpp
     Event.cpp
     EventLoop.cpp
     FileWatcher.cpp
     File.cpp
+    FilePermissionsMask.cpp
     GetPassword.cpp
+    Group.cpp
     IODevice.cpp
     LocalServer.cpp
-    LocalSocket.cpp
     LockFile.cpp
     MappedFile.cpp
     MimeData.cpp
     NetworkJob.cpp
-    NetworkResponse.cpp
     Notifier.cpp
     Object.cpp
     Process.cpp
     ProcessStatisticsReader.cpp
     Property.cpp
     SecretString.cpp
-    Socket.cpp
+    SOCKSProxyClient.cpp
+    Stream.cpp
     StandardPaths.cpp
     System.cpp
+    SystemServerTakeover.cpp
     TCPServer.cpp
-    TCPSocket.cpp
+    TempFile.cpp
     Timer.cpp
     UDPServer.cpp
-    UDPSocket.cpp
     Version.cpp
 )
 

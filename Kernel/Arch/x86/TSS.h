@@ -9,6 +9,9 @@
 
 #include <AK/Types.h>
 
+#include <AK/Platform.h>
+VALIDATE_IS_X86()
+
 namespace Kernel {
 
 struct [[gnu::packed]] TSS32 {
@@ -39,7 +42,7 @@ struct [[gnu::packed]] TSS64 {
     u32 rsp1h;
     u32 rsp2l;
     u32 rsp2h;
-    u64 __2; //probably CR3 and EIP?
+    u64 __2; // probably CR3 and EIP?
     u32 ist1l;
     u32 ist1h;
     u32 ist2l;

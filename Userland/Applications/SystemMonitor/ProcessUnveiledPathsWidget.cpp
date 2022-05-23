@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2018-2020, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2022, the SerenityOS developers.
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -9,6 +10,11 @@
 #include <LibGUI/JsonArrayModel.h>
 #include <LibGUI/SortingProxyModel.h>
 #include <LibGUI/TableView.h>
+#include <LibGUI/Widget.h>
+
+REGISTER_WIDGET(SystemMonitor, ProcessUnveiledPathsWidget)
+
+namespace SystemMonitor {
 
 ProcessUnveiledPathsWidget::ProcessUnveiledPathsWidget()
 {
@@ -21,11 +27,7 @@ ProcessUnveiledPathsWidget::ProcessUnveiledPathsWidget()
     pid_unveil_fields.empend("permissions", "Permissions", Gfx::TextAlignment::CenterLeft);
 
     m_model = GUI::JsonArrayModel::create({}, move(pid_unveil_fields));
-    m_table_view->set_model(GUI::SortingProxyModel::create(*m_model));
-}
-
-ProcessUnveiledPathsWidget::~ProcessUnveiledPathsWidget()
-{
+    m_table_view->set_model(MUST(GUI::SortingProxyModel::create(*m_model)));
 }
 
 void ProcessUnveiledPathsWidget::set_pid(pid_t pid)
@@ -34,4 +36,6 @@ void ProcessUnveiledPathsWidget::set_pid(pid_t pid)
         return;
     m_pid = pid;
     m_model->set_json_path(String::formatted("/proc/{}/unveil", m_pid));
+}
+
 }

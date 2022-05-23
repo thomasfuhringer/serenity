@@ -13,6 +13,8 @@ namespace AK {
 
 template<typename T, size_t Size>
 struct Array {
+    using ValueType = T;
+
     [[nodiscard]] constexpr T const* data() const { return __data; }
     [[nodiscard]] constexpr T* data() { return __data; }
 
@@ -32,11 +34,11 @@ struct Array {
         return __data[index];
     }
 
-    [[nodiscard]] constexpr T const& front() const { return at(0); }
-    [[nodiscard]] constexpr T& front() { return at(0); }
+    [[nodiscard]] constexpr T const& first() const { return at(0); }
+    [[nodiscard]] constexpr T& first() { return at(0); }
 
-    [[nodiscard]] constexpr T const& back() const { return at(max(1, size()) - 1); }
-    [[nodiscard]] constexpr T& back() { return at(max(1, size()) - 1); }
+    [[nodiscard]] constexpr T const& last() const requires(Size > 0) { return at(Size - 1); }
+    [[nodiscard]] constexpr T& last() requires(Size > 0) { return at(Size - 1); }
 
     [[nodiscard]] constexpr bool is_empty() const { return size() == 0; }
 
@@ -66,7 +68,7 @@ struct Array {
         return Size;
     }
 
-    [[nodiscard]] constexpr T max() requires(requires(T x, T y) { x < y; })
+    [[nodiscard]] constexpr T max() const requires(requires(T x, T y) { x < y; })
     {
         static_assert(Size > 0, "No values to max() over");
 
@@ -76,7 +78,7 @@ struct Array {
         return value;
     }
 
-    [[nodiscard]] constexpr T min() requires(requires(T x, T y) { x > y; })
+    [[nodiscard]] constexpr T min() const requires(requires(T x, T y) { x > y; })
     {
         static_assert(Size > 0, "No values to min() over");
 

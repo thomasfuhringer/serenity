@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2020, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2022, the SerenityOS developers.
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -19,15 +20,11 @@ Game::Game()
 {
     set_override_cursor(Gfx::StandardCursor::Hidden);
     auto level_dialog = LevelSelectDialog::show(m_board, window());
-    if (level_dialog != GUI::Dialog::ExecOK)
+    if (level_dialog != GUI::Dialog::ExecResult::OK)
         m_board = -1;
     set_paused(false);
     start_timer(16);
     reset();
-}
-
-Game::~Game()
-{
 }
 
 void Game::reset_paddle()
@@ -142,7 +139,7 @@ void Game::paint_event(GUI::PaintEvent& event)
     painter.draw_text(lives_left_rect(), String::formatted("Lives: {}", m_lives), Gfx::TextAlignment::Center, Color::White);
 
     if (m_paused) {
-        const char* msg = m_cheater ? "C H E A T E R" : "P A U S E D";
+        char const* msg = m_cheater ? "C H E A T E R" : "P A U S E D";
         painter.draw_text(pause_rect(), msg, Gfx::TextAlignment::Center, Color::White);
     }
 }

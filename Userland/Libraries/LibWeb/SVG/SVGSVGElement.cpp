@@ -5,36 +5,42 @@
  */
 
 #include <LibGfx/Painter.h>
+#include <LibWeb/CSS/Parser/Parser.h>
 #include <LibWeb/CSS/StyleComputer.h>
 #include <LibWeb/DOM/Document.h>
 #include <LibWeb/DOM/Event.h>
+#include <LibWeb/HTML/Parser/HTMLParser.h>
 #include <LibWeb/Layout/SVGSVGBox.h>
 #include <LibWeb/SVG/AttributeNames.h>
 #include <LibWeb/SVG/SVGSVGElement.h>
 
 namespace Web::SVG {
 
-SVGSVGElement::SVGSVGElement(DOM::Document& document, QualifiedName qualified_name)
+SVGSVGElement::SVGSVGElement(DOM::Document& document, DOM::QualifiedName qualified_name)
     : SVGGraphicsElement(document, qualified_name)
 {
 }
 
-RefPtr<Layout::Node> SVGSVGElement::create_layout_node()
+RefPtr<Layout::Node> SVGSVGElement::create_layout_node(NonnullRefPtr<CSS::StyleProperties> style)
 {
-    auto style = document().style_computer().compute_style(*this);
-    if (style->display().is_none())
-        return nullptr;
     return adopt_ref(*new Layout::SVGSVGBox(document(), *this, move(style)));
 }
 
-unsigned SVGSVGElement::width() const
+void SVGSVGElement::apply_presentational_hints(CSS::StyleProperties& style) const
 {
-    return attribute(HTML::AttributeNames::width).to_uint().value_or(300);
-}
+    // Width defaults to 100%
+    if (auto width_value = HTML::parse_dimension_value(attribute(SVG::AttributeNames::width))) {
+        style.set_property(CSS::PropertyID::Width, width_value.release_nonnull());
+    } else {
+        style.set_property(CSS::PropertyID::Width, CSS::PercentageStyleValue::create(CSS::Percentage { 100 }));
+    }
 
-unsigned SVGSVGElement::height() const
-{
-    return attribute(HTML::AttributeNames::height).to_uint().value_or(150);
+    // Height defaults to 100%
+    if (auto height_value = HTML::parse_dimension_value(attribute(SVG::AttributeNames::height))) {
+        style.set_property(CSS::PropertyID::Height, height_value.release_nonnull());
+    } else {
+        style.set_property(CSS::PropertyID::Height, CSS::PercentageStyleValue::create(CSS::Percentage { 100 }));
+    }
 }
 
 void SVGSVGElement::parse_attribute(FlyString const& name, String const& value)

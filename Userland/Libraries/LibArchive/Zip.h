@@ -1,14 +1,15 @@
 /*
  * Copyright (c) 2021, Idan Horowitz <idan.horowitz@serenityos.org>
+ * Copyright (c) 2022, the SerenityOS developers.
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #pragma once
 
+#include <AK/Array.h>
 #include <AK/Function.h>
 #include <AK/IterationDecision.h>
-#include <AK/Span.h>
 #include <AK/Stream.h>
 #include <AK/String.h>
 #include <AK/Vector.h>
@@ -16,10 +17,24 @@
 
 namespace Archive {
 
+template<size_t fields_size, class T>
+static bool read_helper(ReadonlyBytes buffer, T* self)
+{
+    if (buffer.size() < T::signature.size() + fields_size)
+        return false;
+    if (buffer.slice(0, T::signature.size()) != T::signature)
+        return false;
+    memcpy(self, buffer.data() + T::signature.size(), fields_size);
+    return true;
+}
+
 // NOTE: Due to the format of zip files compression is streamed and decompression is random access.
 
-static constexpr u8 end_of_central_directory_signature[] = { 0x50, 0x4b, 0x05, 0x06 }; // 'PK\x05\x06'
+static constexpr auto signature_length = 4;
+
 struct [[gnu::packed]] EndOfCentralDirectory {
+    static constexpr Array<u8, signature_length> signature = { 0x50, 0x4b, 0x05, 0x06 }; // 'PK\x05\x06'
+
     u16 disk_number;
     u16 central_directory_start_disk;
     u16 disk_records_count;
@@ -27,25 +42,22 @@ struct [[gnu::packed]] EndOfCentralDirectory {
     u32 central_directory_size;
     u32 central_directory_offset;
     u16 comment_length;
-    const u8* comment;
+    u8 const* comment;
 
     bool read(ReadonlyBytes buffer)
     {
-        auto fields_size = sizeof(EndOfCentralDirectory) - sizeof(u8*);
-        if (buffer.size() < sizeof(end_of_central_directory_signature) + fields_size)
+        constexpr auto fields_size = sizeof(EndOfCentralDirectory) - (sizeof(u8*) * 1);
+        if (!read_helper<fields_size>(buffer, this))
             return false;
-        if (memcmp(buffer.data(), end_of_central_directory_signature, sizeof(end_of_central_directory_signature)) != 0)
+        if (buffer.size() < signature.size() + fields_size + comment_length)
             return false;
-        memcpy(reinterpret_cast<void*>(&disk_number), buffer.data() + sizeof(end_of_central_directory_signature), fields_size);
-        if (buffer.size() < sizeof(end_of_central_directory_signature) + fields_size + comment_length)
-            return false;
-        comment = buffer.data() + sizeof(end_of_central_directory_signature) + fields_size;
+        comment = buffer.data() + signature.size() + fields_size;
         return true;
     }
 
     void write(OutputStream& stream) const
     {
-        stream.write_or_error({ end_of_central_directory_signature, sizeof(end_of_central_directory_signature) });
+        stream.write_or_error(signature);
         stream << disk_number;
         stream << central_directory_start_disk;
         stream << disk_records_count;
@@ -58,12 +70,45 @@ struct [[gnu::packed]] EndOfCentralDirectory {
     }
 };
 
-static constexpr u8 central_directory_record_signature[] = { 0x50, 0x4b, 0x01, 0x02 }; // 'PK\x01\x02'
+enum class ZipCompressionMethod : u16 {
+    Store = 0,
+    Shrink = 1,
+    Reduce1 = 2,
+    Reduce2 = 3,
+    Reduce3 = 4,
+    Reduce4 = 5,
+    Implode = 6,
+    Reserved = 7,
+    Deflate = 8
+};
+
+union ZipGeneralPurposeFlags {
+    u16 flags;
+    struct {
+        u16 encrypted : 1;
+        u16 compression_options : 2;
+        u16 data_descriptor : 1;
+        u16 enhanced_deflation : 1;
+        u16 compressed_patched_data : 1;
+        u16 strong_encryption : 1;
+        u16 : 4;
+        u16 language_encoding : 1;
+        u16 : 1;
+        u16 masked_data_values : 1;
+        u16 : 2;
+    };
+};
+static_assert(sizeof(ZipGeneralPurposeFlags) == sizeof(u16));
+
+OutputStream& operator<<(OutputStream& stream, ZipCompressionMethod method);
+
 struct [[gnu::packed]] CentralDirectoryRecord {
+    static constexpr Array<u8, signature_length> signature = { 0x50, 0x4b, 0x01, 0x02 }; // 'PK\x01\x02'
+
     u16 made_by_version;
     u16 minimum_version;
-    u16 general_purpose_flags;
-    u16 compression_method;
+    ZipGeneralPurposeFlags general_purpose_flags;
+    ZipCompressionMethod compression_method;
     u16 modification_time;
     u16 modification_date;
     u32 crc32;
@@ -76,21 +121,18 @@ struct [[gnu::packed]] CentralDirectoryRecord {
     u16 internal_attributes;
     u32 external_attributes;
     u32 local_file_header_offset;
-    const u8* name;
-    const u8* extra_data;
-    const u8* comment;
+    u8 const* name;
+    u8 const* extra_data;
+    u8 const* comment;
 
     bool read(ReadonlyBytes buffer)
     {
-        auto fields_size = sizeof(CentralDirectoryRecord) - (sizeof(u8*) * 3);
-        if (buffer.size() < sizeof(central_directory_record_signature) + fields_size)
+        constexpr auto fields_size = sizeof(CentralDirectoryRecord) - (sizeof(u8*) * 3);
+        if (!read_helper<fields_size>(buffer, this))
             return false;
-        if (memcmp(buffer.data(), central_directory_record_signature, sizeof(central_directory_record_signature)) != 0)
+        if (buffer.size() < size())
             return false;
-        memcpy(reinterpret_cast<void*>(&made_by_version), buffer.data() + sizeof(central_directory_record_signature), fields_size);
-        if (buffer.size() < sizeof(end_of_central_directory_signature) + fields_size + comment_length + name_length + extra_data_length)
-            return false;
-        name = buffer.data() + sizeof(central_directory_record_signature) + fields_size;
+        name = buffer.data() + signature.size() + fields_size;
         extra_data = name + name_length;
         comment = extra_data + extra_data_length;
         return true;
@@ -98,10 +140,10 @@ struct [[gnu::packed]] CentralDirectoryRecord {
 
     void write(OutputStream& stream) const
     {
-        stream.write_or_error({ central_directory_record_signature, sizeof(central_directory_record_signature) });
+        stream.write_or_error(signature);
         stream << made_by_version;
         stream << minimum_version;
-        stream << general_purpose_flags;
+        stream << general_purpose_flags.flags;
         stream << compression_method;
         stream << modification_time;
         stream << modification_date;
@@ -125,15 +167,16 @@ struct [[gnu::packed]] CentralDirectoryRecord {
 
     [[nodiscard]] size_t size() const
     {
-        return sizeof(central_directory_record_signature) + (sizeof(CentralDirectoryRecord) - (sizeof(u8*) * 3)) + name_length + extra_data_length + comment_length;
+        return signature.size() + (sizeof(CentralDirectoryRecord) - (sizeof(u8*) * 3)) + name_length + extra_data_length + comment_length;
     }
 };
 static constexpr u32 zip_directory_external_attribute = 1 << 4;
 
-static constexpr u8 local_file_header_signature[] = { 0x50, 0x4b, 0x03, 0x04 }; // 'PK\x03\x04'
 struct [[gnu::packed]] LocalFileHeader {
+    static constexpr Array<u8, signature_length> signature = { 0x50, 0x4b, 0x03, 0x04 }; // 'PK\x03\x04'
+
     u16 minimum_version;
-    u16 general_purpose_flags;
+    ZipGeneralPurposeFlags general_purpose_flags;
     u16 compression_method;
     u16 modification_time;
     u16 modification_date;
@@ -142,21 +185,18 @@ struct [[gnu::packed]] LocalFileHeader {
     u32 uncompressed_size;
     u16 name_length;
     u16 extra_data_length;
-    const u8* name;
-    const u8* extra_data;
-    const u8* compressed_data;
+    u8 const* name;
+    u8 const* extra_data;
+    u8 const* compressed_data;
 
     bool read(ReadonlyBytes buffer)
     {
-        auto fields_size = sizeof(LocalFileHeader) - (sizeof(u8*) * 3);
-        if (buffer.size() < sizeof(local_file_header_signature) + fields_size)
+        constexpr auto fields_size = sizeof(LocalFileHeader) - (sizeof(u8*) * 3);
+        if (!read_helper<fields_size>(buffer, this))
             return false;
-        if (memcmp(buffer.data(), local_file_header_signature, sizeof(local_file_header_signature)) != 0)
+        if (buffer.size() < signature.size() + fields_size + name_length + extra_data_length + compressed_size)
             return false;
-        memcpy(reinterpret_cast<void*>(&minimum_version), buffer.data() + sizeof(local_file_header_signature), fields_size);
-        if (buffer.size() < sizeof(end_of_central_directory_signature) + fields_size + name_length + extra_data_length + compressed_size)
-            return false;
-        name = buffer.data() + sizeof(local_file_header_signature) + fields_size;
+        name = buffer.data() + signature.size() + fields_size;
         extra_data = name + name_length;
         compressed_data = extra_data + extra_data_length;
         return true;
@@ -164,9 +204,9 @@ struct [[gnu::packed]] LocalFileHeader {
 
     void write(OutputStream& stream) const
     {
-        stream.write_or_error({ local_file_header_signature, sizeof(local_file_header_signature) });
+        stream.write_or_error(signature);
         stream << minimum_version;
-        stream << general_purpose_flags;
+        stream << general_purpose_flags.flags;
         stream << compression_method;
         stream << modification_time;
         stream << modification_date;
@@ -184,18 +224,6 @@ struct [[gnu::packed]] LocalFileHeader {
     }
 };
 
-enum ZipCompressionMethod : u16 {
-    Store = 0,
-    Shrink = 1,
-    Reduce1 = 2,
-    Reduce2 = 3,
-    Reduce3 = 4,
-    Reduce4 = 5,
-    Implode = 6,
-    Reserved = 7,
-    Deflate = 8
-};
-
 struct ZipMember {
     String name;
     ReadonlyBytes compressed_data; // TODO: maybe the decompression/compression should be handled by LibArchive instead of the user?
@@ -208,20 +236,26 @@ struct ZipMember {
 class Zip {
 public:
     static Optional<Zip> try_create(ReadonlyBytes buffer);
-    bool for_each_member(Function<IterationDecision(const ZipMember&)>);
+    bool for_each_member(Function<IterationDecision(ZipMember const&)>);
 
 private:
     static bool find_end_of_central_directory_offset(ReadonlyBytes, size_t& offset);
 
-    u16 member_count { 0 };
-    size_t members_start_offset { 0 };
+    Zip(u16 member_count, size_t members_start_offset, ReadonlyBytes input_data)
+        : m_member_count { member_count }
+        , m_members_start_offset { members_start_offset }
+        , m_input_data { input_data }
+    {
+    }
+    u16 m_member_count { 0 };
+    size_t m_members_start_offset { 0 };
     ReadonlyBytes m_input_data;
 };
 
 class ZipOutputStream {
 public:
     ZipOutputStream(OutputStream&);
-    void add_member(const ZipMember&);
+    void add_member(ZipMember const&);
     void finish();
 
 private:

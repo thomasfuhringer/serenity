@@ -4,6 +4,7 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include "AK/ReverseIterator.h"
 #include <LibTest/TestCase.h>
 
 #include <AK/NonnullOwnPtrVector.h>
@@ -42,14 +43,14 @@ TEST_CASE(strings)
     strings.append("DEF");
 
     int loop_counter = 0;
-    for (const String& string : strings) {
+    for (String const& string : strings) {
         EXPECT(!string.is_null());
         EXPECT(!string.is_empty());
         ++loop_counter;
     }
 
     loop_counter = 0;
-    for (auto& string : (const_cast<const Vector<String>&>(strings))) {
+    for (auto& string : (const_cast<Vector<String> const&>(strings))) {
         EXPECT(!string.is_null());
         EXPECT(!string.is_empty());
         ++loop_counter;
@@ -259,6 +260,29 @@ TEST_CASE(vector_remove)
     EXPECT_EQ(ints[0], 4);
 }
 
+TEST_CASE(remove_all_matching)
+{
+    Vector<int> ints;
+
+    ints.append(1);
+    ints.append(2);
+    ints.append(3);
+    ints.append(4);
+
+    EXPECT_EQ(ints.size(), 4u);
+
+    EXPECT_EQ(ints.remove_all_matching([&](int value) { return value > 2; }), true);
+    EXPECT_EQ(ints.remove_all_matching([&](int) { return false; }), false);
+
+    EXPECT_EQ(ints.size(), 2u);
+
+    EXPECT_EQ(ints.remove_all_matching([&](int) { return true; }), true);
+
+    EXPECT(ints.is_empty());
+
+    EXPECT_EQ(ints.remove_all_matching([&](int) { return true; }), false);
+}
+
 TEST_CASE(nonnullownptrvector)
 {
     struct Object {
@@ -378,7 +402,7 @@ TEST_CASE(should_find_value)
 {
     Vector<int> v { 1, 2, 3, 4, 0, 6, 7, 8, 0, 0 };
 
-    const auto expected = v.begin() + 4;
+    auto const expected = v.begin() + 4;
 
     EXPECT_EQ(expected, v.find(0));
 }
@@ -387,9 +411,9 @@ TEST_CASE(should_find_predicate)
 {
     Vector<int> v { 1, 2, 3, 4, 0, 6, 7, 8, 0, 0 };
 
-    const auto expected = v.begin() + 4;
+    auto const expected = v.begin() + 4;
 
-    EXPECT_EQ(expected, v.find_if([](const auto v) { return v == 0; }));
+    EXPECT_EQ(expected, v.find_if([](auto const v) { return v == 0; }));
 }
 
 TEST_CASE(should_find_index)
@@ -509,4 +533,42 @@ TEST_CASE(reference_deletion_should_not_affect_object)
             references.append(counter);
     }
     EXPECT_EQ(times_deleted, 1u);
+}
+
+TEST_CASE(rbegin)
+{
+    Vector<int> v { 1, 2, 3, 4, 5, 6, 7, 8, 0 };
+
+    auto const expected = v.begin() + 4;
+    auto const expected_in_reverse = v.rbegin() + 4;
+    EXPECT_EQ(*expected, *expected_in_reverse);
+}
+
+TEST_CASE(rend)
+{
+    Vector<int> v { 1, 2, 3, 4, 5, 6, 7, 8, 0 };
+
+    auto const expected = v.end() - 5;
+    auto const expected_in_reverse = v.rend() - 5;
+    EXPECT_EQ(*expected, *expected_in_reverse);
+}
+
+TEST_CASE(reverse_iterator_for_loop)
+{
+    Vector<int> v { 0, 1, 2, 3, 4, 5, 6, 7, 8, 9 };
+    int index = 9;
+    for (auto rev = v.rbegin(); rev != v.rend(); ++rev)
+        EXPECT_EQ(*rev, index--);
+}
+
+TEST_CASE(reverse_range_for_loop)
+{
+    Vector<int> v { 0, 1, 2, 3, 4, 5, 6, 7, 8, 9 };
+    int index = 9;
+    for (auto item : AK::ReverseWrapper::in_reverse(v))
+        EXPECT_EQ(item, index--);
+
+    index = 9;
+    for (auto item : v.in_reverse())
+        EXPECT_EQ(item, index--);
 }

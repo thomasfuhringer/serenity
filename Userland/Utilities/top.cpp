@@ -12,6 +12,8 @@
 #include <AK/Vector.h>
 #include <LibCore/ArgsParser.h>
 #include <LibCore/ProcessStatisticsReader.h>
+#include <LibCore/System.h>
+#include <LibMain/Main.h>
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -66,7 +68,7 @@ struct ThreadData {
 };
 
 struct PidAndTid {
-    bool operator==(const PidAndTid& other) const
+    bool operator==(PidAndTid const& other) const
     {
         return pid == other.pid && tid == other.tid;
     }
@@ -77,7 +79,7 @@ struct PidAndTid {
 namespace AK {
 template<>
 struct Traits<PidAndTid> : public GenericTraits<PidAndTid> {
-    static unsigned hash(const PidAndTid& value) { return pair_int_hash(value.pid, value.tid); }
+    static unsigned hash(PidAndTid const& value) { return pair_int_hash(value.pid, value.tid); }
 };
 }
 
@@ -133,7 +135,7 @@ static Snapshot get_snapshot()
 static bool g_window_size_changed = true;
 static struct winsize g_window_size;
 
-static void parse_args(int argc, char** argv, TopOption& top_option)
+static void parse_args(Main::Arguments arguments, TopOption& top_option)
 {
     Core::ArgsParser::Option sort_by_option {
         true,
@@ -141,7 +143,7 @@ static void parse_args(int argc, char** argv, TopOption& top_option)
         "sort-by",
         's',
         nullptr,
-        [&top_option](const char* s) {
+        [&top_option](char const* s) {
             StringView sort_by_option { s };
             if (sort_by_option == "pid"sv)
                 top_option.sort_by = TopOption::SortBy::Pid;
@@ -172,50 +174,53 @@ static void parse_args(int argc, char** argv, TopOption& top_option)
     args_parser.set_general_help("Display information about processes");
     args_parser.add_option(top_option.delay_time, "Delay time interval in seconds", "delay-time", 'd', nullptr);
     args_parser.add_option(move(sort_by_option));
-    args_parser.parse(argc, argv);
+    args_parser.parse(arguments);
 }
 
-int main(int argc, char** argv)
+static bool check_quit()
 {
-    if (pledge("stdio rpath tty sigaction ", nullptr) < 0) {
-        perror("pledge");
-        return 1;
-    }
+    char c = '\0';
+    read(STDIN_FILENO, &c, sizeof(c));
+    return c == 'q' || c == 'Q';
+}
 
-    if (unveil("/proc/all", "r") < 0) {
-        perror("unveil");
-        return 1;
-    }
+static int g_old_stdin;
 
-    if (unveil("/etc/passwd", "r") < 0) {
-        perror("unveil");
-        return 1;
-    }
+static void restore_stdin()
+{
+    fcntl(STDIN_FILENO, F_SETFL, g_old_stdin);
+}
 
+static void enable_nonblocking_stdin()
+{
+    g_old_stdin = fcntl(STDIN_FILENO, F_GETFL);
+    fcntl(STDIN_FILENO, F_SETFL, g_old_stdin | O_NONBLOCK);
+    atexit(restore_stdin);
+}
+
+ErrorOr<int> serenity_main(Main::Arguments arguments)
+{
+    TRY(Core::System::pledge("stdio rpath tty sigaction"));
+    TRY(Core::System::unveil("/proc/all", "r"));
+    TRY(Core::System::unveil("/etc/passwd", "r"));
     unveil(nullptr, nullptr);
 
     signal(SIGWINCH, [](int) {
         g_window_size_changed = true;
     });
 
-    if (pledge("stdio rpath tty", nullptr) < 0) {
-        perror("pledge");
-        return 1;
-    }
-
+    TRY(Core::System::pledge("stdio rpath tty"));
     TopOption top_option;
-    parse_args(argc, argv, top_option);
+    parse_args(arguments, top_option);
+
+    enable_nonblocking_stdin();
 
     Vector<ThreadData*> threads;
     auto prev = get_snapshot();
     usleep(10000);
     for (;;) {
         if (g_window_size_changed) {
-            int rc = ioctl(STDOUT_FILENO, TIOCGWINSZ, &g_window_size);
-            if (rc < 0) {
-                perror("ioctl(TIOCGWINSZ)");
-                return 1;
-            }
+            TRY(Core::System::ioctl(STDOUT_FILENO, TIOCGWINSZ, &g_window_size));
             g_window_size_changed = false;
         }
 
@@ -295,6 +300,11 @@ int main(int argc, char** argv)
         }
         threads.clear_with_capacity();
         prev = move(current);
-        sleep(top_option.delay_time);
+
+        for (int sleep_slice = 0; sleep_slice < top_option.delay_time * 1000; sleep_slice += 100) {
+            if (check_quit())
+                exit(0);
+            usleep(100 * 1000);
+        }
     }
 }

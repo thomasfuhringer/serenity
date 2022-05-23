@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2018-2020, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2022, the SerenityOS developers.
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -30,27 +31,35 @@ Label::Label(String text)
 
     REGISTER_STRING_PROPERTY("text", text, set_text);
     REGISTER_BOOL_PROPERTY("autosize", is_autosize, set_autosize);
+    REGISTER_STRING_PROPERTY("icon", icon, set_icon_from_path);
 }
 
-Label::~Label()
+void Label::set_autosize(bool autosize, size_t padding)
 {
-}
-
-void Label::set_autosize(bool autosize)
-{
-    if (m_autosize == autosize)
+    if (m_autosize == autosize && m_autosize_padding == padding)
         return;
     m_autosize = autosize;
+    m_autosize_padding = padding;
     if (m_autosize)
         size_to_fit();
 }
 
-void Label::set_icon(const Gfx::Bitmap* icon)
+void Label::set_icon(Gfx::Bitmap const* icon)
 {
     if (m_icon == icon)
         return;
     m_icon = icon;
     update();
+}
+
+void Label::set_icon_from_path(String const& path)
+{
+    auto maybe_bitmap = Gfx::Bitmap::try_load_from_file(path);
+    if (maybe_bitmap.is_error()) {
+        dbgln("Unable to load bitmap `{}` for label icon", path);
+        return;
+    }
+    set_icon(maybe_bitmap.release_value());
 }
 
 void Label::set_text(String text)
@@ -93,14 +102,14 @@ void Label::paint_event(PaintEvent& event)
     if (is_enabled()) {
         painter.draw_text(text_rect, text(), text_alignment(), palette().color(foreground_role()), Gfx::TextElision::Right, text_wrapping());
     } else {
-        painter.draw_text(text_rect.translated(1, 1), text(), font(), text_alignment(), Color::White, Gfx::TextElision::Right, text_wrapping());
-        painter.draw_text(text_rect, text(), font(), text_alignment(), Color::from_rgb(0x808080), Gfx::TextElision::Right, text_wrapping());
+        painter.draw_text(text_rect.translated(1, 1), text(), font(), text_alignment(), palette().disabled_text_back(), Gfx::TextElision::Right, text_wrapping());
+        painter.draw_text(text_rect, text(), font(), text_alignment(), palette().disabled_text_front(), Gfx::TextElision::Right, text_wrapping());
     }
 }
 
 void Label::size_to_fit()
 {
-    set_fixed_width(font().width(m_text));
+    set_fixed_width(font().width(m_text) + m_autosize_padding * 2);
 }
 
 int Label::preferred_height() const

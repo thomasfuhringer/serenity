@@ -1,21 +1,18 @@
 /*
  * Copyright (c) 2020, the SerenityOS developers.
+ * Copyright (c) 2022, the SerenityOS developers.
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #include "BoardView.h"
 #include <LibGUI/Painter.h>
-#include <LibGfx/Font.h>
-#include <LibGfx/FontDatabase.h>
+#include <LibGfx/Font/Font.h>
+#include <LibGfx/Font/FontDatabase.h>
 #include <LibGfx/Palette.h>
 
 BoardView::BoardView(Game::Board const* board)
     : m_board(board)
-{
-}
-
-BoardView::~BoardView()
 {
 }
 

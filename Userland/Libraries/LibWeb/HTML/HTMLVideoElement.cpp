@@ -8,13 +8,11 @@
 
 namespace Web::HTML {
 
-HTMLVideoElement::HTMLVideoElement(DOM::Document& document, QualifiedName qualified_name)
+HTMLVideoElement::HTMLVideoElement(DOM::Document& document, DOM::QualifiedName qualified_name)
     : HTMLMediaElement(document, move(qualified_name))
 {
 }
 
-HTMLVideoElement::~HTMLVideoElement()
-{
-}
+HTMLVideoElement::~HTMLVideoElement() = default;
 
 }

@@ -5,14 +5,13 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-#include <AK/ByteBuffer.h>
-#include <AK/Singleton.h>
 #include <AK/Types.h>
 #include <Kernel/Arch/x86/IO.h>
 #include <Kernel/Debug.h>
 #include <Kernel/Devices/DeviceManagement.h>
 #include <Kernel/Devices/HID/HIDManagement.h>
 #include <Kernel/Devices/HID/PS2KeyboardDevice.h>
+#include <Kernel/Scheduler.h>
 #include <Kernel/Sections.h>
 #include <Kernel/TTY/ConsoleManagement.h>
 #include <Kernel/WorkQueue.h>
@@ -51,7 +50,12 @@ void PS2KeyboardDevice::irq_handle_byte_read(u8 byte)
         update_modifier(Mod_Ctrl, pressed);
         break;
     case 0x5b:
-        update_modifier(Mod_Super, pressed);
+        m_left_super_pressed = pressed;
+        update_modifier(Mod_Super, m_left_super_pressed || m_right_super_pressed);
+        break;
+    case 0x5c:
+        m_right_super_pressed = pressed;
+        update_modifier(Mod_Super, m_left_super_pressed || m_right_super_pressed);
         break;
     case 0x2a:
         m_left_shift_pressed = pressed;
@@ -67,43 +71,39 @@ void PS2KeyboardDevice::irq_handle_byte_read(u8 byte)
         break;
     default:
         if ((m_modifiers & Mod_Alt) != 0 && ch >= 2 && ch <= ConsoleManagement::s_max_virtual_consoles + 1) {
-            g_io_work->queue([ch]() {
+            // FIXME: Do something sanely here if we can't allocate a work queue?
+            MUST(g_io_work->try_queue([ch]() {
                 ConsoleManagement::the().switch_to(ch - 0x02);
-            });
+            }));
         }
         key_state_changed(ch, pressed);
     }
 }
 
-bool PS2KeyboardDevice::handle_irq(const RegisterState&)
+bool PS2KeyboardDevice::handle_irq(RegisterState const&)
 {
     // The controller will read the data and call irq_handle_byte_read
     // for the appropriate device
     return m_i8042_controller->irq_process_input_buffer(HIDDevice::Type::Keyboard);
 }
 
-UNMAP_AFTER_INIT RefPtr<PS2KeyboardDevice> PS2KeyboardDevice::try_to_initialize(const I8042Controller& ps2_controller)
+UNMAP_AFTER_INIT ErrorOr<NonnullRefPtr<PS2KeyboardDevice>> PS2KeyboardDevice::try_to_initialize(I8042Controller const& ps2_controller)
 {
-    auto keyboard_device_or_error = DeviceManagement::try_create_device<PS2KeyboardDevice>(ps2_controller);
-    // FIXME: Find a way to propagate errors
-    VERIFY(!keyboard_device_or_error.is_error());
-    if (keyboard_device_or_error.value()->initialize())
-        return keyboard_device_or_error.release_value();
-    return nullptr;
+    auto keyboard_device = TRY(DeviceManagement::try_create_device<PS2KeyboardDevice>(ps2_controller));
+
+    TRY(keyboard_device->initialize());
+
+    return keyboard_device;
 }
 
-UNMAP_AFTER_INIT bool PS2KeyboardDevice::initialize()
+UNMAP_AFTER_INIT ErrorOr<void> PS2KeyboardDevice::initialize()
 {
-    if (!m_i8042_controller->reset_device(HIDDevice::Type::Keyboard)) {
-        dbgln("KeyboardDevice: I8042 controller failed to reset device");
-        return false;
-    }
-    return true;
+    return m_i8042_controller->reset_device(HIDDevice::Type::Keyboard);
 }
 
 // FIXME: UNMAP_AFTER_INIT might not be correct, because in practice PS/2 devices
 // are hot pluggable.
-UNMAP_AFTER_INIT PS2KeyboardDevice::PS2KeyboardDevice(const I8042Controller& ps2_controller)
+UNMAP_AFTER_INIT PS2KeyboardDevice::PS2KeyboardDevice(I8042Controller const& ps2_controller)
     : IRQHandler(IRQ_KEYBOARD)
     , KeyboardDevice()
     , I8042Device(ps2_controller)
@@ -112,8 +112,6 @@ UNMAP_AFTER_INIT PS2KeyboardDevice::PS2KeyboardDevice(const I8042Controller& ps2
 
 // FIXME: UNMAP_AFTER_INIT might not be correct, because in practice PS/2 devices
 // are hot pluggable.
-UNMAP_AFTER_INIT PS2KeyboardDevice::~PS2KeyboardDevice()
-{
-}
+UNMAP_AFTER_INIT PS2KeyboardDevice::~PS2KeyboardDevice() = default;
 
 }

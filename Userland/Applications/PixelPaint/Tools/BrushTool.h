@@ -1,6 +1,7 @@
 /*
  * Copyright (c) 2020, Ben Jilks <benjyjilks@gmail.com>
  * Copyright (c) 2021, Mustafa Quraish <mustafa@serenityos.org>
+ * Copyright (c) 2022, the SerenityOS developers.
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -13,8 +14,8 @@ namespace PixelPaint {
 
 class BrushTool : public Tool {
 public:
-    BrushTool();
-    virtual ~BrushTool() override;
+    BrushTool() = default;
+    virtual ~BrushTool() override = default;
 
     virtual void on_mousedown(Layer*, MouseEvent&) override;
     virtual void on_mousemove(Layer*, MouseEvent&) override;
@@ -27,6 +28,12 @@ public:
 
     void set_hardness(int hardness) { m_hardness = hardness; }
     int hardness() const { return m_hardness; }
+
+    double get_falloff(double distance)
+    {
+        double multiplicand = hardness() == 100 ? 1.0 : 1.0 / (100 - hardness());
+        return (1.0 - double { distance / size() }) * multiplicand;
+    }
 
 protected:
     virtual Color color_for(GUI::MouseEvent const& event);

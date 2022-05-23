@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2018-2020, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2022, the SerenityOS developers.
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -12,6 +13,8 @@
 
 namespace Core {
 
+class IODevice;
+
 // This is not necessarily a valid iterator in all contexts,
 // if we had concepts, this would be InputIterator, not Copyable, Movable.
 class LineIterator {
@@ -20,7 +23,7 @@ class LineIterator {
 public:
     explicit LineIterator(IODevice&, bool is_end = false);
 
-    bool operator==(const LineIterator& other) const { return &other == this || (at_end() && other.is_end()) || (other.at_end() && is_end()); }
+    bool operator==(LineIterator const& other) const { return &other == this || (at_end() && other.is_end()) || (other.at_end() && is_end()); }
     bool is_end() const { return m_is_end; }
     bool at_end() const;
 
@@ -32,6 +35,20 @@ private:
     NonnullRefPtr<IODevice> m_device;
     bool m_is_end { false };
     String m_buffer;
+};
+
+class LineRange {
+public:
+    LineRange() = delete;
+    explicit LineRange(IODevice& device)
+        : m_device(device)
+    {
+    }
+    LineIterator begin();
+    LineIterator end();
+
+private:
+    IODevice& m_device;
 };
 
 enum class OpenMode : unsigned {
@@ -56,7 +73,7 @@ AK_ENUM_BITWISE_OPERATORS(OpenMode)
 class IODevice : public Object {
     C_OBJECT_ABSTRACT(IODevice)
 public:
-    virtual ~IODevice() override;
+    virtual ~IODevice() override = default;
 
     int fd() const { return m_fd; }
     OpenMode mode() const { return m_mode; }
@@ -64,7 +81,7 @@ public:
     bool eof() const { return m_eof; }
 
     int error() const { return m_error; }
-    const char* error_string() const;
+    char const* error_string() const;
 
     bool has_error() const { return m_error != 0; }
 
@@ -74,7 +91,7 @@ public:
     ByteBuffer read_all();
     String read_line(size_t max_size = 16384);
 
-    bool write(const u8*, int size);
+    bool write(u8 const*, int size);
     bool write(StringView);
 
     bool truncate(off_t);
@@ -91,6 +108,10 @@ public:
 
     LineIterator line_begin() & { return LineIterator(*this); }
     LineIterator line_end() { return LineIterator(*this, true); }
+    LineRange lines()
+    {
+        return LineRange(*this);
+    }
 
 protected:
     explicit IODevice(Object* parent = nullptr);

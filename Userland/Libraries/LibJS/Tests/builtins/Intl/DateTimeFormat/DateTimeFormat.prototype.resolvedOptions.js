@@ -1,19 +1,16 @@
-// NOTE: We cannot yet test the fields of ECMA-402's Table 4 (week, day, etc.) because those fields
-//       won't be copied into the Intl.DateTimeFormat object until the date-time pattern generator
-//       actually parses the CLDR patterns (see parse_date_time_pattern).
 describe("correct behavior", () => {
     test("length is 0", () => {
         expect(Intl.DateTimeFormat.prototype.resolvedOptions).toHaveLength(0);
     });
 
     test("locale only contains relevant extension keys", () => {
-        const en1 = Intl.NumberFormat("en-u-ca-islamicc");
+        const en1 = Intl.DateTimeFormat("en-u-co-case");
         expect(en1.resolvedOptions().locale).toBe("en");
 
-        const en2 = Intl.NumberFormat("en-u-nu-latn");
+        const en2 = Intl.DateTimeFormat("en-u-nu-latn");
         expect(en2.resolvedOptions().locale).toBe("en-u-nu-latn");
 
-        const en3 = Intl.NumberFormat("en-u-ca-islamicc-nu-latn");
+        const en3 = Intl.DateTimeFormat("en-u-co-case-nu-latn");
         expect(en3.resolvedOptions().locale).toBe("en-u-nu-latn");
     });
 
@@ -21,32 +18,27 @@ describe("correct behavior", () => {
         const en = Intl.DateTimeFormat("en", { calendar: "gregory" });
         expect(en.resolvedOptions().calendar).toBe("gregory");
 
-        const el = Intl.DateTimeFormat("el", { calendar: "generic" });
-        expect(el.resolvedOptions().calendar).toBe("generic");
+        const el = Intl.DateTimeFormat("el", { calendar: "gregory" });
+        expect(el.resolvedOptions().calendar).toBe("gregory");
     });
 
     test("calendar may be set by locale extension", () => {
         const en = Intl.DateTimeFormat("en-u-ca-gregory");
         expect(en.resolvedOptions().calendar).toBe("gregory");
 
-        const el = Intl.DateTimeFormat("el-u-ca-generic");
-        expect(el.resolvedOptions().calendar).toBe("generic");
+        const el = Intl.DateTimeFormat("el-u-ca-gregory");
+        expect(el.resolvedOptions().calendar).toBe("gregory");
     });
 
     test("calendar option overrides locale extension", () => {
-        const el = Intl.DateTimeFormat("el-u-ca-generic", { calendar: "gregory" });
+        const el = Intl.DateTimeFormat("el-u-ca-gregory", { calendar: "gregory" });
         expect(el.resolvedOptions().calendar).toBe("gregory");
     });
 
     test("calendar option limited to known 'ca' values", () => {
-        ["generic", "hello"].forEach(calendar => {
+        ["gregory", "hello"].forEach(calendar => {
             const en = Intl.DateTimeFormat("en", { calendar: calendar });
-            expect(en.resolvedOptions().calendar).toBe("generic");
-        });
-
-        ["generic", "hello"].forEach(calendar => {
-            const en = Intl.DateTimeFormat(`en-u-ca-${calendar}`);
-            expect(en.resolvedOptions().calendar).toBe("generic");
+            expect(en.resolvedOptions().calendar).toBe("gregory");
         });
     });
 
@@ -93,9 +85,9 @@ describe("correct behavior", () => {
         });
     });
 
-    test("style", () => {
-        const en = new Intl.DateTimeFormat("en");
-        expect(en.resolvedOptions().timeZone).toBe("UTC");
+    test("timeZone", () => {
+        const en = new Intl.DateTimeFormat("en", { timeZone: "EST" });
+        expect(en.resolvedOptions().timeZone).toBe("EST");
 
         const el = new Intl.DateTimeFormat("el", { timeZone: "UTC" });
         expect(el.resolvedOptions().timeZone).toBe("UTC");
@@ -119,5 +111,86 @@ describe("correct behavior", () => {
             const el = new Intl.DateTimeFormat("el", { timeStyle: style });
             expect(el.resolvedOptions().timeStyle).toBe(style);
         });
+    });
+
+    test("weekday", () => {
+        ["narrow", "short", "long"].forEach(weekday => {
+            const en = new Intl.DateTimeFormat("en", { weekday: weekday });
+            expect(en.resolvedOptions().weekday).toBe(weekday);
+        });
+    });
+
+    test("era", () => {
+        ["narrow", "short", "long"].forEach(era => {
+            const en = new Intl.DateTimeFormat("en", { era: era });
+            expect(en.resolvedOptions().era).toBe(era);
+        });
+    });
+
+    test("year", () => {
+        ["2-digit", "numeric"].forEach(year => {
+            const en = new Intl.DateTimeFormat("en", { year: year });
+            expect(en.resolvedOptions().year).toBe(year);
+        });
+    });
+
+    test("month", () => {
+        ["2-digit", "numeric", "narrow", "short", "long"].forEach(month => {
+            const en = new Intl.DateTimeFormat("en", { month: month });
+            expect(en.resolvedOptions().month).toBe(month);
+        });
+    });
+
+    test("day", () => {
+        ["2-digit", "numeric"].forEach(day => {
+            const en = new Intl.DateTimeFormat("en", { day: day });
+            expect(en.resolvedOptions().day).toBe(day);
+        });
+    });
+
+    test("dayPeriod", () => {
+        ["narrow", "short", "long"].forEach(dayPeriod => {
+            const en = new Intl.DateTimeFormat("en", { dayPeriod: dayPeriod });
+            expect(en.resolvedOptions().dayPeriod).toBe(dayPeriod);
+        });
+    });
+
+    test("hour", () => {
+        ["2-digit", "numeric"].forEach(hour => {
+            const en = new Intl.DateTimeFormat("en", { hour: hour });
+            expect(en.resolvedOptions().hour).toBe(hour);
+        });
+    });
+
+    test("minute", () => {
+        ["2-digit", "numeric"].forEach(minute => {
+            const en = new Intl.DateTimeFormat("en", { minute: minute });
+            expect(en.resolvedOptions().minute).toBe("2-digit");
+        });
+    });
+
+    test("second", () => {
+        ["2-digit", "numeric"].forEach(second => {
+            const en = new Intl.DateTimeFormat("en", { second: second });
+            expect(en.resolvedOptions().second).toBe("2-digit");
+        });
+    });
+
+    test("fractionalSecondDigits", () => {
+        [1, 2, 3].forEach(fractionalSecondDigits => {
+            const en = new Intl.DateTimeFormat("en", {
+                fractionalSecondDigits: fractionalSecondDigits,
+            });
+            expect(en.resolvedOptions().fractionalSecondDigits).toBe(fractionalSecondDigits);
+        });
+    });
+
+    test("timeZoneName", () => {
+        ["short", "long", "shortOffset", "longOffset", "shortGeneric", "longGeneric"].forEach(
+            timeZoneName => {
+                const en = new Intl.DateTimeFormat("en", { timeZoneName: timeZoneName });
+                expect(en.resolvedOptions().timeZoneName).toBe(timeZoneName);
+            }
+        );
     });
 });

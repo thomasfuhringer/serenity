@@ -22,7 +22,7 @@ UNMAP_AFTER_INIT NonnullRefPtr<Console> Console::must_create(PCI::DeviceIdentifi
 UNMAP_AFTER_INIT void Console::initialize()
 {
     Device::initialize();
-    if (auto cfg = get_config(ConfigurationType::Device)) {
+    if (auto const* cfg = get_config(ConfigurationType::Device)) {
         bool success = negotiate_features([&](u64 supported_features) {
             u64 negotiated = 0;
             if (is_feature_set(supported_features, VIRTIO_CONSOLE_F_SIZE))
@@ -123,8 +123,8 @@ void Console::handle_queue_update(u16 queue_index)
 
 void Console::setup_multiport()
 {
-    m_control_receive_buffer = make<Memory::RingBuffer>("VirtIOConsole control receive queue", CONTROL_BUFFER_SIZE);
-    m_control_transmit_buffer = make<Memory::RingBuffer>("VirtIOConsole control transmit queue", CONTROL_BUFFER_SIZE);
+    m_control_receive_buffer = Memory::RingBuffer::try_create("VirtIOConsole control receive queue"sv, CONTROL_BUFFER_SIZE).release_value_but_fixme_should_propagate_errors();
+    m_control_transmit_buffer = Memory::RingBuffer::try_create("VirtIOConsole control transmit queue"sv, CONTROL_BUFFER_SIZE).release_value_but_fixme_should_propagate_errors();
 
     auto& queue = get_queue(CONTROL_RECEIVEQ);
     SpinlockLocker queue_lock(queue.lock());
@@ -151,17 +151,21 @@ void Console::process_control_message(ControlMessage message)
 {
     switch (message.event) {
     case (u16)ControlEvent::DeviceAdd: {
-        g_io_work->queue([message, this]() -> void {
+        // FIXME: Do something sanely here if we can't allocate a work queue?
+        MUST(g_io_work->try_queue([message, this]() -> void {
             u32 id = message.id;
             if (id >= m_ports.size()) {
                 dbgln("Device provided an invalid port number {}. max_nr_ports: {}", id, m_ports.size());
                 return;
-            } else if (!m_ports.at(id).is_null()) {
+            }
+            if (!m_ports.at(id).is_null()) {
                 dbgln("Device tried to add port {} which was already added!", id);
                 return;
             }
 
-            m_ports.at(id) = MUST(DeviceManagement::the().try_create_device<VirtIO::ConsolePort>(id, *this));
+            auto port = MUST(DeviceManagement::the().try_create_device<VirtIO::ConsolePort>(id, *this));
+            port->init_receive_buffer({});
+            m_ports.at(id) = port;
 
             ControlMessage ready_event {
                 .id = static_cast<u32>(id),
@@ -169,7 +173,7 @@ void Console::process_control_message(ControlMessage message)
                 .value = (u16)ControlMessage::Status::Success
             };
             write_control_message(ready_event);
-        });
+        }));
 
         break;
     }
@@ -178,7 +182,8 @@ void Console::process_control_message(ControlMessage message)
         if (message.id >= m_ports.size()) {
             dbgln("Device provided an invalid port number {}. max_nr_ports: {}", message.id, m_ports.size());
             return;
-        } else if (m_ports.at(message.id).is_null()) {
+        }
+        if (m_ports.at(message.id).is_null()) {
             dbgln("Device tried to open port {} which was not added!", message.id);
             return;
         }

@@ -6,7 +6,7 @@
 
 #include "Compositor.h"
 #include "Animation.h"
-#include "ClientConnection.h"
+#include "ConnectionFromClient.h"
 #include "Event.h"
 #include "EventLoop.h"
 #include "MultiScaleBitmaps.h"
@@ -17,7 +17,7 @@
 #include <AK/Memory.h>
 #include <AK/ScopeGuard.h>
 #include <LibCore/Timer.h>
-#include <LibGfx/Font.h>
+#include <LibGfx/Font/Font.h>
 #include <LibGfx/Painter.h>
 #include <LibGfx/StylePainter.h>
 #include <LibThreading/BackgroundAction.h>
@@ -30,7 +30,7 @@ Compositor& Compositor::the()
     return s_the;
 }
 
-static WallpaperMode mode_to_enum(const String& name)
+static WallpaperMode mode_to_enum(String const& name)
 {
     if (name == "tile")
         return WallpaperMode::Tile;
@@ -66,19 +66,19 @@ Compositor::Compositor()
     init_bitmaps();
 }
 
-const Gfx::Bitmap* Compositor::cursor_bitmap_for_screenshot(Badge<ClientConnection>, Screen& screen) const
+Gfx::Bitmap const* Compositor::cursor_bitmap_for_screenshot(Badge<ConnectionFromClient>, Screen& screen) const
 {
     if (!m_current_cursor)
         return nullptr;
     return &m_current_cursor->bitmap(screen.scale_factor());
 }
 
-const Gfx::Bitmap& Compositor::front_bitmap_for_screenshot(Badge<ClientConnection>, Screen& screen) const
+Gfx::Bitmap const& Compositor::front_bitmap_for_screenshot(Badge<ConnectionFromClient>, Screen& screen) const
 {
     return *screen.compositor_screen_data().m_front_bitmap;
 }
 
-Gfx::Color Compositor::color_at_position(Badge<ClientConnection>, Screen& screen, Gfx::IntPoint const& position) const
+Gfx::Color Compositor::color_at_position(Badge<ConnectionFromClient>, Screen& screen, Gfx::IntPoint const& position) const
 {
     return screen.compositor_screen_data().m_front_bitmap->get_pixel(position);
 }
@@ -255,7 +255,7 @@ void Compositor::compose()
     bool need_to_draw_cursor = false;
     Gfx::IntRect previous_cursor_rect;
     Screen* previous_cursor_screen = nullptr;
-    auto check_restore_cursor_back = [&](Screen& screen, const Gfx::IntRect& rect) {
+    auto check_restore_cursor_back = [&](Screen& screen, Gfx::IntRect const& rect) {
         if (&screen == &cursor_screen && !previous_cursor_screen && !need_to_draw_cursor && rect.intersects(cursor_rect)) {
             // Restore what's behind the cursor if anything touches the area of the cursor
             need_to_draw_cursor = true;
@@ -274,7 +274,7 @@ void Compositor::compose()
         m_current_cursor_screen = &cursor_screen;
     }
 
-    auto prepare_rect = [&](Screen& screen, const Gfx::IntRect& rect) {
+    auto prepare_rect = [&](Screen& screen, Gfx::IntRect const& rect) {
         auto& screen_data = screen.compositor_screen_data();
         dbgln_if(COMPOSE_DEBUG, "    -> flush opaque: {}", rect);
         VERIFY(!screen_data.m_flush_rects.intersects(rect));
@@ -284,7 +284,7 @@ void Compositor::compose()
         check_restore_cursor_back(screen, rect);
     };
 
-    auto prepare_transparency_rect = [&](Screen& screen, const Gfx::IntRect& rect) {
+    auto prepare_transparency_rect = [&](Screen& screen, Gfx::IntRect const& rect) {
         auto& screen_data = screen.compositor_screen_data();
         dbgln_if(COMPOSE_DEBUG, "   -> flush transparent: {}", rect);
         VERIFY(!screen_data.m_flush_rects.intersects(rect));
@@ -301,7 +301,7 @@ void Compositor::compose()
     if (!cursor_screen.compositor_screen_data().m_cursor_back_bitmap || m_invalidated_cursor)
         check_restore_cursor_back(cursor_screen, cursor_rect);
 
-    auto paint_wallpaper = [&](Screen& screen, Gfx::Painter& painter, const Gfx::IntRect& rect, const Gfx::IntRect& screen_rect) {
+    auto paint_wallpaper = [&](Screen& screen, Gfx::Painter& painter, Gfx::IntRect const& rect, Gfx::IntRect const& screen_rect) {
         // FIXME: If the wallpaper is opaque and covers the whole rect, no need to fill with color!
         painter.fill_rect(rect, background_color);
         if (m_wallpaper) {
@@ -629,7 +629,9 @@ void Compositor::flush(Screen& screen)
             bounding_flash = bounding_flash.united(rect);
         }
         if (!bounding_flash.is_empty()) {
-            if (device_can_flush_buffers) {
+            if (screen.can_device_flush_entire_buffer()) {
+                screen.flush_display_entire_framebuffer();
+            } else if (device_can_flush_buffers) {
                 // If the device needs a flush we need to let it know that we
                 // modified the front buffer!
                 bounding_flash.translate_by(-screen_rect.location());
@@ -672,8 +674,8 @@ void Compositor::flush(Screen& screen)
         // a scale applied. But this routine accesses the backbuffer pixels directly, so it
         // must work in physical coordinates.
         auto scaled_rect = rect * screen.scale_factor();
-        Gfx::RGBA32* front_ptr = screen_data.m_front_bitmap->scanline(scaled_rect.y()) + scaled_rect.x();
-        Gfx::RGBA32* back_ptr = screen_data.m_back_bitmap->scanline(scaled_rect.y()) + scaled_rect.x();
+        Gfx::ARGB32* front_ptr = screen_data.m_front_bitmap->scanline(scaled_rect.y()) + scaled_rect.x();
+        Gfx::ARGB32* back_ptr = screen_data.m_back_bitmap->scanline(scaled_rect.y()) + scaled_rect.x();
         size_t pitch = screen_data.m_back_bitmap->pitch();
 
         // NOTE: The meaning of a flush depends on whether we can flip buffers or not.
@@ -685,8 +687,8 @@ void Compositor::flush(Screen& screen)
         //       If flipping is not supported, flushing means that we copy the changed
         //       rects from the backing bitmap to the display framebuffer.
 
-        Gfx::RGBA32* to_ptr;
-        const Gfx::RGBA32* from_ptr;
+        Gfx::ARGB32* to_ptr;
+        const Gfx::ARGB32* from_ptr;
 
         if (screen_data.m_screen_can_set_buffer) {
             to_ptr = back_ptr;
@@ -698,8 +700,8 @@ void Compositor::flush(Screen& screen)
 
         for (int y = 0; y < scaled_rect.height(); ++y) {
             fast_u32_copy(to_ptr, from_ptr, scaled_rect.width());
-            from_ptr = (const Gfx::RGBA32*)((const u8*)from_ptr + pitch);
-            to_ptr = (Gfx::RGBA32*)((u8*)to_ptr + pitch);
+            from_ptr = (const Gfx::ARGB32*)((const u8*)from_ptr + pitch);
+            to_ptr = (Gfx::ARGB32*)((u8*)to_ptr + pitch);
         }
         if (device_can_flush_buffers) {
             // Whether or not we need to flush buffers, we need to at least track what we modified
@@ -721,6 +723,13 @@ void Compositor::flush(Screen& screen)
         // now so that they can be sent to the device.
         screen.flush_display(screen_data.m_buffers_are_flipped ? 1 : 0);
     }
+
+    // Note: We write all contents from the internal buffer of WindowServer Screen
+    // to the actual framebuffer with the write() syscall, but after we flush the screen
+    // to ensure we are in a "clean state"...
+    // FIXME: This write is completely inefficient and needs to be done in chunks
+    // only when appropriate...
+    screen.write_all_display_contents();
 }
 
 void Compositor::invalidate_screen()
@@ -728,7 +737,7 @@ void Compositor::invalidate_screen()
     invalidate_screen(Screen::bounding_rect());
 }
 
-void Compositor::invalidate_screen(const Gfx::IntRect& screen_rect)
+void Compositor::invalidate_screen(Gfx::IntRect const& screen_rect)
 {
     m_dirty_screen_rects.add(screen_rect.intersected(Screen::bounding_rect()));
 
@@ -773,7 +782,7 @@ void Compositor::start_compose_async_timer()
     }
 }
 
-bool Compositor::set_background_color(const String& background_color)
+bool Compositor::set_background_color(String const& background_color)
 {
     auto color = Color::from_string(background_color);
     if (!color.has_value())
@@ -783,48 +792,36 @@ bool Compositor::set_background_color(const String& background_color)
 
     auto& wm = WindowManager::the();
     wm.config()->write_entry("Background", "Color", background_color);
-    bool ret_val = wm.config()->sync();
+    bool succeeded = !wm.config()->sync().is_error();
 
-    if (ret_val)
+    if (succeeded)
         Compositor::invalidate_screen();
 
-    return ret_val;
+    return succeeded;
 }
 
-bool Compositor::set_wallpaper_mode(const String& mode)
+bool Compositor::set_wallpaper_mode(String const& mode)
 {
     auto& wm = WindowManager::the();
     wm.config()->write_entry("Background", "Mode", mode);
-    bool ret_val = wm.config()->sync();
+    bool succeeded = !wm.config()->sync().is_error();
 
-    if (ret_val) {
+    if (succeeded) {
         m_wallpaper_mode = mode_to_enum(mode);
         Compositor::invalidate_screen();
     }
 
-    return ret_val;
+    return succeeded;
 }
 
-bool Compositor::set_wallpaper(const String& path, Function<void(bool)>&& callback)
+bool Compositor::set_wallpaper(RefPtr<Gfx::Bitmap> bitmap)
 {
-    Threading::BackgroundAction<ErrorOr<NonnullRefPtr<Gfx::Bitmap>>>::construct(
-        [path](auto&) {
-            return Gfx::Bitmap::try_load_from_file(path);
-        },
+    if (!bitmap)
+        m_wallpaper = nullptr;
+    else
+        m_wallpaper = bitmap;
+    invalidate_screen();
 
-        [this, path, callback = move(callback)](ErrorOr<NonnullRefPtr<Gfx::Bitmap>> bitmap) {
-            if (bitmap.is_error() && !path.is_empty()) {
-                callback(false);
-                return;
-            }
-            m_wallpaper_path = path;
-            if (bitmap.is_error())
-                m_wallpaper = nullptr;
-            else
-                m_wallpaper = bitmap.release_value();
-            invalidate_screen();
-            callback(true);
-        });
     return true;
 }
 
@@ -868,7 +865,7 @@ void Compositor::invalidate_cursor(bool compose_immediately)
         start_compose_async_timer();
 }
 
-void Compositor::change_cursor(const Cursor* cursor)
+void Compositor::change_cursor(Cursor const* cursor)
 {
     if (m_current_cursor == cursor)
         return;
@@ -947,7 +944,7 @@ void Compositor::remove_overlay(Overlay& overlay)
     overlay_rects_changed();
 }
 
-void CompositorScreenData::draw_cursor(Screen& screen, const Gfx::IntRect& cursor_rect)
+void CompositorScreenData::draw_cursor(Screen& screen, Gfx::IntRect const& cursor_rect)
 {
     auto& wm = WindowManager::the();
 
@@ -989,19 +986,19 @@ void Compositor::update_fonts()
 
 void Compositor::notify_display_links()
 {
-    ClientConnection::for_each_client([](auto& client) {
+    ConnectionFromClient::for_each_client([](auto& client) {
         client.notify_display_link({});
     });
 }
 
-void Compositor::increment_display_link_count(Badge<ClientConnection>)
+void Compositor::increment_display_link_count(Badge<ConnectionFromClient>)
 {
     ++m_display_link_count;
     if (m_display_link_count == 1)
         m_display_link_notify_timer->start();
 }
 
-void Compositor::decrement_display_link_count(Badge<ClientConnection>)
+void Compositor::decrement_display_link_count(Badge<ConnectionFromClient>)
 {
     VERIFY(m_display_link_count);
     --m_display_link_count;
@@ -1019,7 +1016,7 @@ void Compositor::invalidate_current_screen_number_rects()
     });
 }
 
-void Compositor::increment_show_screen_number(Badge<ClientConnection>)
+void Compositor::increment_show_screen_number(Badge<ConnectionFromClient>)
 {
     if (m_show_screen_number_count++ == 0) {
         Screen::for_each([&](auto& screen) {
@@ -1031,7 +1028,7 @@ void Compositor::increment_show_screen_number(Badge<ClientConnection>)
         });
     }
 }
-void Compositor::decrement_show_screen_number(Badge<ClientConnection>)
+void Compositor::decrement_show_screen_number(Badge<ConnectionFromClient>)
 {
     if (--m_show_screen_number_count == 0) {
         invalidate_current_screen_number_rects();
@@ -1472,9 +1469,25 @@ void Compositor::unregister_animation(Badge<Animation>, Animation& animation)
 void Compositor::update_animations(Screen& screen, Gfx::DisjointRectSet& flush_rects)
 {
     auto& painter = *screen.compositor_screen_data().m_back_painter;
-    for (RefPtr<Animation> animation : m_animations) {
-        animation->update({}, painter, screen, flush_rects);
-    }
+    // Iterating over the animations using remove_all_matching we can iterate
+    // and immediately remove finished animations without having to keep track
+    // of them in a separate container.
+    m_animations.remove_all_matching([&](auto* animation) {
+        if (!animation->update({}, painter, screen, flush_rects)) {
+            // Mark it as removed so that the Animation::on_stop handler doesn't
+            // trigger the Animation object from being destroyed, causing it to
+            // unregister while we still loop over them.
+            animation->was_removed({});
+
+            // Temporarily bump the ref count so that if the Animation::on_stop
+            // handler clears its own reference, it doesn't immediately destroy
+            // itself while we're still in the Function<> call
+            NonnullRefPtr<Animation> protect_animation(*animation);
+            animation->stop();
+            return true;
+        }
+        return false;
+    });
 }
 
 void Compositor::create_window_stack_switch_overlay(WindowStack& target_stack)

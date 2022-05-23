@@ -1,6 +1,7 @@
 /*
  * Copyright (c) 2018-2020, Andreas Kling <kling@serenityos.org>
  * Copyright (c) 2021, Mustafa Quraish <mustafa@serenityos.org>
+ * Copyright (c) 2022, the SerenityOS developers.
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -10,8 +11,8 @@
 #include <LibConfig/Client.h>
 #include <LibGUI/Painter.h>
 #include <LibGfx/Bitmap.h>
-#include <LibGfx/Font.h>
-#include <LibGfx/FontDatabase.h>
+#include <LibGfx/Font/Font.h>
+#include <LibGfx/Font/FontDatabase.h>
 
 SnakeGame::SnakeGame()
 {
@@ -24,10 +25,6 @@ SnakeGame::SnakeGame()
 
     m_high_score = Config::read_i32("Snake", "Snake", "HighScore", 0);
     m_high_score_text = String::formatted("Best: {}", m_high_score);
-}
-
-SnakeGame::~SnakeGame()
-{
 }
 
 void SnakeGame::reset()
@@ -44,7 +41,7 @@ void SnakeGame::reset()
     update();
 }
 
-bool SnakeGame::is_available(const Coordinate& coord)
+bool SnakeGame::is_available(Coordinate const& coord)
 {
     for (size_t i = 0; i < m_tail.size(); ++i) {
         if (m_tail[i] == coord)
@@ -174,7 +171,7 @@ void SnakeGame::keydown_event(GUI::KeyEvent& event)
     }
 }
 
-Gfx::IntRect SnakeGame::cell_rect(const Coordinate& coord) const
+Gfx::IntRect SnakeGame::cell_rect(Coordinate const& coord) const
 {
     auto game_rect = frame_inner_rect();
     auto cell_size = Gfx::IntSize(game_rect.width() / m_columns, game_rect.height() / m_rows);
@@ -227,7 +224,7 @@ void SnakeGame::queue_velocity(int v, int h)
     m_velocity_queue.enqueue({ v, h });
 }
 
-const SnakeGame::Velocity& SnakeGame::last_velocity() const
+SnakeGame::Velocity const& SnakeGame::last_velocity() const
 {
     if (!m_velocity_queue.is_empty())
         return m_velocity_queue.last();

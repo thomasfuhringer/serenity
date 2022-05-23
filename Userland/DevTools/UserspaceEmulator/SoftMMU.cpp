@@ -305,11 +305,11 @@ void SoftMMU::write256(X86::LogicalAddress address, ValueWithShadow<u256> value)
     region->write256(address.offset() - region->base(), value);
 }
 
-void SoftMMU::copy_to_vm(FlatPtr destination, const void* source, size_t size)
+void SoftMMU::copy_to_vm(FlatPtr destination, void const* source, size_t size)
 {
     // FIXME: We should have a way to preserve the shadow data here as well.
     for (size_t i = 0; i < size; ++i)
-        write8({ 0x23, destination + i }, shadow_wrap_as_initialized(((const u8*)source)[i]));
+        write8({ 0x23, destination + i }, shadow_wrap_as_initialized(((u8 const*)source)[i]));
 }
 
 void SoftMMU::copy_from_vm(void* destination, const FlatPtr source, size_t size)
@@ -321,7 +321,7 @@ void SoftMMU::copy_from_vm(void* destination, const FlatPtr source, size_t size)
 
 ByteBuffer SoftMMU::copy_buffer_from_vm(const FlatPtr source, size_t size)
 {
-    auto buffer = ByteBuffer::create_uninitialized(size).release_value(); // FIXME: Handle possible OOM situation.
+    auto buffer = ByteBuffer::create_uninitialized(size).release_value_but_fixme_should_propagate_errors(); // FIXME: Handle possible OOM situation.
     copy_from_vm(buffer.data(), source, size);
     return buffer;
 }
@@ -336,7 +336,7 @@ bool SoftMMU::fast_fill_memory8(X86::LogicalAddress address, size_t size, ValueW
     if (!region->contains(address.offset() + size - 1))
         return false;
 
-    if (is<MmapRegion>(*region) && static_cast<const MmapRegion&>(*region).is_malloc_block()) {
+    if (is<MmapRegion>(*region) && static_cast<MmapRegion const&>(*region).is_malloc_block()) {
         if (auto* tracer = m_emulator.malloc_tracer()) {
             // FIXME: Add a way to audit an entire range of memory instead of looping here!
             for (size_t i = 0; i < size; ++i) {
@@ -347,7 +347,7 @@ bool SoftMMU::fast_fill_memory8(X86::LogicalAddress address, size_t size, ValueW
 
     size_t offset_in_region = address.offset() - region->base();
     memset(region->data() + offset_in_region, value.value(), size);
-    memset(region->shadow_data() + offset_in_region, value.shadow(), size);
+    memset(region->shadow_data() + offset_in_region, value.shadow()[0], size);
     return true;
 }
 
@@ -361,7 +361,7 @@ bool SoftMMU::fast_fill_memory32(X86::LogicalAddress address, size_t count, Valu
     if (!region->contains(address.offset() + (count * sizeof(u32)) - 1))
         return false;
 
-    if (is<MmapRegion>(*region) && static_cast<const MmapRegion&>(*region).is_malloc_block()) {
+    if (is<MmapRegion>(*region) && static_cast<MmapRegion const&>(*region).is_malloc_block()) {
         if (auto* tracer = m_emulator.malloc_tracer()) {
             // FIXME: Add a way to audit an entire range of memory instead of looping here!
             for (size_t i = 0; i < count; ++i) {
@@ -372,8 +372,13 @@ bool SoftMMU::fast_fill_memory32(X86::LogicalAddress address, size_t count, Valu
 
     size_t offset_in_region = address.offset() - region->base();
     fast_u32_fill((u32*)(region->data() + offset_in_region), value.value(), count);
-    fast_u32_fill((u32*)(region->shadow_data() + offset_in_region), value.shadow(), count);
+    fast_u32_fill((u32*)(region->shadow_data() + offset_in_region), value.shadow_as_value(), count);
     return true;
+}
+
+void SoftMMU::dump_backtrace()
+{
+    m_emulator.dump_backtrace();
 }
 
 }

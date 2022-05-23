@@ -18,14 +18,12 @@ namespace Web::HTML {
 
 static constexpr auto max_canvas_area = 16384 * 16384;
 
-HTMLCanvasElement::HTMLCanvasElement(DOM::Document& document, QualifiedName qualified_name)
+HTMLCanvasElement::HTMLCanvasElement(DOM::Document& document, DOM::QualifiedName qualified_name)
     : HTMLElement(document, move(qualified_name))
 {
 }
 
-HTMLCanvasElement::~HTMLCanvasElement()
-{
-}
+HTMLCanvasElement::~HTMLCanvasElement() = default;
 
 unsigned HTMLCanvasElement::width() const
 {
@@ -40,18 +38,21 @@ unsigned HTMLCanvasElement::height() const
 void HTMLCanvasElement::set_width(unsigned value)
 {
     set_attribute(HTML::AttributeNames::width, String::number(value));
+    m_bitmap = nullptr;
+    if (m_context)
+        m_context->reset_to_default_state();
 }
 
 void HTMLCanvasElement::set_height(unsigned value)
 {
     set_attribute(HTML::AttributeNames::height, String::number(value));
+    m_bitmap = nullptr;
+    if (m_context)
+        m_context->reset_to_default_state();
 }
 
-RefPtr<Layout::Node> HTMLCanvasElement::create_layout_node()
+RefPtr<Layout::Node> HTMLCanvasElement::create_layout_node(NonnullRefPtr<CSS::StyleProperties> style)
 {
-    auto style = document().style_computer().compute_style(*this);
-    if (style->display().is_none())
-        return nullptr;
     return adopt_ref(*new Layout::CanvasBox(document(), *this, move(style)));
 }
 
@@ -64,7 +65,7 @@ CanvasRenderingContext2D* HTMLCanvasElement::get_context(String type)
     return m_context;
 }
 
-static Gfx::IntSize bitmap_size_for_canvas(const HTMLCanvasElement& canvas)
+static Gfx::IntSize bitmap_size_for_canvas(HTMLCanvasElement const& canvas)
 {
     auto width = canvas.width();
     auto height = canvas.height();
@@ -99,7 +100,7 @@ bool HTMLCanvasElement::create_bitmap()
     return m_bitmap;
 }
 
-String HTMLCanvasElement::to_data_url(const String& type, [[maybe_unused]] Optional<double> quality) const
+String HTMLCanvasElement::to_data_url(String const& type, [[maybe_unused]] Optional<double> quality) const
 {
     if (!m_bitmap)
         return {};

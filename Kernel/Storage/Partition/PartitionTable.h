@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2020, Liav A. <liavalb@hotmail.co.il>
+ * Copyright (c) 2020-2022, Liav A. <liavalb@hotmail.co.il>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -16,13 +16,6 @@ namespace Kernel {
 
 class PartitionTable {
 public:
-    enum class Error {
-        Invalid,
-        MBRProtective,
-        ConatinsEBR,
-    };
-
-public:
     Optional<DiskPartitionMetadata> partition(unsigned index);
     size_t partitions_count() const { return m_partitions.size(); }
     virtual ~PartitionTable() = default;
@@ -31,7 +24,7 @@ public:
     Vector<DiskPartitionMetadata> partitions() const { return m_partitions; }
 
 protected:
-    explicit PartitionTable(const StorageDevice&);
+    explicit PartitionTable(StorageDevice const&);
 
     NonnullRefPtr<StorageDevice> m_device;
     Vector<DiskPartitionMetadata> m_partitions;

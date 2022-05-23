@@ -12,7 +12,7 @@
 #include <ctype.h>
 
 namespace Cpp {
-Preprocessor::Preprocessor(const String& filename, StringView program)
+Preprocessor::Preprocessor(String const& filename, StringView program)
     : m_filename(filename)
     , m_program(program)
 {
@@ -24,11 +24,14 @@ Vector<Token> Preprocessor::process_and_lex()
     lexer.set_ignore_whitespace(true);
     auto tokens = lexer.lex();
 
+    m_unprocessed_tokens = tokens;
+
     for (size_t token_index = 0; token_index < tokens.size(); ++token_index) {
         auto& token = tokens[token_index];
         m_current_line = token.start().line;
         if (token.type() == Token::Type::PreprocessorStatement) {
             handle_preprocessor_statement(token.text());
+            m_processed_tokens.append(tokens[token_index]);
             continue;
         }
 
@@ -43,6 +46,7 @@ Vector<Token> Preprocessor::process_and_lex()
                 m_processed_tokens.append(tokens[token_index]);
                 m_processed_tokens.append(tokens[token_index + 1]);
             }
+            ++token_index; // Also skip IncludePath token
             continue;
         }
 
@@ -94,6 +98,7 @@ void Preprocessor::handle_preprocessor_statement(StringView line)
     lexer.consume_specific('#');
     consume_whitespace(lexer);
     auto keyword = lexer.consume_until(' ');
+    lexer.ignore();
     if (keyword.is_empty() || keyword.is_null() || keyword.is_whitespace())
         return;
 
@@ -117,6 +122,8 @@ void Preprocessor::handle_preprocessor_keyword(StringView keyword, GenericLexer&
     }
 
     if (keyword == "else") {
+        if (m_options.ignore_invalid_statements && m_current_depth == 0)
+            return;
         VERIFY(m_current_depth > 0);
         if (m_depths_of_not_taken_branches.contains_slow(m_current_depth - 1)) {
             m_depths_of_not_taken_branches.remove_all_matching([this](auto x) { return x == m_current_depth - 1; });
@@ -129,6 +136,8 @@ void Preprocessor::handle_preprocessor_keyword(StringView keyword, GenericLexer&
     }
 
     if (keyword == "endif") {
+        if (m_options.ignore_invalid_statements && m_current_depth == 0)
+            return;
         VERIFY(m_current_depth > 0);
         --m_current_depth;
         if (m_depths_of_not_taken_branches.contains_slow(m_current_depth)) {
@@ -161,6 +170,7 @@ void Preprocessor::handle_preprocessor_keyword(StringView keyword, GenericLexer&
         ++m_current_depth;
         if (m_state == State::Normal) {
             auto key = line_lexer.consume_until(' ');
+            line_lexer.ignore();
             if (m_definitions.contains(key)) {
                 m_depths_of_taken_branches.append(m_current_depth - 1);
                 return;
@@ -176,6 +186,7 @@ void Preprocessor::handle_preprocessor_keyword(StringView keyword, GenericLexer&
         ++m_current_depth;
         if (m_state == State::Normal) {
             auto key = line_lexer.consume_until(' ');
+            line_lexer.ignore();
             if (!m_definitions.contains(key)) {
                 m_depths_of_taken_branches.append(m_current_depth - 1);
                 return;
@@ -198,6 +209,8 @@ void Preprocessor::handle_preprocessor_keyword(StringView keyword, GenericLexer&
     }
 
     if (keyword == "elif") {
+        if (m_options.ignore_invalid_statements && m_current_depth == 0)
+            return;
         VERIFY(m_current_depth > 0);
         // FIXME: Evaluate the elif expression
         // We currently always treat the expression in #elif as true.
@@ -264,7 +277,7 @@ Optional<Preprocessor::MacroCall> Preprocessor::parse_macro_call(Vector<Token> c
     ++token_index;
 
     Vector<MacroCall::Argument> arguments;
-    MacroCall::Argument current_argument;
+    Optional<MacroCall::Argument> current_argument;
 
     size_t paren_depth = 1;
     for (; token_index < tokens.size(); ++token_index) {
@@ -275,15 +288,19 @@ Optional<Preprocessor::MacroCall> Preprocessor::parse_macro_call(Vector<Token> c
             --paren_depth;
 
         if (paren_depth == 0) {
-            arguments.append(move(current_argument));
+            if (current_argument.has_value())
+                arguments.append(*current_argument);
             break;
         }
 
         if (paren_depth == 1 && token.type() == Token::Type::Comma) {
-            arguments.append(move(current_argument));
+            if (current_argument.has_value())
+                arguments.append(*current_argument);
             current_argument = {};
         } else {
-            current_argument.tokens.append(token);
+            if (!current_argument.has_value())
+                current_argument = MacroCall::Argument {};
+            current_argument->tokens.append(token);
         }
     }
 
@@ -347,10 +364,12 @@ Optional<Preprocessor::Definition> Preprocessor::create_definition(StringView li
 
 String Preprocessor::remove_escaped_newlines(StringView value)
 {
+    static constexpr auto escaped_newline = "\\\n"sv;
     AK::StringBuilder processed_value;
     GenericLexer lexer { value };
     while (!lexer.is_eof()) {
-        processed_value.append(lexer.consume_until("\\\n"));
+        processed_value.append(lexer.consume_until(escaped_newline));
+        lexer.ignore(escaped_newline.length());
     }
     return processed_value.to_string();
 }

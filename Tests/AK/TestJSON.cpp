@@ -46,7 +46,7 @@ TEST_CASE(load_form)
 
     auto widgets = form_json.as_object().get("widgets").as_array();
 
-    widgets.for_each([&](const JsonValue& widget_value) {
+    widgets.for_each([&](JsonValue const& widget_value) {
         auto& widget_object = widget_value.as_object();
         auto widget_class = widget_object.get("class").as_string();
         widget_object.for_each_member([&]([[maybe_unused]] auto& property_name, [[maybe_unused]] const JsonValue& property_value) {
@@ -87,7 +87,7 @@ TEST_CASE(json_utf8_multibyte)
 {
     auto json_or_error = JsonValue::from_string("\"š\"");
     EXPECT_EQ(json_or_error.is_error(), false);
-    
+
     auto& json = json_or_error.value();
     EXPECT_EQ(json.type(), JsonValue::Type::String);
     EXPECT_EQ(json.as_string().is_null(), false);
@@ -121,4 +121,16 @@ TEST_CASE(json_u64_roundtrip)
     auto value = JsonValue::from_string(json);
     EXPECT_EQ_FORCE(value.is_error(), false);
     EXPECT_EQ(value.value().as_u64(), big_value);
+}
+
+TEST_CASE(json_parse_empty_string)
+{
+    auto value = JsonValue::from_string("");
+    EXPECT_EQ(value.value().is_null(), true);
+}
+
+TEST_CASE(json_parse_long_decimals)
+{
+    auto value = JsonValue::from_string("1644452550.6489999294281");
+    EXPECT_EQ(value.value().as_double(), 1644452550.6489999294281);
 }

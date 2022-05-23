@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2018-2020, Andreas Kling <kling@serenityos.org>
- * Copyright (c) 2021, kleines Filmröllchen <malu.bertsch@gmail.com>
+ * Copyright (c) 2021, kleines Filmröllchen <filmroellchen@serenityos.org>
  * Copyright (c) 2021, David Isaksson <davidisaksson93@gmail.com>
  *
  * SPDX-License-Identifier: BSD-2-Clause
@@ -8,8 +8,7 @@
 
 #include <AK/Variant.h>
 #include <AK/Vector.h>
-#include <LibAudio/Buffer.h>
-#include <LibAudio/ClientConnection.h>
+#include <LibAudio/ConnectionFromClient.h>
 #include <LibCore/ArgsParser.h>
 #include <LibCore/EventLoop.h>
 #include <LibCore/File.h>
@@ -29,7 +28,8 @@ enum AudioVariable : u32 {
 ErrorOr<int> serenity_main(Main::Arguments arguments)
 {
     Core::EventLoop loop;
-    auto audio_client = Audio::ClientConnection::construct();
+    auto audio_client = TRY(Audio::ConnectionFromClient::try_create());
+    audio_client->async_pause_playback();
 
     String command = String::empty();
     Vector<StringView> command_arguments;
@@ -43,7 +43,7 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
     args_parser.parse(arguments);
 
     TRY(Core::System::unveil(nullptr, nullptr));
-    TRY(Core::System::pledge("stdio rpath wpath recvfd", nullptr));
+    TRY(Core::System::pledge("stdio rpath wpath recvfd thread"));
 
     if (command.equals_ignoring_case("get") || command == "g") {
         // Get variables
@@ -78,7 +78,7 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
                 break;
             }
             case AudioVariable::Mute: {
-                bool muted = audio_client->get_muted();
+                bool muted = audio_client->is_main_mix_muted();
                 if (human_mode)
                     outln("Muted: {}", muted ? "Yes" : "No");
                 else
@@ -151,7 +151,7 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
             }
             case AudioVariable::Mute: {
                 bool& mute = to_set.value.get<bool>();
-                audio_client->set_muted(mute);
+                audio_client->set_main_mix_muted(mute);
                 break;
             }
             case AudioVariable::SampleRate: {

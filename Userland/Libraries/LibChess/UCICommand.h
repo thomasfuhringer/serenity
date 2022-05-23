@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2020, the SerenityOS developers.
+ * Copyright (c) 2020-2022, the SerenityOS developers.
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -15,7 +15,7 @@ namespace Chess::UCI {
 
 class Command : public Core::Event {
 public:
-    enum Type {
+    enum class Type {
         // GUI to engine commands.
         UCI = 12000,
         Debug,
@@ -40,13 +40,13 @@ public:
     };
 
     explicit Command(Type type)
-        : Core::Event(type)
+        : Core::Event(to_underlying(type))
     {
     }
 
     virtual String to_string() const = 0;
 
-    virtual ~Command() { }
+    virtual ~Command() = default;
 };
 
 class UCICommand : public Command {
@@ -58,7 +58,7 @@ public:
 
     static UCICommand from_string(StringView command);
 
-    virtual String to_string() const;
+    virtual String to_string() const override;
 };
 
 class DebugCommand : public Command {
@@ -76,7 +76,7 @@ public:
 
     static DebugCommand from_string(StringView command);
 
-    virtual String to_string() const;
+    virtual String to_string() const override;
 
     Flag flag() const { return m_flag; }
 
@@ -93,7 +93,7 @@ public:
 
     static IsReadyCommand from_string(StringView command);
 
-    virtual String to_string() const;
+    virtual String to_string() const override;
 };
 
 class SetOptionCommand : public Command {
@@ -107,10 +107,10 @@ public:
 
     static SetOptionCommand from_string(StringView command);
 
-    virtual String to_string() const;
+    virtual String to_string() const override;
 
-    const String& name() const { return m_name; }
-    const Optional<String>& value() const { return m_value; }
+    String const& name() const { return m_name; }
+    Optional<String> const& value() const { return m_value; }
 
 private:
     String m_name;
@@ -119,7 +119,7 @@ private:
 
 class PositionCommand : public Command {
 public:
-    explicit PositionCommand(const Optional<String>& fen, const Vector<Chess::Move>& moves)
+    explicit PositionCommand(Optional<String> const& fen, Vector<Chess::Move> const& moves)
         : Command(Command::Type::Position)
         , m_fen(fen)
         , m_moves(moves)
@@ -128,10 +128,10 @@ public:
 
     static PositionCommand from_string(StringView command);
 
-    virtual String to_string() const;
+    virtual String to_string() const override;
 
-    const Optional<String>& fen() const { return m_fen; }
-    const Vector<Chess::Move>& moves() const { return m_moves; }
+    Optional<String> const& fen() const { return m_fen; }
+    Vector<Chess::Move> const& moves() const { return m_moves; }
 
 private:
     Optional<String> m_fen;
@@ -147,7 +147,7 @@ public:
 
     static GoCommand from_string(StringView command);
 
-    virtual String to_string() const;
+    virtual String to_string() const override;
 
     Optional<Vector<Chess::Move>> searchmoves;
     bool ponder { false };
@@ -172,7 +172,7 @@ public:
 
     static StopCommand from_string(StringView command);
 
-    virtual String to_string() const;
+    virtual String to_string() const override;
 };
 
 class IdCommand : public Command {
@@ -191,10 +191,10 @@ public:
 
     static IdCommand from_string(StringView command);
 
-    virtual String to_string() const;
+    virtual String to_string() const override;
 
     Type field_type() const { return m_field_type; }
-    const String& value() const { return m_value; }
+    String const& value() const { return m_value; }
 
 private:
     Type m_field_type;
@@ -210,7 +210,7 @@ public:
 
     static UCIOkCommand from_string(StringView command);
 
-    virtual String to_string() const;
+    virtual String to_string() const override;
 };
 
 class ReadyOkCommand : public Command {
@@ -222,12 +222,12 @@ public:
 
     static ReadyOkCommand from_string(StringView command);
 
-    virtual String to_string() const;
+    virtual String to_string() const override;
 };
 
 class BestMoveCommand : public Command {
 public:
-    explicit BestMoveCommand(const Chess::Move& move)
+    explicit BestMoveCommand(Chess::Move const& move)
         : Command(Command::Type::BestMove)
         , m_move(move)
     {
@@ -235,7 +235,7 @@ public:
 
     static BestMoveCommand from_string(StringView command);
 
-    virtual String to_string() const;
+    virtual String to_string() const override;
 
     Chess::Move move() const { return m_move; }
 
@@ -252,7 +252,7 @@ public:
 
     static InfoCommand from_string(StringView command);
 
-    virtual String to_string() const;
+    virtual String to_string() const override;
 
     Optional<int> depth;
     Optional<int> seldepth;

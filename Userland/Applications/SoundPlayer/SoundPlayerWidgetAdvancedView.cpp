@@ -24,7 +24,7 @@
 #include <LibGUI/Window.h>
 #include <LibGfx/Bitmap.h>
 
-SoundPlayerWidgetAdvancedView::SoundPlayerWidgetAdvancedView(GUI::Window& window, Audio::ClientConnection& connection)
+SoundPlayerWidgetAdvancedView::SoundPlayerWidgetAdvancedView(GUI::Window& window, Audio::ConnectionFromClient& connection)
     : Player(connection)
     , m_window(window)
 {
@@ -142,14 +142,17 @@ void SoundPlayerWidgetAdvancedView::keydown_event(GUI::KeyEvent& event)
     if (event.key() == Key_Space)
         m_play_button->click();
 
+    if (event.key() == Key_M)
+        toggle_mute();
+
     if (event.key() == Key_S)
         m_stop_button->click();
 
     if (event.key() == Key_Up)
-        m_volume_slider->set_value(m_volume_slider->value() + m_volume_slider->page_step());
+        m_volume_slider->increase_slider_by_page_steps(1);
 
     if (event.key() == Key_Down)
-        m_volume_slider->set_value(m_volume_slider->value() - m_volume_slider->page_step());
+        m_volume_slider->decrease_slider_by_page_steps(1);
 
     GUI::Widget::keydown_event(event);
 }
@@ -180,6 +183,11 @@ void SoundPlayerWidgetAdvancedView::loop_mode_changed(Player::LoopMode)
 {
 }
 
+void SoundPlayerWidgetAdvancedView::mute_changed(bool)
+{
+    // FIXME: Update the volume slider when player is muted
+}
+
 void SoundPlayerWidgetAdvancedView::sync_previous_next_buttons()
 {
     m_back_button->set_enabled(playlist().size() > 1 && !playlist().shuffling());
@@ -198,6 +206,7 @@ void SoundPlayerWidgetAdvancedView::time_elapsed(int seconds)
 
 void SoundPlayerWidgetAdvancedView::file_name_changed(StringView name)
 {
+    m_visualization->start_new_file(name);
     m_window.set_title(String::formatted("{} - Sound Player", name));
 }
 
@@ -207,11 +216,13 @@ void SoundPlayerWidgetAdvancedView::total_samples_changed(int total_samples)
     m_playback_progress_slider->set_page_step(total_samples / 10);
 }
 
-void SoundPlayerWidgetAdvancedView::sound_buffer_played(RefPtr<Audio::Buffer> buffer, int sample_rate, int samples_played)
+void SoundPlayerWidgetAdvancedView::sound_buffer_played(FixedArray<Audio::Sample> const& buffer, int sample_rate, int samples_played)
 {
     m_visualization->set_buffer(buffer);
     m_visualization->set_samplerate(sample_rate);
-    m_playback_progress_slider->set_value(samples_played);
+    // If the user is currently dragging the slider, don't interfere.
+    if (!m_playback_progress_slider->mouse_is_down())
+        m_playback_progress_slider->set_value(samples_played);
 }
 
 void SoundPlayerWidgetAdvancedView::volume_changed(double volume)

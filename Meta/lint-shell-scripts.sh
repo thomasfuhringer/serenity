@@ -11,12 +11,19 @@ if [ "$#" -eq "0" ]; then
             '*.sh' \
             ':!:Ports' \
             ':!:Userland/Shell/Tests' \
-            ':!:Base/home/anon/tests' \
-            ':!:Base/root/generate_manpages.sh'
+            ':!:Base/home/anon/Tests' \
+            ':!:Base/root/generate_manpages.sh' \
+            ':!:Base/usr/share/shell' \
+            ':!:Base/etc/shellrc' \
     )
 else
     files=()
     for file in "$@"; do
+        # Skip ports, like we in the CI case above.
+        if [[ "${file}" =~ "Ports" ]]; then
+           continue
+        fi
+
         if [[ "${file}" == *".sh" && "${file}" != "Base/root/generate_manpages.sh" ]]; then
             files+=("${file}")
         fi

@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2021, Marcus Nilsson <brainbomb@gmail.com>
+ * Copyright (c) 2022, the SerenityOS developers.
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -19,12 +20,12 @@ public:
         Thin,
     };
 
-    virtual ~ValueSlider() override;
+    virtual ~ValueSlider() override = default;
 
     void set_suffix(String suffix) { m_suffix = move(suffix); }
     void set_knob_style(KnobStyle knobstyle) { m_knob_style = knobstyle; }
 
-    virtual void set_value(int value, AllowCallback = AllowCallback::Yes) override;
+    virtual void set_value(int value, AllowCallback = AllowCallback::Yes, DoClamp = DoClamp::Yes) override;
 
 protected:
     virtual void paint_event(PaintEvent&) override;
@@ -38,7 +39,7 @@ private:
     explicit ValueSlider(Gfx::Orientation = Gfx::Orientation::Horizontal, String suffix = "");
 
     String formatted_value() const;
-    int value_at(const Gfx::IntPoint& position) const;
+    int value_at(Gfx::IntPoint const& position) const;
     Gfx::IntRect bar_rect() const;
     Gfx::IntRect knob_rect() const;
 

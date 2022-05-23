@@ -15,7 +15,7 @@
 namespace AK {
 
 template<typename T>
-class OwnPtr {
+class [[nodiscard]] OwnPtr {
 public:
     OwnPtr() = default;
 
@@ -47,29 +47,29 @@ public:
 #endif
     }
 
-    OwnPtr(const OwnPtr&) = delete;
+    OwnPtr(OwnPtr const&) = delete;
     template<typename U>
-    OwnPtr(const OwnPtr<U>&) = delete;
-    OwnPtr& operator=(const OwnPtr&) = delete;
+    OwnPtr(OwnPtr<U> const&) = delete;
+    OwnPtr& operator=(OwnPtr const&) = delete;
     template<typename U>
-    OwnPtr& operator=(const OwnPtr<U>&) = delete;
+    OwnPtr& operator=(OwnPtr<U> const&) = delete;
 
     template<typename U>
-    OwnPtr(const NonnullOwnPtr<U>&) = delete;
+    OwnPtr(NonnullOwnPtr<U> const&) = delete;
     template<typename U>
-    OwnPtr& operator=(const NonnullOwnPtr<U>&) = delete;
+    OwnPtr& operator=(NonnullOwnPtr<U> const&) = delete;
     template<typename U>
-    OwnPtr(const RefPtr<U>&) = delete;
+    OwnPtr(RefPtr<U> const&) = delete;
     template<typename U>
-    OwnPtr(const NonnullRefPtr<U>&) = delete;
+    OwnPtr(NonnullRefPtr<U> const&) = delete;
     template<typename U>
-    OwnPtr(const WeakPtr<U>&) = delete;
+    OwnPtr(WeakPtr<U> const&) = delete;
     template<typename U>
-    OwnPtr& operator=(const RefPtr<U>&) = delete;
+    OwnPtr& operator=(RefPtr<U> const&) = delete;
     template<typename U>
-    OwnPtr& operator=(const NonnullRefPtr<U>&) = delete;
+    OwnPtr& operator=(NonnullRefPtr<U> const&) = delete;
     template<typename U>
-    OwnPtr& operator=(const WeakPtr<U>&) = delete;
+    OwnPtr& operator=(WeakPtr<U> const&) = delete;
 
     OwnPtr& operator=(OwnPtr&& other)
     {
@@ -210,30 +210,30 @@ inline ErrorOr<NonnullOwnPtr<T>> adopt_nonnull_own_or_enomem(T* object)
 {
     auto result = adopt_own_if_nonnull(object);
     if (!result)
-        return ENOMEM;
+        return Error::from_errno(ENOMEM);
     return result.release_nonnull();
 }
 
 template<typename T, class... Args>
-requires(IsConstructible<T, Args...>) inline OwnPtr<T> try_make(Args&&... args)
+requires(IsConstructible<T, Args...>) inline ErrorOr<NonnullOwnPtr<T>> try_make(Args&&... args)
 {
-    return adopt_own_if_nonnull(new (nothrow) T(forward<Args>(args)...));
+    return adopt_nonnull_own_or_enomem(new (nothrow) T(forward<Args>(args)...));
 }
 
 // FIXME: Remove once P0960R3 is available in Clang.
 template<typename T, class... Args>
-inline OwnPtr<T> try_make(Args&&... args)
+inline ErrorOr<NonnullOwnPtr<T>> try_make(Args&&... args)
 
 {
-    return adopt_own_if_nonnull(new (nothrow) T { forward<Args>(args)... });
+    return adopt_nonnull_own_or_enomem(new (nothrow) T { forward<Args>(args)... });
 }
 
 template<typename T>
 struct Traits<OwnPtr<T>> : public GenericTraits<OwnPtr<T>> {
     using PeekType = T*;
     using ConstPeekType = const T*;
-    static unsigned hash(const OwnPtr<T>& p) { return ptr_hash(p.ptr()); }
-    static bool equals(const OwnPtr<T>& a, const OwnPtr<T>& b) { return a.ptr() == b.ptr(); }
+    static unsigned hash(OwnPtr<T> const& p) { return ptr_hash(p.ptr()); }
+    static bool equals(OwnPtr<T> const& a, OwnPtr<T> const& b) { return a.ptr() == b.ptr(); }
 };
 
 }

@@ -12,7 +12,7 @@
 #include <AK/NonnullRefPtrVector.h>
 #include <AK/Types.h>
 #include <Kernel/Bus/PCI/Definitions.h>
-#include <Kernel/Locking/Mutex.h>
+#include <Kernel/Locking/SpinlockProtected.h>
 #include <Kernel/Memory/Region.h>
 
 namespace Kernel {
@@ -20,7 +20,6 @@ namespace Kernel {
 class NetworkAdapter;
 class NetworkingManagement {
     friend class NetworkAdapter;
-    AK_MAKE_ETERNAL
 
 public:
     static NetworkingManagement& the();
@@ -32,8 +31,9 @@ public:
     NetworkingManagement();
 
     void for_each(Function<void(NetworkAdapter&)>);
+    ErrorOr<void> try_for_each(Function<ErrorOr<void>(NetworkAdapter&)>);
 
-    RefPtr<NetworkAdapter> from_ipv4_address(const IPv4Address&) const;
+    RefPtr<NetworkAdapter> from_ipv4_address(IPv4Address const&) const;
     RefPtr<NetworkAdapter> lookup_by_name(StringView) const;
 
     NonnullRefPtr<NetworkAdapter> loopback_adapter() const;
@@ -41,9 +41,8 @@ public:
 private:
     RefPtr<NetworkAdapter> determine_network_device(PCI::DeviceIdentifier const&) const;
 
-    NonnullRefPtrVector<NetworkAdapter> m_adapters;
+    SpinlockProtected<NonnullRefPtrVector<NetworkAdapter>> m_adapters;
     RefPtr<NetworkAdapter> m_loopback_adapter;
-    mutable Mutex m_lock { "Networking" };
 };
 
 }

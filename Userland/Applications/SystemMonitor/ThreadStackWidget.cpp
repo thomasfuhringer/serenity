@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2018-2021, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2022, the SerenityOS developers.
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -8,8 +9,13 @@
 #include <LibCore/Timer.h>
 #include <LibGUI/BoxLayout.h>
 #include <LibGUI/Model.h>
+#include <LibGUI/Widget.h>
 #include <LibSymbolication/Symbolication.h>
 #include <LibThreading/BackgroundAction.h>
+
+REGISTER_WIDGET(SystemMonitor, ThreadStackWidget)
+
+namespace SystemMonitor {
 
 class ThreadStackModel final : public GUI::Model {
 
@@ -73,10 +79,6 @@ ThreadStackWidget::ThreadStackWidget()
     m_stack_table->set_model(adopt_ref(*new ThreadStackModel()));
 }
 
-ThreadStackWidget::~ThreadStackWidget()
-{
-}
-
 void ThreadStackWidget::show_event(GUI::ShowEvent&)
 {
     refresh();
@@ -113,7 +115,7 @@ private:
 
 void ThreadStackWidget::refresh()
 {
-    Threading::BackgroundAction<Vector<Symbolication::Symbol>>::construct(
+    (void)Threading::BackgroundAction<Vector<Symbolication::Symbol>>::construct(
         [pid = m_pid, tid = m_tid](auto&) {
             return Symbolication::symbolicate_thread(pid, tid, Symbolication::IncludeSourcePosition::No);
         },
@@ -121,7 +123,7 @@ void ThreadStackWidget::refresh()
         [weak_this = make_weak_ptr()](auto result) {
             if (!weak_this)
                 return;
-            Core::EventLoop::main().post_event(const_cast<Core::Object&>(*weak_this), make<CompletionEvent>(move(result)));
+            Core::EventLoop::current().post_event(const_cast<Core::Object&>(*weak_this), make<CompletionEvent>(move(result)));
         });
 }
 
@@ -129,4 +131,6 @@ void ThreadStackWidget::custom_event(Core::CustomEvent& event)
 {
     auto& completion_event = verify_cast<CompletionEvent>(event);
     verify_cast<ThreadStackModel>(m_stack_table->model())->set_symbols(completion_event.symbols());
+}
+
 }

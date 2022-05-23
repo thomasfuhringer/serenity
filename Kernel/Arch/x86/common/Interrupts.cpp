@@ -8,6 +8,7 @@
 #include <AK/Types.h>
 
 #include <Kernel/Interrupts/GenericInterruptHandler.h>
+#include <Kernel/Interrupts/PIC.h>
 #include <Kernel/Interrupts/SharedIRQHandler.h>
 #include <Kernel/Interrupts/SpuriousInterruptHandler.h>
 #include <Kernel/Interrupts/UnhandledInterruptHandler.h>
@@ -15,17 +16,20 @@
 #include <Kernel/PerformanceManager.h>
 #include <Kernel/Process.h>
 #include <Kernel/Random.h>
+#include <Kernel/Scheduler.h>
 #include <Kernel/Sections.h>
 #include <Kernel/Thread.h>
 #include <Kernel/ThreadTracer.h>
 
 #include <LibC/mallocdefs.h>
 
+#include <Kernel/Arch/CPU.h>
+#include <Kernel/Arch/PageFault.h>
 #include <Kernel/Arch/Processor.h>
 #include <Kernel/Arch/RegisterState.h>
+#include <Kernel/Arch/SafeMem.h>
 #include <Kernel/Arch/x86/ISRStubs.h>
 #include <Kernel/Arch/x86/TrapFrame.h>
-#include <Kernel/KSyms.h>
 
 extern FlatPtr start_of_unmap_after_init;
 extern FlatPtr end_of_unmap_after_init;
@@ -40,6 +44,7 @@ READONLY_AFTER_INIT static DescriptorTablePointer s_idtr;
 READONLY_AFTER_INIT static IDTEntry s_idt[256];
 
 static GenericInterruptHandler* s_interrupt_handler[GENERIC_INTERRUPT_HANDLERS_COUNT];
+static GenericInterruptHandler* s_disabled_interrupt_handler[2];
 
 static EntropySource s_entropy_source_interrupts { EntropySource::Static::Interrupts };
 
@@ -170,7 +175,7 @@ static EntropySource s_entropy_source_interrupts { EntropySource::Static::Interr
 
 // clang-format on
 
-static void dump(const RegisterState& regs)
+void dump_registers(RegisterState const& regs)
 {
 #if ARCH(I386)
     u16 ss;
@@ -210,27 +215,6 @@ static void dump(const RegisterState& regs)
     dbgln("   r12={:p} r13={:p} r14={:p} r15={:p}", regs.r12, regs.r13, regs.r14, regs.r15);
     dbgln("   cr0={:p} cr2={:p} cr3={:p} cr4={:p}", read_cr0(), read_cr2(), read_cr3(), read_cr4());
 #endif
-}
-
-void handle_crash(RegisterState const& regs, char const* description, int signal, bool out_of_memory)
-{
-    if (!Process::has_current())
-        PANIC("{} with !current", description);
-
-    auto& process = Process::current();
-
-    // If a process crashed while inspecting another process,
-    // make sure we switch back to the right page tables.
-    Memory::MemoryManager::enter_process_address_space(process);
-
-    dmesgln("CRASH: CPU #{} {} in ring {}", Processor::current_id(), description, (regs.cs & 3));
-    dump(regs);
-
-    if (!(regs.cs & 3)) {
-        PANIC("Crash in ring 0");
-    }
-
-    process.crash(signal, regs.ip(), out_of_memory);
 }
 
 EH_ENTRY_NO_CODE(6, illegal_instruction);
@@ -283,7 +267,7 @@ void page_fault_handler(TrapFrame* trap)
             regs.exception_code & 2 ? "write" : "read",
             VirtualAddress(fault_address));
 
-        dump(regs);
+        dump_registers(regs);
     }
 
     bool faulted_in_kernel = !(regs.cs & 3);
@@ -315,23 +299,7 @@ void page_fault_handler(TrapFrame* trap)
     VirtualAddress userspace_sp = VirtualAddress { regs.userspace_sp() };
     if (!faulted_in_kernel && !MM.validate_user_stack(current_thread->process().address_space(), userspace_sp)) {
         dbgln("Invalid stack pointer: {}", userspace_sp);
-        handle_crash(regs, "Bad stack on page fault", SIGSTKFLT);
-    }
-
-    if (fault_address >= (FlatPtr)&start_of_ro_after_init && fault_address < (FlatPtr)&end_of_ro_after_init) {
-        dump(regs);
-        PANIC("Attempt to write into READONLY_AFTER_INIT section");
-    }
-
-    if (fault_address >= (FlatPtr)&start_of_unmap_after_init && fault_address < (FlatPtr)&end_of_unmap_after_init) {
-        dump(regs);
-        auto sym = symbolicate_kernel_address(fault_address);
-        PANIC("Attempt to access UNMAP_AFTER_INIT section ({:p}: {})", fault_address, sym ? sym->name : "(Unknown)");
-    }
-
-    if (fault_address >= (FlatPtr)&start_of_kernel_ksyms && fault_address < (FlatPtr)&end_of_kernel_ksyms) {
-        dump(regs);
-        PANIC("Attempt to access KSYMS section");
+        return handle_crash(regs, "Bad stack on page fault", SIGSEGV);
     }
 
     PageFault fault { regs.exception_code, VirtualAddress { fault_address } };
@@ -361,8 +329,6 @@ void page_fault_handler(TrapFrame* trap)
         constexpr FlatPtr free_scrub_pattern = explode_byte(FREE_SCRUB_BYTE);
         constexpr FlatPtr kmalloc_scrub_pattern = explode_byte(KMALLOC_SCRUB_BYTE);
         constexpr FlatPtr kfree_scrub_pattern = explode_byte(KFREE_SCRUB_BYTE);
-        constexpr FlatPtr slab_alloc_scrub_pattern = explode_byte(SLAB_ALLOC_SCRUB_BYTE);
-        constexpr FlatPtr slab_dealloc_scrub_pattern = explode_byte(SLAB_DEALLOC_SCRUB_BYTE);
         if ((fault_address & 0xffff0000) == (malloc_scrub_pattern & 0xffff0000)) {
             dbgln("Note: Address {} looks like it may be uninitialized malloc() memory", VirtualAddress(fault_address));
         } else if ((fault_address & 0xffff0000) == (free_scrub_pattern & 0xffff0000)) {
@@ -371,10 +337,6 @@ void page_fault_handler(TrapFrame* trap)
             dbgln("Note: Address {} looks like it may be uninitialized kmalloc() memory", VirtualAddress(fault_address));
         } else if ((fault_address & 0xffff0000) == (kfree_scrub_pattern & 0xffff0000)) {
             dbgln("Note: Address {} looks like it may be recently kfree()'d memory", VirtualAddress(fault_address));
-        } else if ((fault_address & 0xffff0000) == (slab_alloc_scrub_pattern & 0xffff0000)) {
-            dbgln("Note: Address {} looks like it may be uninitialized slab_alloc() memory", VirtualAddress(fault_address));
-        } else if ((fault_address & 0xffff0000) == (slab_dealloc_scrub_pattern & 0xffff0000)) {
-            dbgln("Note: Address {} looks like it may be recently slab_dealloc()'d memory", VirtualAddress(fault_address));
         } else if (fault_address < 4096) {
             dbgln("Note: Address {} looks like a possible nullptr dereference", VirtualAddress(fault_address));
         } else if constexpr (SANITIZE_PTRS) {
@@ -416,7 +378,7 @@ void page_fault_handler(TrapFrame* trap)
             }
         }
 
-        handle_crash(regs, "Page Fault", SIGSEGV, response == PageFaultResponse::OutOfMemory);
+        return handle_crash(regs, "Page Fault", SIGSEGV, response == PageFaultResponse::OutOfMemory);
     } else if (response == PageFaultResponse::Continue) {
         dbgln_if(PAGE_FAULT_DEBUG, "Continuing after resolved page fault");
     } else {
@@ -508,17 +470,31 @@ void handle_interrupt(TrapFrame* trap)
 {
     clac();
     auto& regs = *trap->regs;
-    VERIFY(regs.isr_number >= IRQ_VECTOR_BASE && regs.isr_number <= (IRQ_VECTOR_BASE + GENERIC_INTERRUPT_HANDLERS_COUNT));
-    u8 irq = (u8)(regs.isr_number - 0x50);
-    s_entropy_source_interrupts.add_random_event(irq);
-    auto* handler = s_interrupt_handler[irq];
+
+    GenericInterruptHandler* handler = nullptr;
+    // Note: we declare interrupt service routine offset 0x20 to 0x2f as
+    // reserved for when the PIC is disabled, so we can still route spurious
+    // IRQs to a different interrupt handlers at different location.
+    if (regs.isr_number >= pic_disabled_vector_base && regs.isr_number <= pic_disabled_vector_end) {
+        u8 irq = (u8)(regs.isr_number - pic_disabled_vector_base);
+        if (irq == 7) {
+            handler = s_disabled_interrupt_handler[0];
+        } else if (irq == 15) {
+            handler = s_disabled_interrupt_handler[1];
+        }
+    } else {
+        VERIFY(regs.isr_number >= IRQ_VECTOR_BASE && regs.isr_number <= (IRQ_VECTOR_BASE + GENERIC_INTERRUPT_HANDLERS_COUNT));
+        u8 irq = (u8)(regs.isr_number - IRQ_VECTOR_BASE);
+        s_entropy_source_interrupts.add_random_event(irq);
+        handler = s_interrupt_handler[irq];
+    }
     VERIFY(handler);
     handler->increment_invoking_counter();
     handler->handle_interrupt(regs);
     handler->eoi();
 }
 
-const DescriptorTablePointer& get_idtr()
+DescriptorTablePointer const& get_idtr()
 {
     return s_idtr;
 }
@@ -539,6 +515,18 @@ static void revert_to_unused_handler(u8 interrupt_number)
 {
     auto handler = new UnhandledInterruptHandler(interrupt_number);
     handler->register_interrupt_handler();
+}
+
+void register_disabled_interrupt_handler(u8 number, GenericInterruptHandler& handler)
+{
+    if (number == 15) {
+        s_disabled_interrupt_handler[0] = &handler;
+        return;
+    } else if (number == 7) {
+        s_disabled_interrupt_handler[1] = &handler;
+        return;
+    }
+    VERIFY_NOT_REACHED();
 }
 
 void register_generic_interrupt_handler(u8 interrupt_number, GenericInterruptHandler& handler)
@@ -649,10 +637,58 @@ UNMAP_AFTER_INIT void idt_init()
     register_interrupt_handler(0x0f, _exception15);
     register_interrupt_handler(0x10, _exception16);
 
-    for (u8 i = 0x11; i < 0x50; i++)
+    for (u8 i = 0x11; i < 0x20; i++)
         register_interrupt_handler(i, unimp_trap);
 
     dbgln("Initializing unhandled interrupt handlers");
+    register_interrupt_handler(0x20, interrupt_32_asm_entry);
+    register_interrupt_handler(0x21, interrupt_33_asm_entry);
+    register_interrupt_handler(0x22, interrupt_34_asm_entry);
+    register_interrupt_handler(0x23, interrupt_35_asm_entry);
+    register_interrupt_handler(0x24, interrupt_36_asm_entry);
+    register_interrupt_handler(0x25, interrupt_37_asm_entry);
+    register_interrupt_handler(0x26, interrupt_38_asm_entry);
+    register_interrupt_handler(0x27, interrupt_39_asm_entry);
+    register_interrupt_handler(0x28, interrupt_40_asm_entry);
+    register_interrupt_handler(0x29, interrupt_41_asm_entry);
+    register_interrupt_handler(0x2a, interrupt_42_asm_entry);
+    register_interrupt_handler(0x2b, interrupt_43_asm_entry);
+    register_interrupt_handler(0x2c, interrupt_44_asm_entry);
+    register_interrupt_handler(0x2d, interrupt_45_asm_entry);
+    register_interrupt_handler(0x2e, interrupt_46_asm_entry);
+    register_interrupt_handler(0x2f, interrupt_47_asm_entry);
+    register_interrupt_handler(0x30, interrupt_48_asm_entry);
+    register_interrupt_handler(0x31, interrupt_49_asm_entry);
+    register_interrupt_handler(0x32, interrupt_50_asm_entry);
+    register_interrupt_handler(0x33, interrupt_51_asm_entry);
+    register_interrupt_handler(0x34, interrupt_52_asm_entry);
+    register_interrupt_handler(0x35, interrupt_53_asm_entry);
+    register_interrupt_handler(0x36, interrupt_54_asm_entry);
+    register_interrupt_handler(0x37, interrupt_55_asm_entry);
+    register_interrupt_handler(0x38, interrupt_56_asm_entry);
+    register_interrupt_handler(0x39, interrupt_57_asm_entry);
+    register_interrupt_handler(0x3a, interrupt_58_asm_entry);
+    register_interrupt_handler(0x3b, interrupt_59_asm_entry);
+    register_interrupt_handler(0x3c, interrupt_60_asm_entry);
+    register_interrupt_handler(0x3d, interrupt_61_asm_entry);
+    register_interrupt_handler(0x3e, interrupt_62_asm_entry);
+    register_interrupt_handler(0x3f, interrupt_63_asm_entry);
+    register_interrupt_handler(0x40, interrupt_64_asm_entry);
+    register_interrupt_handler(0x41, interrupt_65_asm_entry);
+    register_interrupt_handler(0x42, interrupt_66_asm_entry);
+    register_interrupt_handler(0x43, interrupt_67_asm_entry);
+    register_interrupt_handler(0x44, interrupt_68_asm_entry);
+    register_interrupt_handler(0x45, interrupt_69_asm_entry);
+    register_interrupt_handler(0x46, interrupt_70_asm_entry);
+    register_interrupt_handler(0x47, interrupt_71_asm_entry);
+    register_interrupt_handler(0x48, interrupt_72_asm_entry);
+    register_interrupt_handler(0x49, interrupt_73_asm_entry);
+    register_interrupt_handler(0x4a, interrupt_74_asm_entry);
+    register_interrupt_handler(0x4b, interrupt_75_asm_entry);
+    register_interrupt_handler(0x4c, interrupt_76_asm_entry);
+    register_interrupt_handler(0x4d, interrupt_77_asm_entry);
+    register_interrupt_handler(0x4e, interrupt_78_asm_entry);
+    register_interrupt_handler(0x4f, interrupt_79_asm_entry);
     register_interrupt_handler(0x50, interrupt_80_asm_entry);
     register_interrupt_handler(0x51, interrupt_81_asm_entry);
     register_interrupt_handler(0x52, interrupt_82_asm_entry);

@@ -14,12 +14,11 @@ namespace Kernel {
 ErrorOr<FlatPtr> Process::sys$writev(int fd, Userspace<const struct iovec*> iov, int iov_count)
 {
     VERIFY_PROCESS_BIG_LOCK_ACQUIRED(this)
-    REQUIRE_PROMISE(stdio);
+    TRY(require_promise(Pledge::stdio));
     if (iov_count < 0)
         return EINVAL;
 
-    // Arbitrary pain threshold.
-    if (iov_count > (int)MiB)
+    if (iov_count > IOV_MAX)
         return EFAULT;
 
     u64 total_length = 0;
@@ -32,7 +31,7 @@ ErrorOr<FlatPtr> Process::sys$writev(int fd, Userspace<const struct iovec*> iov,
             return EINVAL;
     }
 
-    auto description = TRY(fds().open_file_description(fd));
+    auto description = TRY(open_file_description(fd));
     if (!description->is_writable())
         return EBADF;
 
@@ -51,7 +50,7 @@ ErrorOr<FlatPtr> Process::sys$writev(int fd, Userspace<const struct iovec*> iov,
     return nwritten;
 }
 
-ErrorOr<FlatPtr> Process::do_write(OpenFileDescription& description, const UserOrKernelBuffer& data, size_t data_size)
+ErrorOr<FlatPtr> Process::do_write(OpenFileDescription& description, UserOrKernelBuffer const& data, size_t data_size)
 {
     size_t total_nwritten = 0;
 
@@ -64,8 +63,7 @@ ErrorOr<FlatPtr> Process::do_write(OpenFileDescription& description, const UserO
             if (!description.is_blocking()) {
                 if (total_nwritten > 0)
                     return total_nwritten;
-                else
-                    return EAGAIN;
+                return EAGAIN;
             }
             auto unblock_flags = Thread::FileBlocker::BlockFlags::None;
             if (Thread::current()->block<Thread::WriteBlocker>({}, description, unblock_flags).was_interrupted()) {
@@ -88,17 +86,17 @@ ErrorOr<FlatPtr> Process::do_write(OpenFileDescription& description, const UserO
     return total_nwritten;
 }
 
-ErrorOr<FlatPtr> Process::sys$write(int fd, Userspace<const u8*> data, size_t size)
+ErrorOr<FlatPtr> Process::sys$write(int fd, Userspace<u8 const*> data, size_t size)
 {
     VERIFY_PROCESS_BIG_LOCK_ACQUIRED(this)
-    REQUIRE_PROMISE(stdio);
+    TRY(require_promise(Pledge::stdio));
     if (size == 0)
         return 0;
     if (size > NumericLimits<ssize_t>::max())
         return EINVAL;
 
     dbgln_if(IO_DEBUG, "sys$write({}, {}, {})", fd, data.ptr(), size);
-    auto description = TRY(fds().open_file_description(fd));
+    auto description = TRY(open_file_description(fd));
     if (!description->is_writable())
         return EBADF;
 

@@ -5,6 +5,7 @@
  */
 
 #include <AK/StringView.h>
+#include <Kernel/API/POSIX/errno.h>
 #include <Kernel/Debug.h>
 #include <Kernel/FileSystem/OpenFileDescription.h>
 #include <Kernel/Net/IPv4Socket.h>
@@ -13,7 +14,6 @@
 #include <Kernel/Net/Socket.h>
 #include <Kernel/Process.h>
 #include <Kernel/UnixTypes.h>
-#include <LibC/errno_numbers.h>
 
 namespace Kernel {
 
@@ -37,9 +37,7 @@ Socket::Socket(int domain, int type, int protocol)
     set_origin(Process::current());
 }
 
-Socket::~Socket()
-{
-}
+Socket::~Socket() = default;
 
 void Socket::set_setup_state(SetupState new_setup_state)
 {
@@ -71,13 +69,15 @@ ErrorOr<void> Socket::queue_connection_from(NonnullRefPtr<Socket> peer)
     MutexLocker locker(mutex());
     if (m_pending.size() >= m_backlog)
         return set_so_error(ECONNREFUSED);
-    SOCKET_TRY(m_pending.try_append(peer));
+    SOCKET_TRY(m_pending.try_append(move(peer)));
     evaluate_block_conditions();
     return {};
 }
 
-ErrorOr<void> Socket::setsockopt(int level, int option, Userspace<const void*> user_value, socklen_t user_value_size)
+ErrorOr<void> Socket::setsockopt(int level, int option, Userspace<void const*> user_value, socklen_t user_value_size)
 {
+    MutexLocker locker(mutex());
+
     if (level != SOL_SOCKET)
         return ENOPROTOOPT;
     VERIFY(level == SOL_SOCKET);
@@ -95,7 +95,7 @@ ErrorOr<void> Socket::setsockopt(int level, int option, Userspace<const void*> u
     case SO_BINDTODEVICE: {
         if (user_value_size != IFNAMSIZ)
             return EINVAL;
-        auto user_string = static_ptr_cast<const char*>(user_value);
+        auto user_string = static_ptr_cast<char const*>(user_value);
         auto ifname = TRY(try_copy_kstring_from_user(user_string, user_value_size));
         auto device = NetworkingManagement::the().lookup_by_name(ifname->view());
         if (!device)
@@ -103,23 +103,28 @@ ErrorOr<void> Socket::setsockopt(int level, int option, Userspace<const void*> u
         m_bound_interface = move(device);
         return {};
     }
+    case SO_DEBUG:
+        // NOTE: This is supposed to toggle collection of debugging information on/off, we don't have any right now, so this is a no-op.
+        return {};
     case SO_KEEPALIVE:
         // FIXME: Obviously, this is not a real keepalive.
         return {};
     case SO_TIMESTAMP:
         if (user_value_size != sizeof(int))
             return EINVAL;
-        {
-            int timestamp;
-            TRY(copy_from_user(&timestamp, static_ptr_cast<const int*>(user_value)));
-            m_timestamp = timestamp;
-        }
-        if (m_timestamp && (domain() != AF_INET || type() == SOCK_STREAM)) {
+        m_timestamp = TRY(copy_typed_from_user(static_ptr_cast<int const*>(user_value)));
+        if (m_timestamp != 0 && (domain() != AF_INET || type() == SOCK_STREAM)) {
             // FIXME: Support SO_TIMESTAMP for more protocols?
             m_timestamp = 0;
             return ENOTSUP;
         }
         return {};
+    case SO_DONTROUTE: {
+        if (user_value_size != sizeof(int))
+            return EINVAL;
+        m_routing_disabled = TRY(copy_typed_from_user(static_ptr_cast<int const*>(user_value))) != 0;
+        return {};
+    }
     default:
         dbgln("setsockopt({}) at SOL_SOCKET not implemented.", option);
         return ENOPROTOOPT;
@@ -128,6 +133,8 @@ ErrorOr<void> Socket::setsockopt(int level, int option, Userspace<const void*> u
 
 ErrorOr<void> Socket::getsockopt(OpenFileDescription&, int level, int option, Userspace<void*> value, Userspace<socklen_t*> value_size)
 {
+    MutexLocker locker(mutex());
+
     socklen_t size;
     TRY(copy_from_user(&size, value_size.unsafe_userspace_ptr()));
 
@@ -151,7 +158,7 @@ ErrorOr<void> Socket::getsockopt(OpenFileDescription&, int level, int option, Us
         if (size < sizeof(timeval))
             return EINVAL;
         {
-            timeval tv = m_send_timeout.to_timeval();
+            timeval tv = m_receive_timeout.to_timeval();
             TRY(copy_to_user(static_ptr_cast<timeval*>(value), &tv));
         }
         size = sizeof(timeval);
@@ -198,8 +205,31 @@ ErrorOr<void> Socket::getsockopt(OpenFileDescription&, int level, int option, Us
         TRY(copy_to_user(static_ptr_cast<int*>(value), &m_type));
         size = sizeof(int);
         return copy_to_user(value_size, &size);
+    case SO_DEBUG:
+        // NOTE: This is supposed to toggle collection of debugging information on/off, we don't have any right now, so we just claim it's always off.
+        if (size < sizeof(int))
+            return EINVAL;
+        TRY(memset_user(value.unsafe_userspace_ptr(), 0, sizeof(int)));
+        size = sizeof(int);
+        return copy_to_user(value_size, &size);
+    case SO_ACCEPTCONN: {
+        int accepting_connections = (m_role == Role::Listener) ? 1 : 0;
+        if (size < sizeof(accepting_connections))
+            return EINVAL;
+        TRY(copy_to_user(static_ptr_cast<int*>(value), &accepting_connections));
+        size = sizeof(accepting_connections);
+        return copy_to_user(value_size, &size);
+    }
+    case SO_DONTROUTE: {
+        int routing_disabled = m_routing_disabled ? 1 : 0;
+        if (size < sizeof(routing_disabled))
+            return EINVAL;
+        TRY(copy_to_user(static_ptr_cast<int*>(value), &routing_disabled));
+        size = sizeof(routing_disabled);
+        return copy_to_user(value_size, &size);
+    }
     default:
-        dbgln("setsockopt({}) at SOL_SOCKET not implemented.", option);
+        dbgln("getsockopt({}) at SOL_SOCKET not implemented.", option);
         return ENOPROTOOPT;
     }
 }
@@ -212,7 +242,7 @@ ErrorOr<size_t> Socket::read(OpenFileDescription& description, u64, UserOrKernel
     return recvfrom(description, buffer, size, 0, {}, 0, t);
 }
 
-ErrorOr<size_t> Socket::write(OpenFileDescription& description, u64, const UserOrKernelBuffer& data, size_t size)
+ErrorOr<size_t> Socket::write(OpenFileDescription& description, u64, UserOrKernelBuffer const& data, size_t size)
 {
     if (is_shut_down_for_writing())
         return set_so_error(EPIPE);
@@ -235,11 +265,11 @@ ErrorOr<void> Socket::shutdown(int how)
     return {};
 }
 
-ErrorOr<void> Socket::stat(::stat& st) const
+ErrorOr<struct stat> Socket::stat() const
 {
-    memset(&st, 0, sizeof(st));
+    struct stat st = {};
     st.st_mode = S_IFSOCK;
-    return {};
+    return st;
 }
 
 void Socket::set_connected(bool connected)

@@ -8,6 +8,7 @@
 #include <AK/JsonArray.h>
 #include <AK/JsonObject.h>
 #include <AK/JsonParser.h>
+#include <math.h>
 
 namespace AK {
 
@@ -191,6 +192,7 @@ ErrorOr<JsonValue> JsonParser::parse_number()
     Vector<char, 128> fraction_buffer;
 
     bool is_double = false;
+    bool all_zero = true;
     for (;;) {
         char ch = peek();
         if (ch == '.') {
@@ -202,6 +204,9 @@ ErrorOr<JsonValue> JsonParser::parse_number()
             continue;
         }
         if (ch == '-' || (ch >= '0' && ch <= '9')) {
+            if (ch != '-' && ch != '0')
+                all_zero = false;
+
             if (is_double) {
                 if (ch == '-')
                     return Error::from_string_literal("JsonParser: Error while parsing number"sv);
@@ -229,6 +234,10 @@ ErrorOr<JsonValue> JsonParser::parse_number()
     StringView number_string(number_buffer.data(), number_buffer.size());
 
 #ifndef KERNEL
+    // Check for negative zero which needs to be forced to be represented with a double
+    if (number_string.starts_with('-') && all_zero)
+        return JsonValue(-0.0);
+
     if (is_double) {
         // FIXME: This logic looks shaky.
         int whole = 0;
@@ -243,17 +252,14 @@ ErrorOr<JsonValue> JsonParser::parse_number()
         }
 
         StringView fraction_string(fraction_buffer.data(), fraction_buffer.size());
-        auto fraction_string_uint = fraction_string.to_uint();
+        auto fraction_string_uint = fraction_string.to_uint<u64>();
         if (!fraction_string_uint.has_value())
             return Error::from_string_literal("JsonParser: Error while parsing number"sv);
-        int fraction = fraction_string_uint.value();
-        fraction *= (whole < 0) ? -1 : 1;
+        auto fraction = static_cast<double>(fraction_string_uint.value());
+        double sign = (whole < 0) ? -1 : 1;
 
-        auto divider = 1;
-        for (size_t i = 0; i < fraction_buffer.size(); ++i) {
-            divider *= 10;
-        }
-        value = JsonValue((double)whole + ((double)fraction / divider));
+        auto divider = pow(10.0, static_cast<double>(fraction_buffer.size()));
+        value = JsonValue((double)whole + sign * (fraction / divider));
     } else {
 #endif
         auto to_unsigned_result = number_string.to_uint<u64>();

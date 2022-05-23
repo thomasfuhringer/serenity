@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2021, Linus Groh <linusg@serenityos.org>
+ * Copyright (c) 2021-2022, Linus Groh <linusg@serenityos.org>
  * Copyright (c) 2021, Luke Wilde <lukew@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
@@ -112,16 +112,16 @@ JS_DEFINE_NATIVE_FUNCTION(DurationConstructor::compare)
     auto* two = TRY(to_temporal_duration(global_object, vm.argument(1)));
 
     // 3. Set options to ? GetOptionsObject(options).
-    auto* options = TRY(get_options_object(global_object, vm.argument(2)));
+    auto const* options = TRY(get_options_object(global_object, vm.argument(2)));
 
     // 4. Let relativeTo be ? ToRelativeTemporalObject(options).
     auto relative_to = TRY(to_relative_temporal_object(global_object, *options));
 
-    // 5. Let shift1 be ? CalculateOffsetShift(relativeTo, one.[[Years]], one.[[Months]], one.[[Weeks]], one.[[Days]], one.[[Hours]], one.[[Minutes]], one.[[Seconds]], one.[[Milliseconds]], one.[[Microseconds]], one.[[Nanoseconds]]).
-    auto shift1 = TRY(calculate_offset_shift(global_object, relative_to, one->years(), one->months(), one->weeks(), one->days(), one->hours(), one->minutes(), one->seconds(), one->milliseconds(), one->microseconds(), one->nanoseconds()));
+    // 5. Let shift1 be ? CalculateOffsetShift(relativeTo, one.[[Years]], one.[[Months]], one.[[Weeks]], one.[[Days]], 0, 0, 0, 0, 0, 0, 0).
+    auto shift1 = TRY(calculate_offset_shift(global_object, relative_to, one->years(), one->months(), one->weeks(), one->days(), 0, 0, 0, 0, 0, 0));
 
-    // 6. Let shift2 be ? CalculateOffsetShift(relativeTo, two.[[Years]], two.[[Months]], two.[[Weeks]], two.[[Days]], two.[[Hours]], two.[[Minutes]], two.[[Seconds]], two.[[Milliseconds]], two.[[Microseconds]], two.[[Nanoseconds]]).
-    auto shift2 = TRY(calculate_offset_shift(global_object, relative_to, two->years(), two->months(), two->weeks(), two->days(), two->hours(), two->minutes(), two->seconds(), two->milliseconds(), two->microseconds(), two->nanoseconds()));
+    // 6. Let shift2 be ? CalculateOffsetShift(relativeTo, two.[[Years]], two.[[Months]], two.[[Weeks]], two.[[Days]], 0, 0, 0, 0, 0, 0, 0).
+    auto shift2 = TRY(calculate_offset_shift(global_object, relative_to, two->years(), two->months(), two->weeks(), two->days(), 0, 0, 0, 0, 0, 0));
 
     double days1;
     double days2;
@@ -150,23 +150,21 @@ JS_DEFINE_NATIVE_FUNCTION(DurationConstructor::compare)
     }
 
     // 9. Let ns1 be ! TotalDurationNanoseconds(days1, one.[[Hours]], one.[[Minutes]], one.[[Seconds]], one.[[Milliseconds]], one.[[Microseconds]], one.[[Nanoseconds]], shift1).
-    auto* nanoseconds1_bigint = js_bigint(vm, Crypto::SignedBigInteger::create_from((i64)one->nanoseconds()));
-    auto* ns1 = total_duration_nanoseconds(global_object, days1, one->hours(), one->minutes(), one->seconds(), one->milliseconds(), one->microseconds(), *nanoseconds1_bigint, shift1);
+    auto ns1 = total_duration_nanoseconds(days1, one->hours(), one->minutes(), one->seconds(), one->milliseconds(), one->microseconds(), Crypto::SignedBigInteger::create_from((i64)one->nanoseconds()), shift1);
 
     // 10. Let ns2 be ! TotalDurationNanoseconds(days2, two.[[Hours]], two.[[Minutes]], two.[[Seconds]], two.[[Milliseconds]], two.[[Microseconds]], two.[[Nanoseconds]], shift2).
-    auto* nanoseconds2_bigint = js_bigint(vm, Crypto::SignedBigInteger::create_from((i64)two->nanoseconds()));
-    auto* ns2 = total_duration_nanoseconds(global_object, days2, two->hours(), two->minutes(), two->seconds(), two->milliseconds(), two->microseconds(), *nanoseconds2_bigint, shift2);
+    auto ns2 = total_duration_nanoseconds(days2, two->hours(), two->minutes(), two->seconds(), two->milliseconds(), two->microseconds(), Crypto::SignedBigInteger::create_from((i64)two->nanoseconds()), shift2);
 
-    // 11. If ns1 > ns2, return 1.
-    if (ns1->big_integer() > ns2->big_integer())
-        return 1;
+    // 11. If ns1 > ns2, return 1𝔽.
+    if (ns1 > ns2)
+        return Value(1);
 
-    // 12. If ns1 < ns2, return −1.
-    if (ns1->big_integer() < ns2->big_integer())
-        return -1;
+    // 12. If ns1 < ns2, return -1𝔽.
+    if (ns1 < ns2)
+        return Value(-1);
 
-    // 13. Return 0.
-    return 0;
+    // 13. Return +0𝔽.
+    return Value(0);
 }
 
 }

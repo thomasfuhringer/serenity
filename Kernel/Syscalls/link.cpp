@@ -10,10 +10,10 @@
 
 namespace Kernel {
 
-ErrorOr<FlatPtr> Process::sys$link(Userspace<const Syscall::SC_link_params*> user_params)
+ErrorOr<FlatPtr> Process::sys$link(Userspace<Syscall::SC_link_params const*> user_params)
 {
-    VERIFY_PROCESS_BIG_LOCK_ACQUIRED(this)
-    REQUIRE_PROMISE(cpath);
+    VERIFY_NO_PROCESS_BIG_LOCK(this)
+    TRY(require_promise(Pledge::cpath));
     auto params = TRY(copy_typed_from_user(user_params));
     auto old_path = TRY(try_copy_kstring_from_user(params.old_path));
     auto new_path = TRY(try_copy_kstring_from_user(params.new_path));
@@ -21,10 +21,10 @@ ErrorOr<FlatPtr> Process::sys$link(Userspace<const Syscall::SC_link_params*> use
     return 0;
 }
 
-ErrorOr<FlatPtr> Process::sys$symlink(Userspace<const Syscall::SC_symlink_params*> user_params)
+ErrorOr<FlatPtr> Process::sys$symlink(Userspace<Syscall::SC_symlink_params const*> user_params)
 {
-    VERIFY_PROCESS_BIG_LOCK_ACQUIRED(this)
-    REQUIRE_PROMISE(cpath);
+    VERIFY_NO_PROCESS_BIG_LOCK(this)
+    TRY(require_promise(Pledge::cpath));
     auto params = TRY(copy_typed_from_user(user_params));
 
     auto target = TRY(get_syscall_path_argument(params.target));

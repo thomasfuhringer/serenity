@@ -8,6 +8,7 @@
 #include <LibCore/ArgsParser.h>
 #include <LibCore/System.h>
 #include <LibGUI/Application.h>
+#include <LibGUI/MessageBox.h>
 #include <LibMain/Main.h>
 #include <Services/LoginServer/LoginWindow.h>
 #include <errno.h>
@@ -53,7 +54,7 @@ static void login(Core::Account const& account, LoginWindow& window)
 
 ErrorOr<int> serenity_main(Main::Arguments arguments)
 {
-    auto app = GUI::Application::construct(arguments);
+    auto app = TRY(GUI::Application::try_create(arguments));
 
     TRY(Core::System::pledge("stdio recvfd sendfd rpath exec proc id"));
     TRY(Core::System::unveil("/home", "r"));
@@ -71,13 +72,17 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
 
         window->set_password("");
 
+        auto fail_message = "Can't log in: invalid username or password.";
+
         auto account = Core::Account::from_name(username.characters());
         if (account.is_error()) {
+            window->set_fail_message(fail_message);
             dbgln("failed graphical login for user {}: {}", username, account.error());
             return;
         }
 
         if (!account.value().authenticate(password)) {
+            window->set_fail_message(fail_message);
             dbgln("failed graphical login for user {}: invalid password", username);
             return;
         }

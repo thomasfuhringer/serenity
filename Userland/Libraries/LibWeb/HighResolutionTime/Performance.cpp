@@ -8,22 +8,20 @@
 #include <LibWeb/DOM/Document.h>
 #include <LibWeb/DOM/Event.h>
 #include <LibWeb/DOM/EventDispatcher.h>
-#include <LibWeb/DOM/Window.h>
+#include <LibWeb/HTML/Window.h>
 #include <LibWeb/HighResolutionTime/Performance.h>
 
 namespace Web::HighResolutionTime {
 
-Performance::Performance(DOM::Window& window)
-    : DOM::EventTarget(static_cast<Bindings::ScriptExecutionContext&>(window.associated_document()))
+Performance::Performance(HTML::Window& window)
+    : DOM::EventTarget()
     , m_window(window)
     , m_timing(make<NavigationTiming::PerformanceTiming>(window))
 {
     m_timer.start();
 }
 
-Performance::~Performance()
-{
-}
+Performance::~Performance() = default;
 
 double Performance::time_origin() const
 {

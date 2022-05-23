@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2018-2020, Andreas Kling <kling@serenityos.org>
- * Copyright (c) 2020, Itamar S. <itamar8910@gmail.com>
+ * Copyright (c) 2020-2022, Itamar S. <itamar8910@gmail.com>
  * Copyright (c) 2020-2021, the SerenityOS developers.
  *
  * SPDX-License-Identifier: BSD-2-Clause
@@ -18,6 +18,7 @@
 #include "Git/GitWidget.h"
 #include "Locator.h"
 #include "Project.h"
+#include "ProjectBuilder.h"
 #include "ProjectFile.h"
 #include "TerminalWrapper.h"
 #include "ToDoEntriesWidget.h"
@@ -26,7 +27,7 @@
 #include <LibGUI/Scrollbar.h>
 #include <LibGUI/Splitter.h>
 #include <LibGUI/Widget.h>
-#include <LibGfx/Font.h>
+#include <LibGfx/Font/Font.h>
 #include <LibThreading/Thread.h>
 
 namespace HackStudio {
@@ -47,8 +48,12 @@ public:
     EditorWrapper& current_editor_wrapper();
     EditorWrapper const& current_editor_wrapper() const;
     void set_current_editor_wrapper(RefPtr<EditorWrapper>);
+    void set_current_editor_tab_widget(RefPtr<GUI::TabWidget>);
 
-    const String& active_file() const { return m_current_editor_wrapper->filename(); }
+    GUI::TabWidget& current_editor_tab_widget();
+    GUI::TabWidget const& current_editor_tab_widget() const;
+
+    String const& active_file() const { return m_current_editor_wrapper->filename(); }
     void initialize_menubar(GUI::Window&);
 
     Locator& locator()
@@ -61,7 +66,7 @@ public:
         No,
         Yes
     };
-    ContinueDecision warn_unsaved_changes(const String& prompt);
+    ContinueDecision warn_unsaved_changes(String const& prompt);
 
     enum class Mode {
         Code,
@@ -69,14 +74,20 @@ public:
     };
 
     void open_coredump(String const& coredump_path);
+    void for_each_open_file(Function<void(ProjectFile const&)>);
+    bool semantic_syntax_highlighting_is_enabled() const;
+
+    static Vector<String> read_recent_projects();
 
 private:
-    static String get_full_path_of_serenity_source(const String& file);
+    static constexpr size_t recent_projects_history_size = 15;
+
+    static String get_full_path_of_serenity_source(String const& file);
     String get_absolute_path(String const&) const;
     Vector<String> selected_file_paths() const;
 
     HackStudioWidget(String path_to_project);
-    void open_project(const String& root_path);
+    void open_project(String const& root_path);
 
     enum class EditMode {
         Text,
@@ -91,13 +102,16 @@ private:
     NonnullRefPtr<GUI::Action> create_open_selected_action();
     NonnullRefPtr<GUI::Action> create_delete_action();
     NonnullRefPtr<GUI::Action> create_new_project_action();
+    NonnullRefPtr<GUI::Action> create_switch_to_next_editor_tab_widget_action();
     NonnullRefPtr<GUI::Action> create_switch_to_next_editor_action();
     NonnullRefPtr<GUI::Action> create_switch_to_previous_editor_action();
+    NonnullRefPtr<GUI::Action> create_remove_current_editor_tab_widget_action();
     NonnullRefPtr<GUI::Action> create_remove_current_editor_action();
     NonnullRefPtr<GUI::Action> create_open_action();
     NonnullRefPtr<GUI::Action> create_save_action();
     NonnullRefPtr<GUI::Action> create_save_as_action();
     NonnullRefPtr<GUI::Action> create_show_in_file_manager_action();
+    NonnullRefPtr<GUI::Action> create_add_editor_tab_widget_action();
     NonnullRefPtr<GUI::Action> create_add_editor_action();
     NonnullRefPtr<GUI::Action> create_add_terminal_action();
     NonnullRefPtr<GUI::Action> create_remove_current_terminal_action();
@@ -105,10 +119,13 @@ private:
     NonnullRefPtr<GUI::Action> create_build_action();
     NonnullRefPtr<GUI::Action> create_run_action();
     NonnullRefPtr<GUI::Action> create_stop_action();
+    NonnullRefPtr<GUI::Action> create_toggle_syntax_highlighting_mode_action();
+    NonnullRefPtr<GUI::Action> create_open_project_configuration_action();
     void create_location_history_actions();
 
-    void add_new_editor(GUI::Widget& parent);
-    RefPtr<EditorWrapper> get_editor_of_file(const String& filename);
+    void add_new_editor_tab_widget(GUI::Widget& parent);
+    void add_new_editor(GUI::TabWidget& parent);
+    RefPtr<EditorWrapper> get_editor_of_file(String const& filename);
     String get_project_executable_path() const;
 
     void on_action_tab_change();
@@ -116,7 +133,7 @@ private:
     void initialize_debugger();
     void update_statusbar();
 
-    void handle_external_file_deletion(const String& filepath);
+    void handle_external_file_deletion(String const& filepath);
     void stop_debugger_if_running();
     void close_current_project();
 
@@ -124,7 +141,7 @@ private:
     void create_toolbar(GUI::Widget& parent);
     void create_action_tab(GUI::Widget& parent);
     void create_file_menu(GUI::Window&);
-    void create_project_menu(GUI::Window&);
+    void update_recent_projects_submenu();
     void create_edit_menu(GUI::Window&);
     void create_build_menu(GUI::Window&);
     void create_view_menu(GUI::Window&);
@@ -132,8 +149,8 @@ private:
     void create_project_tab(GUI::Widget& parent);
     void configure_project_tree_view();
 
-    void run(TerminalWrapper& wrapper);
-    void build(TerminalWrapper& wrapper);
+    void run();
+    void build();
 
     void hide_action_tabs();
     bool any_document_is_dirty() const;
@@ -141,6 +158,7 @@ private:
     void update_gml_preview();
     void update_tree_view();
     void update_window_title();
+    void update_current_editor_title();
     void on_cursor_change();
     void file_renamed(String const& old_name, String const& new_name);
 
@@ -155,6 +173,8 @@ private:
 
     NonnullRefPtrVector<EditorWrapper> m_all_editor_wrappers;
     RefPtr<EditorWrapper> m_current_editor_wrapper;
+    NonnullRefPtrVector<GUI::TabWidget> m_all_editor_tab_widgets;
+    RefPtr<GUI::TabWidget> m_current_editor_tab_widget;
 
     HashMap<String, NonnullRefPtr<ProjectFile>> m_open_files;
     RefPtr<Core::FileWatcher> m_file_watcher;
@@ -189,6 +209,7 @@ private:
     RefPtr<DisassemblyWidget> m_disassembly_widget;
     RefPtr<Threading::Thread> m_debugger_thread;
     RefPtr<EditorWrapper> m_current_editor_in_execution;
+    RefPtr<GUI::Menu> m_recent_projects_submenu { nullptr };
 
     NonnullRefPtrVector<GUI::Action> m_new_file_actions;
     RefPtr<GUI::Action> m_new_plain_file_action;
@@ -199,13 +220,16 @@ private:
     RefPtr<GUI::Action> m_delete_action;
     RefPtr<GUI::Action> m_tree_view_rename_action;
     RefPtr<GUI::Action> m_new_project_action;
+    RefPtr<GUI::Action> m_switch_to_next_editor_tab_widget;
     RefPtr<GUI::Action> m_switch_to_next_editor;
     RefPtr<GUI::Action> m_switch_to_previous_editor;
+    RefPtr<GUI::Action> m_remove_current_editor_tab_widget_action;
     RefPtr<GUI::Action> m_remove_current_editor_action;
     RefPtr<GUI::Action> m_open_action;
     RefPtr<GUI::Action> m_save_action;
     RefPtr<GUI::Action> m_save_as_action;
     RefPtr<GUI::Action> m_add_editor_action;
+    RefPtr<GUI::Action> m_add_editor_tab_widget_action;
     RefPtr<GUI::Action> m_add_terminal_action;
     RefPtr<GUI::Action> m_remove_current_terminal_action;
     RefPtr<GUI::Action> m_stop_action;
@@ -214,6 +238,8 @@ private:
     RefPtr<GUI::Action> m_run_action;
     RefPtr<GUI::Action> m_locations_history_back_action;
     RefPtr<GUI::Action> m_locations_history_forward_action;
+    RefPtr<GUI::Action> m_toggle_semantic_highlighting_action;
+    RefPtr<GUI::Action> m_open_project_configuration_action;
 
     RefPtr<Gfx::Font> read_editor_font_from_config();
     void change_editor_font(RefPtr<Gfx::Font>);
@@ -227,5 +253,6 @@ private:
 
     Mode m_mode { Mode::Code };
     OwnPtr<Coredump::Inspector> m_coredump_inspector;
+    OwnPtr<ProjectBuilder> m_project_builder;
 };
 }

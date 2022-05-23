@@ -61,6 +61,9 @@ public:
     ModelSelection const& selection() const { return m_selection; }
     virtual void select_all() { }
 
+    void activate(ModelIndex const&);
+    void activate_selected();
+
     bool is_editable() const { return m_editable; }
     void set_editable(bool editable) { m_editable = editable; }
 
@@ -111,7 +114,9 @@ public:
     void set_key_column_and_sort_order(int column, SortOrder);
 
     int key_column() const { return m_key_column; }
+    void set_key_column(int column) { set_key_column_and_sort_order(column, sort_order()); }
     SortOrder sort_order() const { return m_sort_order; }
+    void set_sort_order(SortOrder order) { set_key_column_and_sort_order(key_column(), order); }
 
     virtual void scroll_into_view(ModelIndex const&, [[maybe_unused]] bool scroll_horizontally = true, [[maybe_unused]] bool scroll_vertically = true) { }
 
@@ -123,6 +128,7 @@ public:
     void set_tab_key_navigation_enabled(bool enabled) { m_tab_key_navigation_enabled = enabled; }
 
     void set_draw_item_text_with_shadow(bool b) { m_draw_item_text_with_shadow = b; }
+    bool does_draw_item_text_with_shadow() const { return m_draw_item_text_with_shadow; }
 
 protected:
     AbstractView();
@@ -160,8 +166,6 @@ protected:
 
     virtual void did_scroll() override;
     void set_hovered_index(ModelIndex const&);
-    void activate(ModelIndex const&);
-    void activate_selected();
     void update_edit_widget_position();
 
     void stop_highlighted_search_timer();

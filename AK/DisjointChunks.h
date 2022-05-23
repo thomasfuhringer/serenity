@@ -1,14 +1,17 @@
 /*
  * Copyright (c) 2021, Ali Mohammad Pur <mpfard@serenityos.org>
+ * Copyright (c) 2022, kleines Filmröllchen <filmroellchen@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #pragma once
 
+#include <AK/AllOf.h>
 #include <AK/Forward.h>
 #include <AK/Span.h>
 #include <AK/StdLibExtras.h>
+#include <AK/Try.h>
 
 namespace AK {
 
@@ -21,6 +24,8 @@ struct DisjointIterator {
     DisjointIterator(ReferenceType chunks)
         : m_chunks(chunks)
     {
+        while (m_chunk_index < m_chunks.size() && m_chunks[m_chunk_index].is_empty())
+            ++m_chunk_index;
     }
 
     DisjointIterator(ReferenceType chunks, EndTag)
@@ -100,9 +105,20 @@ public:
     T const& at(size_t index) const { return const_cast<DisjointSpans&>(*this).at(index); }
     T& at(size_t index)
     {
+        auto value = find(index);
+        VERIFY(value != nullptr);
+        return *value;
+    }
+    T* find(size_t index)
+    {
         auto span_and_offset = span_around(index);
-        VERIFY(span_and_offset.offset < span_and_offset.span.size());
-        return span_and_offset.span.at(span_and_offset.offset);
+        if (span_and_offset.offset >= span_and_offset.span.size())
+            return nullptr;
+        return &span_and_offset.span.at(span_and_offset.offset);
+    }
+    T const* find(size_t index) const
+    {
+        return const_cast<DisjointSpans*>(this)->find(index);
     }
 
     size_t size() const
@@ -113,7 +129,10 @@ public:
         return size;
     }
 
-    bool is_empty() const { return size() == 0; }
+    bool is_empty() const
+    {
+        return all_of(m_spans, [](auto& span) { return span.is_empty(); });
+    }
 
     DisjointSpans slice(size_t start, size_t length) const
     {
@@ -169,6 +188,48 @@ private:
     Vector<Span<T>> m_spans;
 };
 
+namespace Detail {
+
+template<typename T, typename ChunkType>
+ChunkType shatter_chunk(ChunkType& source_chunk, size_t start, size_t sliced_length)
+{
+    auto wanted_slice = source_chunk.span().slice(start, sliced_length);
+
+    ChunkType new_chunk;
+    if constexpr (IsTriviallyConstructible<T>) {
+        new_chunk.resize(wanted_slice.size());
+
+        TypedTransfer<T>::move(new_chunk.data(), wanted_slice.data(), wanted_slice.size());
+    } else {
+        new_chunk.ensure_capacity(wanted_slice.size());
+        for (auto& entry : wanted_slice)
+            new_chunk.unchecked_append(move(entry));
+    }
+    source_chunk.remove(start, sliced_length);
+    return new_chunk;
+}
+
+template<typename T>
+FixedArray<T> shatter_chunk(FixedArray<T>& source_chunk, size_t start, size_t sliced_length)
+{
+    auto wanted_slice = source_chunk.span().slice(start, sliced_length);
+
+    FixedArray<T> new_chunk = FixedArray<T>::must_create_but_fixme_should_propagate_errors(wanted_slice.size());
+    if constexpr (IsTriviallyConstructible<T>) {
+        TypedTransfer<T>::move(new_chunk.data(), wanted_slice.data(), wanted_slice.size());
+    } else {
+        // FIXME: propagate errors
+        auto copied_chunk = MUST(FixedArray<T>::try_create(wanted_slice));
+        new_chunk.swap(copied_chunk);
+    }
+    // FIXME: propagate errors
+    auto rest_of_chunk = MUST(FixedArray<T>::try_create(source_chunk.span().slice(start)));
+    source_chunk.swap(rest_of_chunk);
+    return new_chunk;
+}
+
+}
+
 template<typename T, typename ChunkType = Vector<T>>
 class DisjointChunks {
 public:
@@ -180,7 +241,7 @@ public:
     DisjointChunks& operator=(DisjointChunks&&) = default;
     DisjointChunks& operator=(DisjointChunks const&) = default;
 
-    void append(ChunkType&& chunk) { m_chunks.append(chunk); }
+    void append(ChunkType&& chunk) { m_chunks.append(move(chunk)); }
     void extend(DisjointChunks&& chunks) { m_chunks.extend(move(chunks.m_chunks)); }
     void extend(DisjointChunks const& chunks) { m_chunks.extend(chunks.m_chunks); }
 
@@ -189,12 +250,22 @@ public:
     ChunkType const& first_chunk() const { return m_chunks.first(); }
     ChunkType const& last_chunk() const { return m_chunks.last(); }
 
+    void ensure_capacity(size_t needed_capacity)
+    {
+        m_chunks.ensure_capacity(needed_capacity);
+    }
+
     void insert(size_t index, T value)
     {
         if (m_chunks.size() == 1)
             return m_chunks.first().insert(index, value);
         auto chunk_and_offset = chunk_around(index);
-        chunk_and_offset.chunk.insert(chunk_and_offset.offset, move(value));
+        if (!chunk_and_offset.chunk) {
+            m_chunks.empend();
+            chunk_and_offset.chunk = &m_chunks.last();
+        }
+
+        chunk_and_offset.chunk->insert(chunk_and_offset.offset, move(value));
     }
 
     void clear() { m_chunks.clear(); }
@@ -204,11 +275,27 @@ public:
     T const& at(size_t index) const { return const_cast<DisjointChunks&>(*this).at(index); }
     T& at(size_t index)
     {
-        if (m_chunks.size() == 1)
-            return m_chunks.first().at(index);
+        auto value = find(index);
+        VERIFY(value != nullptr);
+        return *value;
+    }
+
+    T* find(size_t index)
+    {
+        if (m_chunks.size() == 1) {
+            if (m_chunks.first().size() > index)
+                return &m_chunks.first().at(index);
+            return nullptr;
+        }
         auto chunk_and_offset = chunk_around(index);
-        VERIFY(chunk_and_offset.offset < chunk_and_offset.chunk.size());
-        return chunk_and_offset.chunk.at(chunk_and_offset.offset);
+        if (!chunk_and_offset.chunk || chunk_and_offset.offset >= chunk_and_offset.chunk->size())
+            return nullptr;
+        return &chunk_and_offset.chunk->at(chunk_and_offset.offset);
+    }
+
+    T const* find(size_t index) const
+    {
+        return const_cast<DisjointChunks*>(this)->find(index);
     }
 
     size_t size() const
@@ -219,7 +306,10 @@ public:
         return sum;
     }
 
-    bool is_empty() const { return size() == 0; }
+    bool is_empty() const
+    {
+        return all_of(m_chunks, [](auto& chunk) { return chunk.is_empty(); });
+    }
 
     DisjointSpans<T> spans() const&
     {
@@ -264,20 +354,9 @@ public:
                 result.m_chunks.append(move(chunk));
             } else {
                 // Shatter the chunk, we were asked for only a part of it :(
-                auto wanted_slice = chunk.span().slice(start, sliced_length);
+                auto new_chunk = Detail::shatter_chunk<T>(chunk, start, sliced_length);
 
-                ChunkType new_chunk;
-                if constexpr (IsTriviallyConstructible<T>) {
-                    new_chunk.resize(wanted_slice.size());
-                    TypedTransfer<T>::move(new_chunk.data(), wanted_slice.data(), wanted_slice.size());
-                } else {
-                    new_chunk.ensure_capacity(wanted_slice.size());
-                    for (auto& entry : wanted_slice)
-                        new_chunk.unchecked_append(move(entry));
-                }
                 result.m_chunks.append(move(new_chunk));
-
-                chunk.remove(start, sliced_length);
             }
             start = 0;
             length -= sliced_length;
@@ -319,11 +398,14 @@ public:
 
 private:
     struct ChunkAndOffset {
-        ChunkType& chunk;
+        ChunkType* chunk;
         size_t offset;
     };
     ChunkAndOffset chunk_around(size_t index)
     {
+        if (m_chunks.is_empty())
+            return { nullptr, index };
+
         size_t offset = 0;
         for (auto& chunk : m_chunks) {
             if (chunk.is_empty())
@@ -334,10 +416,10 @@ private:
                 continue;
             }
 
-            return { chunk, index - offset };
+            return { &chunk, index - offset };
         }
 
-        return { m_chunks.last(), index - (offset - m_chunks.last().size()) };
+        return { &m_chunks.last(), index - (offset - m_chunks.last().size()) };
     }
 
     Vector<ChunkType> m_chunks;
@@ -346,3 +428,4 @@ private:
 }
 
 using AK::DisjointChunks;
+using AK::DisjointSpans;

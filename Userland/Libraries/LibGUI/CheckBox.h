@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2018-2020, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2022, the SerenityOS developers.
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -14,12 +15,19 @@ class CheckBox : public AbstractButton {
     C_OBJECT(CheckBox);
 
 public:
-    virtual ~CheckBox() override;
+    virtual ~CheckBox() override = default;
 
     virtual void click(unsigned modifiers = 0) override;
 
     bool is_autosize() const { return m_autosize; }
     void set_autosize(bool);
+
+    enum class CheckBoxPosition {
+        Left,
+        Right,
+    };
+    CheckBoxPosition checkbox_position() const { return m_checkbox_position; }
+    void set_checkbox_position(CheckBoxPosition value) { m_checkbox_position = value; }
 
 private:
     explicit CheckBox(String = {});
@@ -33,6 +41,7 @@ private:
     virtual void paint_event(PaintEvent&) override;
 
     bool m_autosize { false };
+    CheckBoxPosition m_checkbox_position { CheckBoxPosition::Left };
 };
 
 }

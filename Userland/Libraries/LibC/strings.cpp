@@ -16,7 +16,7 @@ void bzero(void* dest, size_t n)
     memset(dest, 0, n);
 }
 
-void bcopy(const void* src, void* dest, size_t n)
+void bcopy(void const* src, void* dest, size_t n)
 {
     memmove(dest, src, n);
 }
@@ -28,22 +28,24 @@ static char foldcase(char ch)
     return ch;
 }
 
-int strcasecmp(const char* s1, const char* s2)
+// https://pubs.opengroup.org/onlinepubs/9699919799/functions/strcasecmp.html
+int strcasecmp(char const* s1, char const* s2)
 {
     for (; foldcase(*s1) == foldcase(*s2); ++s1, ++s2) {
         if (*s1 == 0)
             return 0;
     }
-    return foldcase(*(const unsigned char*)s1) < foldcase(*(const unsigned char*)s2) ? -1 : 1;
+    return foldcase(*(unsigned char const*)s1) < foldcase(*(unsigned char const*)s2) ? -1 : 1;
 }
 
-int strncasecmp(const char* s1, const char* s2, size_t n)
+// https://pubs.opengroup.org/onlinepubs/9699919799/functions/strncasecmp.html
+int strncasecmp(char const* s1, char const* s2, size_t n)
 {
     if (!n)
         return 0;
     do {
         if (foldcase(*s1) != foldcase(*s2++))
-            return foldcase(*(const unsigned char*)s1) - foldcase(*(const unsigned char*)--s2);
+            return foldcase(*(unsigned char const*)s1) - foldcase(*(unsigned char const*)--s2);
         if (*s1++ == 0)
             break;
     } while (--n);

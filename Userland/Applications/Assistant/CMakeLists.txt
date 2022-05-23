@@ -6,9 +6,9 @@ serenity_component(
 
 set(SOURCES
     Providers.cpp
-    FuzzyMatch.cpp
     main.cpp
     )
 
 serenity_app(Assistant ICON app-run)
-target_link_libraries(Assistant LibCore LibDesktop LibGUI LibJS LibThreading)
+target_link_libraries(Assistant LibCore LibDesktop LibGUI LibJS LibMain LibThreading)
+link_with_unicode_data(Assistant)

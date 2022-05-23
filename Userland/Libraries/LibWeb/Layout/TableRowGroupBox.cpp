@@ -11,14 +11,12 @@
 
 namespace Web::Layout {
 
-TableRowGroupBox::TableRowGroupBox(DOM::Document& document, DOM::Element& element, NonnullRefPtr<CSS::StyleProperties> style)
-    : Layout::BlockContainer(document, &element, move(style))
+TableRowGroupBox::TableRowGroupBox(DOM::Document& document, DOM::Element* element, NonnullRefPtr<CSS::StyleProperties> style)
+    : Layout::BlockContainer(document, element, move(style))
 {
 }
 
-TableRowGroupBox::~TableRowGroupBox()
-{
-}
+TableRowGroupBox::~TableRowGroupBox() = default;
 
 size_t TableRowGroupBox::column_count() const
 {

@@ -1,11 +1,12 @@
 /*
- * Copyright (c) 2020-2021, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2020-2022, Andreas Kling <kling@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #pragma once
 
+#include <AK/StringView.h>
 #include <LibJS/Runtime/Completion.h>
 #include <LibJS/Runtime/Object.h>
 
@@ -19,15 +20,10 @@ struct Variable {
 #define JS_ENVIRONMENT(class_, base_class) \
 public:                                    \
     using Base = base_class;               \
-    virtual char const* class_name() const override { return #class_; }
+    virtual StringView class_name() const override { return #class_; }
 
 class Environment : public Cell {
 public:
-    GlobalObject& global_object() { return *m_global_object; }
-    GlobalObject const& global_object() const { return *m_global_object; }
-
-    virtual void initialize(GlobalObject&) override;
-
     virtual bool has_this_binding() const { return false; }
     virtual ThrowCompletionOr<Value> get_this_binding(GlobalObject&) const { return Value {}; }
 
@@ -52,7 +48,7 @@ public:
     template<typename T>
     bool fast_is() const = delete;
 
-    virtual char const* class_name() const override { return "Environment"; }
+    virtual StringView class_name() const override { return "Environment"sv; }
 
     // This flag is set on the entire variable environment chain when direct eval() is performed.
     // It is used to disable non-local variable access caching.
@@ -67,10 +63,9 @@ protected:
 private:
     virtual bool is_environment() const final { return true; }
 
-    GlobalObject* m_global_object { nullptr };
-    Environment* m_outer_environment { nullptr };
-
     bool m_permanently_screwed_by_eval { false };
+
+    Environment* m_outer_environment { nullptr };
 };
 
 }

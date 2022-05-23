@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2019-2020, Sergey Bugaev <bugaevc@serenityos.org>
+ * Copyright (c) 2022, the SerenityOS developers.
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -17,8 +18,8 @@
 
 class Calculator final {
 public:
-    Calculator();
-    ~Calculator();
+    Calculator() = default;
+    ~Calculator() = default;
 
     enum class Operation {
         None,
@@ -47,6 +48,22 @@ public:
     void clear_error() { m_has_error = false; }
 
 private:
+    static bool should_be_rounded(KeypadValue);
+    static void round(KeypadValue&);
+
+    static constexpr auto rounding_threshold = []() consteval
+    {
+        using used_type = u64;
+
+        auto count = 1;
+        used_type res = 10;
+        while (!__builtin_mul_overflow(res, (used_type)10, &res)) {
+            count++;
+        }
+        return count;
+    }
+    ();
+
     Operation m_operation_in_progress { Operation::None };
     KeypadValue m_saved_argument { (i64)0 };
     KeypadValue m_mem { (i64)0 };

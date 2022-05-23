@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2018-2020, Andreas Kling <kling@serenityos.org>
- * Copyright (c) 2021, Sam Atkins <atkinssj@serenityos.org>
+ * Copyright (c) 2021-2022, Sam Atkins <atkinssj@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -20,9 +20,17 @@ using SelectorList = NonnullRefPtrVector<class Selector>;
 // This is a <complex-selector> in the spec. https://www.w3.org/TR/selectors-4/#complex
 class Selector : public RefCounted<Selector> {
 public:
+    enum class PseudoElement {
+        Before,
+        After,
+        FirstLine,
+        FirstLetter,
+        Marker,
+    };
+    static auto constexpr PseudoElementCount = to_underlying(PseudoElement::Marker) + 1;
+
     struct SimpleSelector {
         enum class Type {
-            Invalid,
             Universal,
             TagName,
             Id,
@@ -31,64 +39,88 @@ public:
             PseudoClass,
             PseudoElement,
         };
-        Type type { Type::Invalid };
 
         struct ANPlusBPattern {
             int step_size { 0 }; // "A"
             int offset = { 0 };  // "B"
 
+            // https://www.w3.org/TR/css-syntax-3/#serializing-anb
             String serialize() const
             {
-                return String::formatted("{}n{:+}", step_size, offset);
+                // 1. If A is zero, return the serialization of B.
+                if (step_size == 0) {
+                    return String::formatted("{}", offset);
+                }
+
+                // 2. Otherwise, let result initially be an empty string.
+                StringBuilder result;
+
+                // 3.
+                // - A is 1: Append "n" to result.
+                if (step_size == 1)
+                    result.append("n");
+                // - A is -1: Append "-n" to result.
+                else if (step_size == -1)
+                    result.append("-n");
+                // - A is non-zero: Serialize A and append it to result, then append "n" to result.
+                else if (step_size != 0)
+                    result.appendff("{}n", step_size);
+
+                // 4.
+                // - B is greater than zero: Append "+" to result, then append the serialization of B to result.
+                if (offset > 0)
+                    result.appendff("+{}", offset);
+                // - B is less than zero: Append the serialization of B to result.
+                if (offset < 0)
+                    result.appendff("{}", offset);
+
+                // 5. Return result.
+                return result.to_string();
             }
         };
 
         struct PseudoClass {
             enum class Type {
-                None,
                 Link,
                 Visited,
                 Hover,
                 Focus,
+                FocusWithin,
                 FirstChild,
                 LastChild,
                 OnlyChild,
+                NthChild,
+                NthLastChild,
                 Empty,
                 Root,
                 FirstOfType,
                 LastOfType,
-                NthChild,
-                NthLastChild,
+                OnlyOfType,
+                NthOfType,
+                NthLastOfType,
                 Disabled,
                 Enabled,
                 Checked,
+                Is,
                 Not,
+                Where,
                 Active,
+                Lang,
             };
-            Type type { Type::None };
+            Type type;
 
             // FIXME: We don't need this field on every single SimpleSelector, but it's also annoying to malloc it somewhere.
             // Only used when "pseudo_class" is "NthChild" or "NthLastChild".
-            ANPlusBPattern nth_child_pattern;
+            ANPlusBPattern nth_child_pattern {};
 
-            SelectorList not_selector {};
+            SelectorList argument_selector_list {};
+
+            // Used for :lang(en-gb,dk)
+            Vector<FlyString> languages {};
         };
-        PseudoClass pseudo_class {};
-
-        enum class PseudoElement {
-            None,
-            Before,
-            After,
-            FirstLine,
-            FirstLetter,
-        };
-        PseudoElement pseudo_element { PseudoElement::None };
-
-        FlyString value {};
 
         struct Attribute {
             enum class MatchType {
-                None,
                 HasAttribute,
                 ExactValueMatch,
                 ContainsWord,      // [att~=val]
@@ -97,11 +129,28 @@ public:
                 StartsWithString,  // [att^=val]
                 EndsWithString,    // [att$=val]
             };
-            MatchType match_type { MatchType::None };
+            enum class CaseType {
+                DefaultMatch,
+                CaseSensitiveMatch,
+                CaseInsensitiveMatch,
+            };
+            MatchType match_type;
             FlyString name {};
             String value {};
+            CaseType case_type;
         };
-        Attribute attribute {};
+
+        Type type;
+        Variant<Empty, Attribute, PseudoClass, PseudoElement, FlyString> value {};
+
+        Attribute const& attribute() const { return value.get<Attribute>(); }
+        Attribute& attribute() { return value.get<Attribute>(); }
+        PseudoClass const& pseudo_class() const { return value.get<PseudoClass>(); }
+        PseudoClass& pseudo_class() { return value.get<PseudoClass>(); }
+        PseudoElement const& pseudo_element() const { return value.get<PseudoElement>(); }
+        PseudoElement& pseudo_element() { return value.get<PseudoElement>(); }
+        FlyString const& name() const { return value.get<FlyString>(); }
+        FlyString& name() { return value.get<FlyString>(); }
 
         String serialize() const;
     };
@@ -127,10 +176,10 @@ public:
         return adopt_ref(*new Selector(move(compound_selectors)));
     }
 
-    ~Selector();
+    ~Selector() = default;
 
     Vector<CompoundSelector> const& compound_selectors() const { return m_compound_selectors; }
-
+    Optional<PseudoElement> pseudo_element() const { return m_pseudo_element; }
     u32 specificity() const;
     String serialize() const;
 
@@ -138,10 +187,85 @@ private:
     explicit Selector(Vector<CompoundSelector>&&);
 
     Vector<CompoundSelector> m_compound_selectors;
+    mutable Optional<u32> m_specificity;
+    Optional<Selector::PseudoElement> m_pseudo_element;
 };
 
-constexpr StringView pseudo_element_name(Selector::SimpleSelector::PseudoElement);
-constexpr StringView pseudo_class_name(Selector::SimpleSelector::PseudoClass::Type);
+constexpr StringView pseudo_element_name(Selector::PseudoElement pseudo_element)
+{
+    switch (pseudo_element) {
+    case Selector::PseudoElement::Before:
+        return "before"sv;
+    case Selector::PseudoElement::After:
+        return "after"sv;
+    case Selector::PseudoElement::FirstLine:
+        return "first-line"sv;
+    case Selector::PseudoElement::FirstLetter:
+        return "first-letter"sv;
+    case Selector::PseudoElement::Marker:
+        return "marker"sv;
+    }
+    VERIFY_NOT_REACHED();
+}
+
+Optional<Selector::PseudoElement> pseudo_element_from_string(StringView);
+
+constexpr StringView pseudo_class_name(Selector::SimpleSelector::PseudoClass::Type pseudo_class)
+{
+    switch (pseudo_class) {
+    case Selector::SimpleSelector::PseudoClass::Type::Link:
+        return "link"sv;
+    case Selector::SimpleSelector::PseudoClass::Type::Visited:
+        return "visited"sv;
+    case Selector::SimpleSelector::PseudoClass::Type::Hover:
+        return "hover"sv;
+    case Selector::SimpleSelector::PseudoClass::Type::Focus:
+        return "focus"sv;
+    case Selector::SimpleSelector::PseudoClass::Type::FocusWithin:
+        return "focus-within"sv;
+    case Selector::SimpleSelector::PseudoClass::Type::FirstChild:
+        return "first-child"sv;
+    case Selector::SimpleSelector::PseudoClass::Type::LastChild:
+        return "last-child"sv;
+    case Selector::SimpleSelector::PseudoClass::Type::OnlyChild:
+        return "only-child"sv;
+    case Selector::SimpleSelector::PseudoClass::Type::Empty:
+        return "empty"sv;
+    case Selector::SimpleSelector::PseudoClass::Type::Root:
+        return "root"sv;
+    case Selector::SimpleSelector::PseudoClass::Type::FirstOfType:
+        return "first-of-type"sv;
+    case Selector::SimpleSelector::PseudoClass::Type::LastOfType:
+        return "last-of-type"sv;
+    case Selector::SimpleSelector::PseudoClass::Type::OnlyOfType:
+        return "only-of-type"sv;
+    case Selector::SimpleSelector::PseudoClass::Type::NthOfType:
+        return "nth-of-type"sv;
+    case Selector::SimpleSelector::PseudoClass::Type::NthLastOfType:
+        return "nth-last-of-type"sv;
+    case Selector::SimpleSelector::PseudoClass::Type::Disabled:
+        return "disabled"sv;
+    case Selector::SimpleSelector::PseudoClass::Type::Enabled:
+        return "enabled"sv;
+    case Selector::SimpleSelector::PseudoClass::Type::Checked:
+        return "checked"sv;
+    case Selector::SimpleSelector::PseudoClass::Type::Active:
+        return "active"sv;
+    case Selector::SimpleSelector::PseudoClass::Type::NthChild:
+        return "nth-child"sv;
+    case Selector::SimpleSelector::PseudoClass::Type::NthLastChild:
+        return "nth-last-child"sv;
+    case Selector::SimpleSelector::PseudoClass::Type::Is:
+        return "is"sv;
+    case Selector::SimpleSelector::PseudoClass::Type::Not:
+        return "not"sv;
+    case Selector::SimpleSelector::PseudoClass::Type::Where:
+        return "where"sv;
+    case Selector::SimpleSelector::PseudoClass::Type::Lang:
+        return "lang"sv;
+    }
+    VERIFY_NOT_REACHED();
+}
 
 String serialize_a_group_of_selectors(NonnullRefPtrVector<Selector> const& selectors);
 

@@ -7,10 +7,12 @@
 #pragma once
 
 #include <AK/BitmapView.h>
+#include <AK/Error.h>
 #include <AK/Noncopyable.h>
 #include <AK/Optional.h>
 #include <AK/Platform.h>
 #include <AK/StdLibExtras.h>
+#include <AK/Try.h>
 #include <AK/Types.h>
 #include <AK/kmalloc.h>
 
@@ -20,15 +22,25 @@ class Bitmap : public BitmapView {
     AK_MAKE_NONCOPYABLE(Bitmap);
 
 public:
-    Bitmap() = default;
-
-    Bitmap(size_t size, bool default_value)
-        : BitmapView(static_cast<u8*>(kmalloc(ceil_div(size, static_cast<size_t>(8)))), size)
-        , m_is_owning(true)
+    static ErrorOr<Bitmap> try_create(size_t size, bool default_value)
     {
         VERIFY(size != 0);
-        fill(default_value);
+
+        auto* data = kmalloc(ceil_div(size, static_cast<size_t>(8)));
+        if (!data)
+            return Error::from_errno(ENOMEM);
+
+        auto bitmap = Bitmap { (u8*)data, size, true };
+        bitmap.fill(default_value);
+        return bitmap;
     }
+
+    static Bitmap must_create(size_t size, bool default_value)
+    {
+        return MUST(try_create(size, default_value));
+    }
+
+    Bitmap() = default;
 
     Bitmap(u8* data, size_t size, bool is_owning = false)
         : BitmapView(data, size)
@@ -71,10 +83,8 @@ public:
             m_data[index / 8] &= static_cast<u8>(~(1u << (index % 8)));
     }
 
+    // NOTE: There's a const method variant of this method at the parent class BitmapView.
     [[nodiscard]] u8* data() { return m_data; }
-
-    // [[nodiscard]] u8 const* data() const { return m_data; }
-    // ^BitmapView
 
     void grow(size_t size, bool default_value)
     {

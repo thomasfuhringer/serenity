@@ -9,25 +9,23 @@
 
 namespace Kernel::Memory {
 
-InodeVMObject::InodeVMObject(Inode& inode, size_t size)
-    : VMObject(size)
+InodeVMObject::InodeVMObject(Inode& inode, FixedArray<RefPtr<PhysicalPage>>&& new_physical_pages, Bitmap dirty_pages)
+    : VMObject(move(new_physical_pages))
     , m_inode(inode)
-    , m_dirty_pages(page_count(), false)
+    , m_dirty_pages(move(dirty_pages))
 {
 }
 
-InodeVMObject::InodeVMObject(InodeVMObject const& other)
-    : VMObject(other)
+InodeVMObject::InodeVMObject(InodeVMObject const& other, FixedArray<RefPtr<PhysicalPage>>&& new_physical_pages, Bitmap dirty_pages)
+    : VMObject(move(new_physical_pages))
     , m_inode(other.m_inode)
-    , m_dirty_pages(page_count(), false)
+    , m_dirty_pages(move(dirty_pages))
 {
     for (size_t i = 0; i < page_count(); ++i)
         m_dirty_pages.set(i, other.m_dirty_pages.get(i));
 }
 
-InodeVMObject::~InodeVMObject()
-{
-}
+InodeVMObject::~InodeVMObject() = default;
 
 size_t InodeVMObject::amount_clean() const
 {

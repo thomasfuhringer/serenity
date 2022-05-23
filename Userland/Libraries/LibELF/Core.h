@@ -6,9 +6,12 @@
 
 #pragma once
 
-#include <AK/String.h>
 #include <AK/Types.h>
 #include <LibC/sys/arch/i386/regs.h>
+
+#ifndef KERNEL
+#    include <AK/String.h>
+#endif
 
 namespace ELF::Core {
 
@@ -55,6 +58,7 @@ struct [[gnu::packed]] MemoryRegionInfo {
     uint16_t program_header_index;
     char region_name[]; // Null terminated
 
+#ifndef KERNEL
     String object_name() const
     {
         StringView memory_region_name { region_name };
@@ -65,6 +69,7 @@ struct [[gnu::packed]] MemoryRegionInfo {
             return {};
         return memory_region_name.substring_view(0, *maybe_colon_index).to_string();
     }
+#endif
 };
 
 struct [[gnu::packed]] Metadata {
@@ -74,7 +79,7 @@ struct [[gnu::packed]] Metadata {
     //
     // Well-known keys:
     // - "assertion": Used by LibC's __assertion_failed() to store assertion info
-    // - "pledge_violation": Used by the Kernel's REQUIRE_PROMISE() to store pledge violation info
+    // - "pledge_violation": Used by the Kernel's require_promise() to store pledge violation info
     char json_data[]; // Null terminated
 };
 

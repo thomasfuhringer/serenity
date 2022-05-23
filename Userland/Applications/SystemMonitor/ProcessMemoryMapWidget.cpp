@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2018-2020, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2022, the SerenityOS developers.
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -13,11 +14,15 @@
 #include <LibGUI/TableView.h>
 #include <LibGfx/Palette.h>
 
+REGISTER_WIDGET(SystemMonitor, ProcessMemoryMapWidget)
+
+namespace SystemMonitor {
+
 class PagemapPaintingDelegate final : public GUI::TableCellPaintingDelegate {
 public:
-    virtual ~PagemapPaintingDelegate() override { }
+    virtual ~PagemapPaintingDelegate() override = default;
 
-    virtual void paint(GUI::Painter& painter, const Gfx::IntRect& a_rect, const Gfx::Palette&, const GUI::ModelIndex& index) override
+    virtual void paint(GUI::Painter& painter, Gfx::IntRect const& a_rect, Gfx::Palette const&, const GUI::ModelIndex& index) override
     {
         auto rect = a_rect.shrunken(2, 2);
         auto pagemap = index.data(GUI::ModelRole::Custom).to_string();
@@ -92,23 +97,19 @@ ProcessMemoryMapWidget::ProcessMemoryMapWidget()
         [](auto&) {
             return GUI::Variant(0);
         },
-        [](const JsonObject& object) {
+        [](JsonObject const& object) {
             auto pagemap = object.get("pagemap").as_string_or({});
             return pagemap;
         });
     pid_vm_fields.empend("cow_pages", "# CoW", Gfx::TextAlignment::CenterRight);
     pid_vm_fields.empend("name", "Name", Gfx::TextAlignment::CenterLeft);
     m_json_model = GUI::JsonArrayModel::create({}, move(pid_vm_fields));
-    m_table_view->set_model(GUI::SortingProxyModel::create(*m_json_model));
+    m_table_view->set_model(MUST(GUI::SortingProxyModel::create(*m_json_model)));
 
     m_table_view->set_column_painting_delegate(7, make<PagemapPaintingDelegate>());
 
     m_table_view->set_key_column_and_sort_order(0, GUI::SortOrder::Ascending);
     m_timer = add<Core::Timer>(1000, [this] { refresh(); });
-}
-
-ProcessMemoryMapWidget::~ProcessMemoryMapWidget()
-{
 }
 
 void ProcessMemoryMapWidget::set_pid(pid_t pid)
@@ -123,4 +124,6 @@ void ProcessMemoryMapWidget::refresh()
 {
     if (m_pid != -1)
         m_json_model->invalidate();
+}
+
 }

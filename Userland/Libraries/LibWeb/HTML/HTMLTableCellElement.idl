@@ -1,5 +1,9 @@
+#import <HTML/HTMLElement.idl>
+
 interface HTMLTableCellElement : HTMLElement {
 
+    attribute unsigned long colSpan;
+    attribute unsigned long rowSpan;
     [Reflect] attribute DOMString headers;
     [Reflect] attribute DOMString abbr;
 

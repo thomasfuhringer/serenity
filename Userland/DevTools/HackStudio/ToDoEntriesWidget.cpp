@@ -8,7 +8,7 @@
 #include "HackStudio.h"
 #include "ToDoEntries.h"
 #include <LibGUI/BoxLayout.h>
-#include <LibGfx/FontDatabase.h>
+#include <LibGfx/Font/FontDatabase.h>
 
 namespace HackStudio {
 
@@ -22,7 +22,7 @@ public:
         __Count
     };
 
-    explicit ToDoEntriesModel(Vector<Cpp::Parser::TodoEntry> const&& matches)
+    explicit ToDoEntriesModel(Vector<CodeComprehension::TodoEntry> const&& matches)
         : m_matches(move(matches))
     {
     }
@@ -81,12 +81,12 @@ public:
     }
 
 private:
-    Vector<Cpp::Parser::TodoEntry> m_matches;
+    Vector<CodeComprehension::TodoEntry> m_matches;
 };
 
 void ToDoEntriesWidget::refresh()
 {
-    const auto& entries = ToDoEntries::the().get_entries();
+    auto const& entries = ToDoEntries::the().get_entries();
     auto results_model = adopt_ref(*new ToDoEntriesModel(move(entries)));
     m_result_view->set_model(results_model);
 }
@@ -103,7 +103,7 @@ ToDoEntriesWidget::ToDoEntriesWidget()
     m_result_view = add<GUI::TableView>();
 
     m_result_view->on_activation = [](auto& index) {
-        auto& match = *(Cpp::Parser::TodoEntry const*)index.internal_data();
+        auto& match = *(CodeComprehension::TodoEntry const*)index.internal_data();
         open_file(match.filename, match.line, match.column);
     };
 }

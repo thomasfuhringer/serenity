@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2020, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2022, the SerenityOS developers.
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -14,7 +15,7 @@
 
 namespace GUI {
 
-ProcessChooser::ProcessChooser(StringView window_title, StringView button_label, const Gfx::Bitmap* window_icon, GUI::Window* parent_window)
+ProcessChooser::ProcessChooser(StringView window_title, StringView button_label, Gfx::Bitmap const* window_icon, GUI::Window* parent_window)
     : Dialog(parent_window)
     , m_window_title(window_title)
     , m_button_label(button_label)
@@ -36,14 +37,14 @@ ProcessChooser::ProcessChooser(StringView window_title, StringView button_label,
 
     m_table_view = widget.add<GUI::TableView>();
     auto process_model = RunningProcessesModel::create();
-    auto sorting_model = GUI::SortingProxyModel::create(process_model);
+    auto sorting_model = MUST(GUI::SortingProxyModel::create(process_model));
     sorting_model->set_sort_role(GUI::ModelRole::Display);
     m_table_view->set_model(sorting_model);
     m_table_view->set_key_column_and_sort_order(RunningProcessesModel::Column::PID, GUI::SortOrder::Descending);
 
     m_process_model = process_model;
 
-    m_table_view->on_activation = [this](const ModelIndex& index) { set_pid_from_index_and_close(index); };
+    m_table_view->on_activation = [this](ModelIndex const& index) { set_pid_from_index_and_close(index); };
 
     auto& button_container = widget.add<GUI::Widget>();
     button_container.set_fixed_height(30);
@@ -64,7 +65,7 @@ ProcessChooser::ProcessChooser(StringView window_title, StringView button_label,
     auto& cancel_button = button_container.add<GUI::Button>("Cancel");
     cancel_button.set_fixed_width(80);
     cancel_button.on_click = [this](auto) {
-        done(ExecCancel);
+        done(ExecResult::Cancel);
     };
 
     m_process_model->update();
@@ -98,14 +99,10 @@ ProcessChooser::ProcessChooser(StringView window_title, StringView button_label,
     };
 }
 
-void ProcessChooser::set_pid_from_index_and_close(const ModelIndex& index)
+void ProcessChooser::set_pid_from_index_and_close(ModelIndex const& index)
 {
     m_pid = index.data(GUI::ModelRole::Custom).as_i32();
-    done(ExecOK);
-}
-
-ProcessChooser::~ProcessChooser()
-{
+    done(ExecResult::OK);
 }
 
 }

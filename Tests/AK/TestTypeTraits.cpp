@@ -39,11 +39,8 @@
 #define EXPECT_VARIADIC_TRAIT_FALSE(trait, ...) \
     static_assert(!trait<__VA_ARGS__>)
 
-struct Empty {
-};
-
 enum class Enummer : u8 {
-    Dummmy,
+    Dummy
 };
 
 TEST_CASE(FundamentalTypeClassification)
@@ -223,7 +220,7 @@ TEST_CASE(IsConstructible)
     };
     EXPECT_VARIADIC_TRAIT_TRUE(IsConstructible, D, int);
     EXPECT_VARIADIC_TRAIT_TRUE(IsConstructible, D, char);
-    EXPECT_VARIADIC_TRAIT_FALSE(IsConstructible, D, const char*);
+    EXPECT_VARIADIC_TRAIT_FALSE(IsConstructible, D, char const*);
     EXPECT_VARIADIC_TRAIT_FALSE(IsConstructible, D, void);
 }
 

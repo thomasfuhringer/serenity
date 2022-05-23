@@ -22,13 +22,13 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
     TRY(Core::System::unveil("/home/anon", "r"));
     TRY(Core::System::unveil("/etc/FileIconProvider.ini", "r"));
     TRY(Core::System::unveil(nullptr, nullptr));
-    auto app_icon = GUI::Icon::default_icon("app-widget-gallery");
+    auto app_icon = TRY(GUI::Icon::try_create_default_icon("app-widget-gallery"));
 
     auto window = TRY(GUI::Window::try_create());
     window->resize(430, 480);
     window->set_title("Widget Gallery");
     window->set_icon(app_icon.bitmap_for_size(16));
-    TRY(window->try_set_main_widget<GalleryWidget>());
+    (void)TRY(window->try_set_main_widget<GalleryWidget>());
     window->show();
 
     return app->exec();

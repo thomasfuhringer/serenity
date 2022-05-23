@@ -1,6 +1,7 @@
 /*
  * Copyright (c) 2019-2020, Sergey Bugaev <bugaevc@serenityos.org>
  * Copyright (c) 2021, Peter Elliott <pelliott@serenityos.org>
+ * Copyright (c) 2022, the SerenityOS developers.
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -25,7 +26,7 @@ public:
         virtual size_t terminal_length() const = 0;
         virtual RecursionDecision walk(Visitor&) const = 0;
 
-        virtual ~Node() { }
+        virtual ~Node() = default;
     };
 
     class EmphasisNode : public Node {
@@ -120,6 +121,21 @@ public:
         virtual RecursionDecision walk(Visitor&) const override;
     };
 
+    class StrikeThroughNode : public Node {
+    public:
+        NonnullOwnPtr<Node> striked_text;
+
+        StrikeThroughNode(NonnullOwnPtr<Node> striked_text)
+            : striked_text(move(striked_text))
+        {
+        }
+
+        virtual void render_to_html(StringBuilder& builder) const override;
+        virtual void render_for_terminal(StringBuilder& builder) const override;
+        virtual size_t terminal_length() const override;
+        virtual RecursionDecision walk(Visitor&) const override;
+    };
+
     size_t terminal_length() const;
 
     String render_to_html() const;
@@ -139,7 +155,7 @@ private:
         bool punct_before;
         bool punct_after;
         // is_run indicates that this token is a 'delimiter run'. A delimiter
-        // run occurs when several of the same sytactical character ('`', '_',
+        // run occurs when several of the same syntactical character ('`', '_',
         // or '*') occur in a row.
         bool is_run;
 
@@ -171,6 +187,7 @@ private:
     static NonnullOwnPtr<Node> parse_emph(Vector<Token>::ConstIterator& tokens, bool in_link);
     static NonnullOwnPtr<Node> parse_code(Vector<Token>::ConstIterator& tokens);
     static NonnullOwnPtr<Node> parse_link(Vector<Token>::ConstIterator& tokens);
+    static NonnullOwnPtr<Node> parse_strike_through(Vector<Token>::ConstIterator& tokens);
 
     OwnPtr<Node> m_node;
 };

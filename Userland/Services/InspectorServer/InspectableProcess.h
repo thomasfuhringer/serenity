@@ -6,14 +6,14 @@
 
 #pragma once
 
-#include <LibCore/LocalSocket.h>
+#include <LibCore/Stream.h>
 
 namespace InspectorServer {
 
 class InspectableProcess {
 public:
-    InspectableProcess(pid_t, NonnullRefPtr<Core::LocalSocket>);
-    ~InspectableProcess();
+    InspectableProcess(pid_t, NonnullOwnPtr<Core::Stream::LocalSocket>);
+    ~InspectableProcess() = default;
 
     void send_request(JsonObject const& request);
     String wait_for_response();
@@ -22,7 +22,7 @@ public:
 
 private:
     pid_t m_pid { 0 };
-    NonnullRefPtr<Core::LocalSocket> m_socket;
+    NonnullOwnPtr<Core::Stream::LocalSocket> m_socket;
 };
 
 extern HashMap<pid_t, NonnullOwnPtr<InspectorServer::InspectableProcess>> g_processes;

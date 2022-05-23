@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2020, Stephan Unverwerth <s.unverwerth@serenityos.org>
+ * Copyright (c) 2022, the SerenityOS developers.
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -23,15 +24,15 @@
 #include <stdlib.h>
 #include <unistd.h>
 
-const int WIDTH = 200;
-const int HEIGHT = 200;
+int const WIDTH = 200;
+int const HEIGHT = 200;
 
 static bool flag_hide_window_frame = false;
 
 class Cube final : public GUI::Widget {
     C_OBJECT(Cube)
 public:
-    virtual ~Cube() override;
+    virtual ~Cube() override = default;
     void set_stat_label(RefPtr<GUI::Label> l) { m_stats = l; };
     void set_show_window_frame(bool);
     bool show_window_frame() const { return m_show_window_frame; }
@@ -72,10 +73,6 @@ Cube::Cube()
     start_timer(20);
 }
 
-Cube::~Cube()
-{
-}
-
 void Cube::paint_event(GUI::PaintEvent& event)
 {
     GUI::Painter painter(*this);
@@ -100,7 +97,7 @@ void Cube::timer_event(Core::TimerEvent&)
 
 #define QUAD(a, b, c, d) a, b, c, c, d, a
 
-    const int indices[] {
+    int const indices[] {
         QUAD(0, 1, 2, 3),
         QUAD(7, 6, 5, 4),
         QUAD(4, 5, 1, 0),
@@ -144,7 +141,7 @@ void Cube::timer_event(Core::TimerEvent&)
     else
         painter.clear_rect(m_bitmap->rect(), Gfx::Color::Transparent);
 
-    auto to_point = [](const FloatVector3& v) {
+    auto to_point = [](FloatVector3 const& v) {
         return Gfx::IntPoint(v.x(), v.y());
     };
 

@@ -7,9 +7,15 @@
 
 #pragma once
 
+#include <AK/Concepts.h>
 #include <AK/Forward.h>
 
 namespace AK {
+
+namespace Detail {
+template<Concepts::AnyString T, Concepts::AnyString U>
+inline constexpr bool IsHashCompatible<T, U> = true;
+}
 
 enum class CaseSensitivity {
     CaseInsensitive,
@@ -31,11 +37,11 @@ struct MaskSpan {
     size_t start;
     size_t length;
 
-    bool operator==(const MaskSpan& other) const
+    bool operator==(MaskSpan const& other) const
     {
         return start == other.start && length == other.length;
     }
-    bool operator!=(const MaskSpan& other) const
+    bool operator!=(MaskSpan const& other) const
     {
         return !(*this == other);
     }
@@ -50,6 +56,8 @@ template<typename T = unsigned>
 Optional<T> convert_to_uint(StringView, TrimWhitespace = TrimWhitespace::Yes);
 template<typename T = unsigned>
 Optional<T> convert_to_uint_from_hex(StringView, TrimWhitespace = TrimWhitespace::Yes);
+template<typename T = unsigned>
+Optional<T> convert_to_uint_from_octal(StringView, TrimWhitespace = TrimWhitespace::Yes);
 bool equals_ignoring_case(StringView, StringView);
 bool ends_with(StringView a, StringView b, CaseSensitivity);
 bool starts_with(StringView, StringView, CaseSensitivity);

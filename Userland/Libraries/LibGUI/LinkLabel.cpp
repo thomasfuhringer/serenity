@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2020, Alex McGrath <amk@amk.ie>
+ * Copyright (c) 2022, the SerenityOS developers.
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -11,7 +12,7 @@
 #include <LibGUI/Menu.h>
 #include <LibGUI/Painter.h>
 #include <LibGUI/Window.h>
-#include <LibGfx/Font.h>
+#include <LibGfx/Font/Font.h>
 #include <LibGfx/Palette.h>
 
 REGISTER_WIDGET(GUI, LinkLabel)
@@ -48,7 +49,7 @@ void LinkLabel::set_hovered(bool hover)
 
 void LinkLabel::mousemove_event(MouseEvent& event)
 {
-    static const int extra_target_width = 3;
+    constexpr int extra_target_width = 3;
     set_hovered(event.position().x() <= font().width(text()) + extra_target_width);
 }
 

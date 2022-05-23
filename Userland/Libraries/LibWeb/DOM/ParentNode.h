@@ -30,12 +30,19 @@ public:
     NonnullRefPtr<HTMLCollection> get_elements_by_tag_name(FlyString const&);
     NonnullRefPtr<HTMLCollection> get_elements_by_tag_name_ns(FlyString const&, FlyString const&);
 
+    ExceptionOr<void> prepend(Vector<Variant<NonnullRefPtr<Node>, String>> const& nodes);
+    ExceptionOr<void> append(Vector<Variant<NonnullRefPtr<Node>, String>> const& nodes);
+    ExceptionOr<void> replace_children(Vector<Variant<NonnullRefPtr<Node>, String>> const& nodes);
+
 protected:
     ParentNode(Document& document, NodeType type)
         : Node(document, type)
     {
     }
 };
+
+template<>
+inline bool Node::fast_is<ParentNode>() const { return is_parent_node(); }
 
 template<typename Callback>
 inline void ParentNode::for_each_child(Callback callback) const

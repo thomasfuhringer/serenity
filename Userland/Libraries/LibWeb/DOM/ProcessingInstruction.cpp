@@ -9,13 +9,9 @@
 
 namespace Web::DOM {
 
-ProcessingInstruction::ProcessingInstruction(Document& document, const String& data, const String& target)
+ProcessingInstruction::ProcessingInstruction(Document& document, String const& data, String const& target)
     : CharacterData(document, NodeType::PROCESSING_INSTRUCTION_NODE, data)
     , m_target(target)
-{
-}
-
-ProcessingInstruction::~ProcessingInstruction()
 {
 }
 

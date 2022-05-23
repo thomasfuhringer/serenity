@@ -75,4 +75,13 @@ describe("errors", () => {
             "Invalid month day string '2021-07-06T23:42:01Z': must not contain a UTC designator"
         );
     });
+
+    test("extended year must not be negative zero", () => {
+        expect(() => {
+            Temporal.PlainMonthDay.from("-000000-01-01");
+        }).toThrowWithMessage(RangeError, "Invalid month day string '-000000-01-01'");
+        expect(() => {
+            Temporal.PlainMonthDay.from("−000000-01-01"); // U+2212
+        }).toThrowWithMessage(RangeError, "Invalid month day string '−000000-01-01'");
+    });
 });

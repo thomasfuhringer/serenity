@@ -28,10 +28,6 @@ void FinalizationRegistryPrototype::initialize(GlobalObject& global_object)
     define_direct_property(*vm.well_known_symbol_to_string_tag(), js_string(global_object.heap(), vm.names.FinalizationRegistry.as_string()), Attribute::Configurable);
 }
 
-FinalizationRegistryPrototype::~FinalizationRegistryPrototype()
-{
-}
-
 // @STAGE 2@ FinalizationRegistry.prototype.cleanupSome ( [ callback ] ), https://github.com/tc39/proposal-cleanup-some/blob/master/spec/finalization-registry.html
 JS_DEFINE_NATIVE_FUNCTION(FinalizationRegistryPrototype::cleanup_some)
 {
@@ -41,7 +37,9 @@ JS_DEFINE_NATIVE_FUNCTION(FinalizationRegistryPrototype::cleanup_some)
     if (vm.argument_count() > 0 && !callback.is_function())
         return vm.throw_completion<TypeError>(global_object, ErrorType::NotAFunction, callback.to_string_without_side_effects());
 
-    finalization_registry->cleanup(callback.is_undefined() ? nullptr : &callback.as_function());
+    // IMPLEMENTATION DEFINED: The specification for this function hasn't been updated to accommodate for JobCallback records.
+    //                         This just follows how the constructor immediately converts the callback to a JobCallback using HostMakeJobCallback.
+    TRY(finalization_registry->cleanup(callback.is_undefined() ? Optional<JobCallback> {} : vm.host_make_job_callback(callback.as_function())));
 
     return js_undefined();
 }

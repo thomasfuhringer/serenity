@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2021, kleines Filmröllchen <malu.bertsch@gmail.com>
+ * Copyright (c) 2021, kleines Filmröllchen <filmroellchen@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -16,7 +16,7 @@ Sample AudioClip::sample_at(u32 time)
 
 void NoteClip::set_note(RollNote note)
 {
-    VERIFY(note.pitch >= 0 && note.pitch < note_count);
+    VERIFY(note.pitch >= 0 && note.pitch < note_frequencies.size());
     VERIFY(note.off_sample < m_length);
     VERIFY(note.length() >= 2);
 

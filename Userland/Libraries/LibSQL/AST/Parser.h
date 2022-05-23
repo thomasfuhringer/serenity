@@ -1,5 +1,6 @@
 /*
- * Copyright (c) 2021, Tim Flynn <trflynn89@pm.me>
+ * Copyright (c) 2021, Tim Flynn <trflynn89@serenityos.org>
+ * Copyright (c) 2021, Mahmoud Mandour <ma.mandourr@gmail.com>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -37,7 +38,7 @@ public:
     NonnullRefPtr<Statement> next_statement();
 
     bool has_errors() const { return m_parser_state.m_errors.size(); }
-    const Vector<Error>& errors() const { return m_parser_state.m_errors; }
+    Vector<Error> const& errors() const { return m_parser_state.m_errors; }
 
 protected:
     NonnullRefPtr<Expression> parse_expression(); // Protected for unit testing.
@@ -59,6 +60,7 @@ private:
     NonnullRefPtr<CreateTable> parse_create_table_statement();
     NonnullRefPtr<AlterTable> parse_alter_table_statement();
     NonnullRefPtr<DropTable> parse_drop_table_statement();
+    NonnullRefPtr<DescribeTable> parse_describe_table_statement();
     NonnullRefPtr<Insert> parse_insert_statement(RefPtr<CommonTableExpressionList>);
     NonnullRefPtr<Update> parse_update_statement(RefPtr<CommonTableExpressionList>);
     NonnullRefPtr<Delete> parse_delete_statement(RefPtr<CommonTableExpressionList>);

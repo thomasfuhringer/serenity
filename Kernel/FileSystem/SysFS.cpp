@@ -52,7 +52,7 @@ ErrorOr<void> SysFSRootDirectory::traverse_as_directory(FileSystemID fsid, Funct
     TRY(callback({ ".", { fsid, component_index() }, 0 }));
     TRY(callback({ "..", { fsid, 0 }, 0 }));
 
-    for (auto& component : m_components) {
+    for (auto const& component : m_components) {
         InodeIdentifier identifier = { fsid, component.component_index() };
         TRY(callback({ component.name(), identifier, 0 }));
     }
@@ -60,7 +60,6 @@ ErrorOr<void> SysFSRootDirectory::traverse_as_directory(FileSystemID fsid, Funct
 }
 
 SysFSRootDirectory::SysFSRootDirectory()
-    : SysFSDirectory(".")
 {
     auto buses_directory = SysFSBusDirectory::must_create(*this);
     auto devices_directory = SysFSDevicesDirectory::must_create(*this);
@@ -74,13 +73,8 @@ ErrorOr<NonnullRefPtr<SysFS>> SysFS::try_create()
     return adopt_nonnull_ref_or_enomem(new (nothrow) SysFS);
 }
 
-SysFS::SysFS()
-{
-}
-
-SysFS::~SysFS()
-{
-}
+SysFS::SysFS() = default;
+SysFS::~SysFS() = default;
 
 ErrorOr<void> SysFS::initialize()
 {
@@ -143,7 +137,7 @@ InodeMetadata SysFSInode::metadata() const
     metadata.mode = S_IFREG | m_associated_component->permissions();
     metadata.uid = 0;
     metadata.gid = 0;
-    metadata.size = 0;
+    metadata.size = m_associated_component->size();
     metadata.mtime = mepoch;
     return metadata;
 }
@@ -203,9 +197,7 @@ SysFSDirectoryInode::SysFSDirectoryInode(SysFS const& fs, SysFSComponent const& 
 {
 }
 
-SysFSDirectoryInode::~SysFSDirectoryInode()
-{
-}
+SysFSDirectoryInode::~SysFSDirectoryInode() = default;
 
 InodeMetadata SysFSDirectoryInode::metadata() const
 {
@@ -252,7 +244,7 @@ UNMAP_AFTER_INIT NonnullRefPtr<SysFSBusDirectory> SysFSBusDirectory::must_create
 }
 
 UNMAP_AFTER_INIT SysFSBusDirectory::SysFSBusDirectory(SysFSRootDirectory const& parent_directory)
-    : SysFSDirectory("bus"sv, parent_directory)
+    : SysFSDirectory(parent_directory)
 {
 }
 

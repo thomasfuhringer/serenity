@@ -10,21 +10,15 @@
 
 namespace Web::HTML {
 
-HTMLLabelElement::HTMLLabelElement(DOM::Document& document, QualifiedName qualified_name)
+HTMLLabelElement::HTMLLabelElement(DOM::Document& document, DOM::QualifiedName qualified_name)
     : HTMLElement(document, move(qualified_name))
 {
 }
 
-HTMLLabelElement::~HTMLLabelElement()
-{
-}
+HTMLLabelElement::~HTMLLabelElement() = default;
 
-RefPtr<Layout::Node> HTMLLabelElement::create_layout_node()
+RefPtr<Layout::Node> HTMLLabelElement::create_layout_node(NonnullRefPtr<CSS::StyleProperties> style)
 {
-    auto style = document().style_computer().compute_style(*this);
-    if (style->display().is_none())
-        return nullptr;
-
     auto layout_node = adopt_ref(*new Layout::Label(document(), this, move(style)));
     layout_node->set_inline(true);
     return layout_node;

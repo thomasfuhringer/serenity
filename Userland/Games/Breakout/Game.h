@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2020, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2022, the SerenityOS developers.
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -7,7 +8,7 @@
 #pragma once
 
 #include <LibGUI/Widget.h>
-#include <LibGfx/Font.h>
+#include <LibGfx/Font/Font.h>
 
 namespace Breakout {
 
@@ -15,10 +16,10 @@ class Game final : public GUI::Widget {
     C_OBJECT(Game);
 
 public:
-    static const int game_width = 480;
-    static const int game_height = 500;
+    static constexpr int game_width = 480;
+    static constexpr int game_height = 500;
 
-    virtual ~Game() override;
+    virtual ~Game() override = default;
 
     void set_paused(bool paused);
 
@@ -85,7 +86,7 @@ private:
 
     Gfx::IntRect pause_rect() const
     {
-        const char* msg = m_cheater ? "C H E A T E R" : "P A U S E D";
+        char const* msg = m_cheater ? "C H E A T E R" : "P A U S E D";
         int msg_width = font().width(msg);
         int msg_height = font().glyph_height();
         return { (game_width / 2) - (msg_width / 2), (game_height / 2) - (msg_height / 2), msg_width, msg_height };

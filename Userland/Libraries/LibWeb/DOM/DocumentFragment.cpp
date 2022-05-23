@@ -5,16 +5,12 @@
  */
 
 #include <LibWeb/DOM/DocumentFragment.h>
-#include <LibWeb/DOM/Window.h>
+#include <LibWeb/HTML/Window.h>
 
 namespace Web::DOM {
 
 DocumentFragment::DocumentFragment(Document& document)
     : ParentNode(document, NodeType::DOCUMENT_FRAGMENT_NODE)
-{
-}
-
-DocumentFragment::~DocumentFragment()
 {
 }
 

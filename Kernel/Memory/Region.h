@@ -1,5 +1,6 @@
 /*
- * Copyright (c) 2018-2020, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2018-2022, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2022, the SerenityOS developers.
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -8,15 +9,18 @@
 
 #include <AK/EnumBits.h>
 #include <AK/IntrusiveList.h>
+#include <AK/IntrusiveRedBlackTree.h>
 #include <AK/Weakable.h>
-#include <Kernel/Arch/x86/PageFault.h>
 #include <Kernel/Forward.h>
-#include <Kernel/Heap/SlabAllocator.h>
 #include <Kernel/KString.h>
 #include <Kernel/Memory/PageFaultResponse.h>
-#include <Kernel/Memory/VirtualRangeAllocator.h>
+#include <Kernel/Memory/VirtualRange.h>
 #include <Kernel/Sections.h>
 #include <Kernel/UnixTypes.h>
+
+namespace Kernel {
+class PageFault;
+}
 
 namespace Kernel::Memory {
 
@@ -27,9 +31,10 @@ enum class ShouldFlushTLB {
 
 class Region final
     : public Weakable<Region> {
+    friend class AddressSpace;
     friend class MemoryManager;
+    friend class RegionTree;
 
-    MAKE_SLAB_ALLOCATED(Region)
 public:
     enum Access : u8 {
         None = 0,
@@ -50,7 +55,8 @@ public:
     };
 
     static ErrorOr<NonnullOwnPtr<Region>> try_create_user_accessible(VirtualRange const&, NonnullRefPtr<VMObject>, size_t offset_in_vmobject, OwnPtr<KString> name, Region::Access access, Cacheable, bool shared);
-    static ErrorOr<NonnullOwnPtr<Region>> try_create_kernel_only(VirtualRange const&, NonnullRefPtr<VMObject>, size_t offset_in_vmobject, OwnPtr<KString> name, Region::Access access, Cacheable = Cacheable::Yes);
+    static ErrorOr<NonnullOwnPtr<Region>> create_unbacked();
+    static ErrorOr<NonnullOwnPtr<Region>> create_unplaced(NonnullRefPtr<VMObject>, size_t offset_in_vmobject, OwnPtr<KString> name, Region::Access access, Cacheable = Cacheable::Yes, bool shared = false);
 
     ~Region();
 
@@ -85,8 +91,11 @@ public:
     [[nodiscard]] bool is_mmap() const { return m_mmap; }
     void set_mmap(bool mmap) { m_mmap = mmap; }
 
+    [[nodiscard]] bool is_write_combine() const { return m_write_combine; }
+    ErrorOr<void> set_write_combine(bool);
+
     [[nodiscard]] bool is_user() const { return !is_kernel(); }
-    [[nodiscard]] bool is_kernel() const { return vaddr().get() < 0x00800000 || vaddr().get() >= kernel_mapping_base; }
+    [[nodiscard]] bool is_kernel() const { return vaddr().get() < USER_RANGE_BASE || vaddr().get() >= kernel_mapping_base; }
 
     PageFaultResponse handle_fault(PageFault const&);
 
@@ -161,7 +170,7 @@ public:
     [[nodiscard]] size_t amount_dirty() const;
 
     [[nodiscard]] bool should_cow(size_t page_index) const;
-    void set_should_cow(size_t page_index, bool);
+    ErrorOr<void> set_should_cow(size_t page_index, bool);
 
     [[nodiscard]] size_t cow_pages() const;
 
@@ -169,20 +178,25 @@ public:
     void set_writable(bool b) { set_access_bit(Access::Write, b); }
     void set_executable(bool b) { set_access_bit(Access::Execute, b); }
 
+    void unsafe_clear_access() { m_access = Region::None; }
+
     void set_page_directory(PageDirectory&);
     ErrorOr<void> map(PageDirectory&, ShouldFlushTLB = ShouldFlushTLB::Yes);
-    enum class ShouldDeallocateVirtualRange {
-        No,
-        Yes,
-    };
-    void unmap(ShouldDeallocateVirtualRange = ShouldDeallocateVirtualRange::Yes);
+    void unmap(ShouldFlushTLB = ShouldFlushTLB::Yes);
+    void unmap_with_locks_held(ShouldFlushTLB, SpinlockLocker<RecursiveSpinlock>& pd_locker, SpinlockLocker<RecursiveSpinlock>& mm_locker);
 
     void remap();
+
+    [[nodiscard]] bool is_mapped() const { return m_page_directory != nullptr; }
+
+    void clear_to_zero();
 
     [[nodiscard]] bool is_syscall_region() const { return m_syscall_region; }
     void set_syscall_region(bool b) { m_syscall_region = b; }
 
 private:
+    Region();
+    Region(NonnullRefPtr<VMObject>, size_t offset_in_vmobject, OwnPtr<KString>, Region::Access access, Cacheable, bool shared);
     Region(VirtualRange const&, NonnullRefPtr<VMObject>, size_t offset_in_vmobject, OwnPtr<KString>, Region::Access access, Cacheable, bool shared);
 
     [[nodiscard]] bool remap_vmobject_page(size_t page_index, bool with_flush = true);
@@ -205,7 +219,7 @@ private:
     RefPtr<PageDirectory> m_page_directory;
     VirtualRange m_range;
     size_t m_offset_in_vmobject { 0 };
-    NonnullRefPtr<VMObject> m_vmobject;
+    RefPtr<VMObject> m_vmobject;
     OwnPtr<KString> m_name;
     u8 m_access { Region::None };
     bool m_shared : 1 { false };
@@ -213,17 +227,18 @@ private:
     bool m_stack : 1 { false };
     bool m_mmap : 1 { false };
     bool m_syscall_region : 1 { false };
-    IntrusiveListNode<Region> m_memory_manager_list_node;
+    bool m_write_combine : 1 { false };
+
+    IntrusiveRedBlackTreeNode<FlatPtr, Region, RawPtr<Region>> m_tree_node;
     IntrusiveListNode<Region> m_vmobject_list_node;
 
 public:
-    using ListInMemoryManager = IntrusiveList<&Region::m_memory_manager_list_node>;
     using ListInVMObject = IntrusiveList<&Region::m_vmobject_list_node>;
 };
 
 AK_ENUM_BITWISE_OPERATORS(Region::Access)
 
-inline constexpr Region::Access prot_to_region_access_flags(int prot)
+constexpr Region::Access prot_to_region_access_flags(int prot)
 {
     Region::Access access = Region::Access::None;
     if ((prot & PROT_READ) == PROT_READ)
@@ -235,7 +250,7 @@ inline constexpr Region::Access prot_to_region_access_flags(int prot)
     return access;
 }
 
-inline constexpr int region_access_flags_to_prot(Region::Access access)
+constexpr int region_access_flags_to_prot(Region::Access access)
 {
     int prot = 0;
     if ((access & Region::Access::Read) == Region::Access::Read)

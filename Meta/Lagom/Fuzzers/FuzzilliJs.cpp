@@ -73,7 +73,7 @@ extern "C" void __sanitizer_cov_trace_pc_guard_init(uint32_t* start, uint32_t* s
     __edges_stop = stop;
 
     // Map the shared memory region
-    const char* shm_key = getenv("SHM_ID");
+    char const* shm_key = getenv("SHM_ID");
     if (!shm_key) {
         puts("[COV] no shared memory bitmap available, skipping");
         __shmem = (struct shmem_data*)malloc(SHM_SIZE);
@@ -205,18 +205,15 @@ int main(int, char**)
 
         int result = 0;
 
-        auto js = StringView(static_cast<const unsigned char*>(data_buffer.data()), script_size);
+        auto js = StringView(static_cast<unsigned char const*>(data_buffer.data()), script_size);
 
-        auto lexer = JS::Lexer(js);
-        auto parser = JS::Parser(lexer);
-        auto program = parser.parse_program();
-        if (parser.has_errors()) {
+        auto parse_result = JS::Script::parse(js, interpreter->realm());
+        if (parse_result.is_error()) {
             result = 1;
         } else {
-            interpreter->run(interpreter->global_object(), *program);
-            if (interpreter->exception()) {
+            auto completion = interpreter->run(parse_result.value());
+            if (completion.is_error()) {
                 result = 1;
-                vm->clear_exception();
             }
         }
 

@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2021, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2022, the SerenityOS developers.
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -14,9 +15,9 @@ class PasswordInputDialog : public Dialog {
     C_OBJECT(PasswordInputDialog);
 
 public:
-    virtual ~PasswordInputDialog() override;
+    virtual ~PasswordInputDialog() override = default;
 
-    static int show(Window* parent_window, String& text_value, String title, String server, String username);
+    static ExecResult show(Window* parent_window, String& text_value, String title, String server, String username);
 
 private:
     explicit PasswordInputDialog(Window* parent_window, String title, String server, String username);

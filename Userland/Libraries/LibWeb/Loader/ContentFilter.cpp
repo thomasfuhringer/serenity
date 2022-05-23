@@ -11,17 +11,13 @@ namespace Web {
 
 ContentFilter& ContentFilter::the()
 {
-    static ContentFilter* filter = new ContentFilter;
-    return *filter;
+    static ContentFilter filter;
+    return filter;
 }
 
-ContentFilter::ContentFilter()
-{
-}
+ContentFilter::ContentFilter() = default;
 
-ContentFilter::~ContentFilter()
-{
-}
+ContentFilter::~ContentFilter() = default;
 
 bool ContentFilter::is_filtered(const AK::URL& url) const
 {
@@ -37,7 +33,7 @@ bool ContentFilter::is_filtered(const AK::URL& url) const
     return false;
 }
 
-void ContentFilter::add_pattern(const String& pattern)
+void ContentFilter::add_pattern(String const& pattern)
 {
     StringBuilder builder;
     if (!pattern.starts_with('*'))

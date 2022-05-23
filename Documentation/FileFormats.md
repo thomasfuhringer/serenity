@@ -23,12 +23,11 @@ Various applications accept drag & drop to open files.
 
 ## glyph/x-fonteditor (Clipboard-only)
 
-Requires the metadata-fields, `char` (usually encoded as a string of length 1: the codepoint as a character),
-`width`, and `height` (encoded as a decimal number).
+Requires the metadata-fields `count` (count of glyphs copied) and `first_glyph` (lowest codepoint that is copied), encoded as decimal strings.
 
-The glyph bitmap data is encoded in width times height many bytes, either 0 (clear) or 1 (set).
+The data contains codepoint (encoded as host-endian u32), width and height (as u8's) and glyph bitmap data. It is encoded in width times height many bytes, either 0 (clear) or 1 (set).
 
-Implemented in `GlyphEditorWidget::copy_glyph` and `GlyphEditorWidget::paste_glyph`, in [`Userland/Applications/FontEditor/GlyphEditorWidget.cpp`](../Userland/Applications/FontEditor/GlyphEditorWidget.cpp).
+Implemented in `FontEditor::copy_selected_glyphs` and `FontEditor::paste_glyphs`, in [`Userland/Applications/FontEditor/FontEditor.cpp`](../Userland/Applications/FontEditor/FontEditor.cpp).
 
 ## image/x-serenityos (Clipboard-only)
 
@@ -63,15 +62,15 @@ See also [`Userland/Services/Taskbar/main.cpp`](../Userland/Services/Taskbar/mai
 ## Font (`*.font` files)
 
 These files contain bitmap definitions of fonts, either varying-width or fixed-width.
-The header definition can be found in `Gfx::FontFileHeader` in [`Userland/Libraries/LibGfx/BitmapFont.cpp`](../Userland/Libraries/LibGfx/BitmapFont.cpp).
+The header definition can be found in `Gfx::FontFileHeader` in [`Userland/Libraries/LibGfx/Font/BitmapFont.cpp`](../Userland/Libraries/LibGfx/Font/BitmapFont.cpp).
 Most prominently, the first four bytes contain the filemagic: `!Fnt`.
 
 ## GUI Markup Language (`*.gml` files)
 
-These files are human-readable, have no easily detectable filemagic, and define GUI interfaces.
+These files are human-readable, have no easily detectable filemagic, and define GUI designs and layouts.
 The format is strongly influenced by QML, the Qt Modeling Language.
 
-See also [Playground(1)](../Userland/DevTools/Playground/) and `Widget::load_from_gml` in [`Userland/Libraries/LibGUI/Widget.cpp`](../Userland/Libraries/LibGUI/Widget.cpp).
+See the [GML manpage(s)](../Base/usr/share/man/man5/GML.md), [Playground(1)](../Userland/DevTools/Playground/), and the [GML support in LibGUI](../Userland/Libraries/LibGUI/GML/).
 
 ## Inter Process Communication (`*.ipc` files)
 

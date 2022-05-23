@@ -33,7 +33,7 @@ bool ScreenLayout::is_valid(String* error_msg) const
     int smallest_y = 0;
     for (size_t i = 0; i < screens.size(); i++) {
         auto& screen = screens[i];
-        if (screen.device.is_null() || screen.device.is_empty()) {
+        if (screen.mode == Screen::Mode::Device && (screen.device->is_empty() || screen.device->is_null())) {
             if (error_msg)
                 *error_msg = String::formatted("Screen #{} has no path", i);
             return false;
@@ -230,12 +230,26 @@ bool ScreenLayout::normalize()
 bool ScreenLayout::load_config(const Core::ConfigFile& config_file, String* error_msg)
 {
     screens.clear_with_capacity();
-    main_screen_index = config_file.read_num_entry("Screens", "DefaultScreen", 0);
+    main_screen_index = config_file.read_num_entry("Screens", "MainScreen", 0);
     for (size_t index = 0;; index++) {
         auto group_name = String::formatted("Screen{}", index);
         if (!config_file.has_group(group_name))
             break;
-        screens.append({ config_file.read_entry(group_name, "Device"),
+        auto str_mode = config_file.read_entry(group_name, "Mode");
+        Screen::Mode mode { Screen::Mode::Invalid };
+        if (str_mode == "Device") {
+            mode = Screen::Mode::Device;
+        } else if (str_mode == "Virtual") {
+            mode = Screen::Mode::Virtual;
+        }
+
+        if (mode == Screen::Mode::Invalid) {
+            *error_msg = String::formatted("Invalid screen mode '{}'", str_mode);
+            *this = {};
+            return false;
+        }
+        auto device = (mode == Screen::Mode::Device) ? config_file.read_entry(group_name, "Device") : Optional<String> {};
+        screens.append({ mode, device,
             { config_file.read_num_entry(group_name, "Left"), config_file.read_num_entry(group_name, "Top") },
             { config_file.read_num_entry(group_name, "Width"), config_file.read_num_entry(group_name, "Height") },
             config_file.read_num_entry(group_name, "ScaleFactor", 1) });
@@ -249,13 +263,15 @@ bool ScreenLayout::load_config(const Core::ConfigFile& config_file, String* erro
 
 bool ScreenLayout::save_config(Core::ConfigFile& config_file, bool sync) const
 {
-    config_file.write_num_entry("Screens", "DefaultScreen", main_screen_index);
+    config_file.write_num_entry("Screens", "MainScreen", main_screen_index);
 
     size_t index = 0;
     while (index < screens.size()) {
         auto& screen = screens[index];
         auto group_name = String::formatted("Screen{}", index);
-        config_file.write_entry(group_name, "Device", screen.device);
+        config_file.write_entry(group_name, "Mode", Screen::mode_to_string(screen.mode));
+        if (screen.mode == Screen::Mode::Device)
+            config_file.write_entry(group_name, "Device", screen.device.value());
         config_file.write_num_entry(group_name, "Left", screen.location.x());
         config_file.write_num_entry(group_name, "Top", screen.location.y());
         config_file.write_num_entry(group_name, "Width", screen.resolution.width());
@@ -271,7 +287,7 @@ bool ScreenLayout::save_config(Core::ConfigFile& config_file, bool sync) const
         config_file.remove_group(group_name);
     }
 
-    if (sync && !config_file.sync())
+    if (sync && config_file.sync().is_error())
         return false;
     return true;
 }
@@ -291,44 +307,45 @@ bool ScreenLayout::operator!=(const ScreenLayout& other) const
     return false;
 }
 
-bool ScreenLayout::try_auto_add_framebuffer(String const& device_path)
+bool ScreenLayout::try_auto_add_display_connector(String const& device_path)
 {
-    int framebuffer_fd = open(device_path.characters(), O_RDWR | O_CLOEXEC);
-    if (framebuffer_fd < 0) {
+    int display_connector_fd = open(device_path.characters(), O_RDWR | O_CLOEXEC);
+    if (display_connector_fd < 0) {
         int err = errno;
-        dbgln("Error ({}) opening framebuffer device {}", err, device_path);
+        dbgln("Error ({}) opening display connector device {}", err, device_path);
         return false;
     }
     ScopeGuard fd_guard([&] {
-        close(framebuffer_fd);
+        close(display_connector_fd);
     });
-    // FIXME: Add multihead support for one framebuffer
-    FBHeadResolution resolution {};
-    memset(&resolution, 0, sizeof(FBHeadResolution));
-    if (fb_get_resolution(framebuffer_fd, &resolution) < 0) {
+
+    GraphicsHeadModeSetting mode_setting {};
+    memset(&mode_setting, 0, sizeof(GraphicsHeadModeSetting));
+    if (graphics_connector_get_head_mode_setting(display_connector_fd, &mode_setting) < 0) {
         int err = errno;
-        dbgln("Error ({}) querying resolution from framebuffer device {}", err, device_path);
+        dbgln("Error ({}) querying resolution from display connector device {}", err, device_path);
         return false;
     }
-    if (resolution.width == 0 || resolution.height == 0) {
+    if (mode_setting.horizontal_active == 0 || mode_setting.vertical_active == 0) {
         // Looks like the display is not turned on. Since we don't know what the desired
         // resolution should be, use the main display as reference.
         if (screens.is_empty())
             return false;
         auto& main_screen = screens[main_screen_index];
-        resolution.width = main_screen.resolution.width();
-        resolution.height = main_screen.resolution.height();
+        mode_setting.horizontal_active = main_screen.resolution.width();
+        mode_setting.vertical_active = main_screen.resolution.height();
     }
 
     auto append_screen = [&](Gfx::IntRect const& new_screen_rect) {
-        screens.append({ .device = device_path,
+        screens.append({ .mode = Screen::Mode::Device,
+            .device = device_path,
             .location = new_screen_rect.location(),
             .resolution = new_screen_rect.size(),
             .scale_factor = 1 });
     };
 
     if (screens.is_empty()) {
-        append_screen({ 0, 0, (int)resolution.width, (int)resolution.height });
+        append_screen({ 0, 0, mode_setting.horizontal_active, mode_setting.vertical_active });
         return true;
     }
 
@@ -345,8 +362,8 @@ bool ScreenLayout::try_auto_add_framebuffer(String const& device_path)
         Gfx::IntRect new_screen_rect {
             screen_rect.right() + 1,
             screen_rect.top(),
-            (int)resolution.width,
-            (int)resolution.height
+            (int)mode_setting.horizontal_active,
+            (int)mode_setting.vertical_active
         };
 
         bool collision = false;
@@ -369,7 +386,7 @@ bool ScreenLayout::try_auto_add_framebuffer(String const& device_path)
         }
     }
 
-    dbgln("Failed to add framebuffer device {} with resolution {}x{} to screen layout", device_path, resolution.width, resolution.height);
+    dbgln("Failed to add display connector device {} with resolution {}x{} to screen layout", device_path, mode_setting.horizontal_active, mode_setting.vertical_active);
     return false;
 }
 
@@ -379,13 +396,15 @@ namespace IPC {
 
 bool encode(Encoder& encoder, const WindowServer::ScreenLayout::Screen& screen)
 {
-    encoder << screen.device << screen.location << screen.resolution << screen.scale_factor;
+    encoder << screen.mode << screen.device << screen.location << screen.resolution << screen.scale_factor;
     return true;
 }
 
 ErrorOr<void> decode(Decoder& decoder, WindowServer::ScreenLayout::Screen& screen)
 {
-    String device;
+    WindowServer::ScreenLayout::Screen::Mode mode;
+    TRY(decoder.decode(mode));
+    Optional<String> device;
     TRY(decoder.decode(device));
     Gfx::IntPoint location;
     TRY(decoder.decode(location));
@@ -393,7 +412,7 @@ ErrorOr<void> decode(Decoder& decoder, WindowServer::ScreenLayout::Screen& scree
     TRY(decoder.decode(resolution));
     int scale_factor = 0;
     TRY(decoder.decode(scale_factor));
-    screen = { device, location, resolution, scale_factor };
+    screen = { mode, device, location, resolution, scale_factor };
     return {};
 }
 

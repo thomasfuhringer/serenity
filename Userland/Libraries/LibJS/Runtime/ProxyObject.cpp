@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2020, Matthew Olsson <mattco@serenityos.org>
- * Copyright (c) 2021, Linus Groh <linusg@serenityos.org>
+ * Copyright (c) 2021-2022, Linus Groh <linusg@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -27,21 +27,17 @@ ProxyObject::ProxyObject(Object& target, Object& handler, Object& prototype)
 {
 }
 
-ProxyObject::~ProxyObject()
+static Value property_key_to_value(VM& vm, PropertyKey const& property_key)
 {
-}
+    VERIFY(property_key.is_valid());
+    if (property_key.is_symbol())
+        return property_key.as_symbol();
 
-static Value property_name_to_value(VM& vm, PropertyKey const& name)
-{
-    VERIFY(name.is_valid());
-    if (name.is_symbol())
-        return name.as_symbol();
+    if (property_key.is_string())
+        return js_string(vm, property_key.as_string());
 
-    if (name.is_string())
-        return js_string(vm, name.as_string());
-
-    VERIFY(name.is_number());
-    return js_string(vm, String::number(name.as_number()));
+    VERIFY(property_key.is_number());
+    return js_string(vm, String::number(property_key.as_number()));
 }
 
 // 10.5.1 [[GetPrototypeOf]] ( ), https://tc39.es/ecma262/#sec-proxy-object-internal-methods-and-internal-slots-getprototypeof
@@ -69,7 +65,7 @@ ThrowCompletionOr<Object*> ProxyObject::internal_get_prototype_of() const
     }
 
     // 7. Let handlerProto be ? Call(trap, handler, « target »).
-    auto handler_proto = TRY(vm.call(*trap, &m_handler, &m_target));
+    auto handler_proto = TRY(call(global_object, *trap, &m_handler, &m_target));
 
     // 8. If Type(handlerProto) is neither Object nor Null, throw a TypeError exception.
     if (!handler_proto.is_object() && !handler_proto.is_null())
@@ -99,47 +95,46 @@ ThrowCompletionOr<bool> ProxyObject::internal_set_prototype_of(Object* prototype
     auto& vm = this->vm();
     auto& global_object = this->global_object();
 
-    // 1. Assert: Either Type(V) is Object or Type(V) is Null.
-    // 2. Let handler be O.[[ProxyHandler]].
+    // 1. Let handler be O.[[ProxyHandler]].
 
-    // 3. If handler is null, throw a TypeError exception.
+    // 2. If handler is null, throw a TypeError exception.
     if (m_is_revoked)
         return vm.throw_completion<TypeError>(global_object, ErrorType::ProxyRevoked);
 
-    // 4. Assert: Type(handler) is Object.
-    // 5. Let target be O.[[ProxyTarget]].
+    // 3. Assert: Type(handler) is Object.
+    // 4. Let target be O.[[ProxyTarget]].
 
-    // 6. Let trap be ? GetMethod(handler, "setPrototypeOf").
+    // 5. Let trap be ? GetMethod(handler, "setPrototypeOf").
     auto trap = TRY(Value(&m_handler).get_method(global_object, vm.names.setPrototypeOf));
 
-    // 7. If trap is undefined, then
+    // 6. If trap is undefined, then
     if (!trap) {
         // a. Return ? target.[[SetPrototypeOf]](V).
         return m_target.internal_set_prototype_of(prototype);
     }
 
-    // 8. Let booleanTrapResult be ! ToBoolean(? Call(trap, handler, « target, V »)).
-    auto trap_result = TRY(vm.call(*trap, &m_handler, &m_target, prototype)).to_boolean();
+    // 7. Let booleanTrapResult be ToBoolean(? Call(trap, handler, « target, V »)).
+    auto trap_result = TRY(call(global_object, *trap, &m_handler, &m_target, prototype)).to_boolean();
 
-    // 9. If booleanTrapResult is false, return false.
+    // 8. If booleanTrapResult is false, return false.
     if (!trap_result)
         return false;
 
-    // 10. Let extensibleTarget be ? IsExtensible(target).
+    // 9. Let extensibleTarget be ? IsExtensible(target).
     auto extensible_target = TRY(m_target.is_extensible());
 
-    // 11. If extensibleTarget is true, return true.
+    // 10. If extensibleTarget is true, return true.
     if (extensible_target)
         return true;
 
-    // 12. Let targetProto be ? target.[[GetPrototypeOf]]().
+    // 11. Let targetProto be ? target.[[GetPrototypeOf]]().
     auto* target_proto = TRY(m_target.internal_get_prototype_of());
 
-    // 13. If SameValue(V, targetProto) is false, throw a TypeError exception.
+    // 12. If SameValue(V, targetProto) is false, throw a TypeError exception.
     if (!same_value(prototype, target_proto))
         return vm.throw_completion<TypeError>(global_object, ErrorType::ProxySetPrototypeOfNonExtensible);
 
-    // 14. Return true.
+    // 13. Return true.
     return true;
 }
 
@@ -167,8 +162,8 @@ ThrowCompletionOr<bool> ProxyObject::internal_is_extensible() const
         return m_target.is_extensible();
     }
 
-    // 7. Let booleanTrapResult be ! ToBoolean(? Call(trap, handler, « target »)).
-    auto trap_result = TRY(vm.call(*trap, &m_handler, &m_target)).to_boolean();
+    // 7. Let booleanTrapResult be ToBoolean(? Call(trap, handler, « target »)).
+    auto trap_result = TRY(call(global_object, *trap, &m_handler, &m_target)).to_boolean();
 
     // 8. Let targetResult be ? IsExtensible(target).
     auto target_result = TRY(m_target.is_extensible());
@@ -205,8 +200,8 @@ ThrowCompletionOr<bool> ProxyObject::internal_prevent_extensions()
         return m_target.internal_prevent_extensions();
     }
 
-    // 7. Let booleanTrapResult be ! ToBoolean(? Call(trap, handler, « target »)).
-    auto trap_result = TRY(vm.call(*trap, &m_handler, &m_target)).to_boolean();
+    // 7. Let booleanTrapResult be ToBoolean(? Call(trap, handler, « target »)).
+    auto trap_result = TRY(call(global_object, *trap, &m_handler, &m_target)).to_boolean();
 
     // 8. If booleanTrapResult is true, then
     if (trap_result) {
@@ -223,43 +218,42 @@ ThrowCompletionOr<bool> ProxyObject::internal_prevent_extensions()
 }
 
 // 10.5.5 [[GetOwnProperty]] ( P ), https://tc39.es/ecma262/#sec-proxy-object-internal-methods-and-internal-slots-getownproperty-p
-ThrowCompletionOr<Optional<PropertyDescriptor>> ProxyObject::internal_get_own_property(const PropertyKey& property_name) const
+ThrowCompletionOr<Optional<PropertyDescriptor>> ProxyObject::internal_get_own_property(PropertyKey const& property_key) const
 {
     auto& vm = this->vm();
     auto& global_object = this->global_object();
 
-    // 1. Assert: IsPropertyKey(P) is true.
-    VERIFY(property_name.is_valid());
+    VERIFY(property_key.is_valid());
 
-    // 2. Let handler be O.[[ProxyHandler]].
+    // 1. Let handler be O.[[ProxyHandler]].
 
-    // 3. If handler is null, throw a TypeError exception.
+    // 2. If handler is null, throw a TypeError exception.
     if (m_is_revoked)
         return vm.throw_completion<TypeError>(global_object, ErrorType::ProxyRevoked);
 
-    // 4. Assert: Type(handler) is Object.
-    // 5. Let target be O.[[ProxyTarget]].
+    // 3. Assert: Type(handler) is Object.
+    // 4. Let target be O.[[ProxyTarget]].
 
-    // 6. Let trap be ? GetMethod(handler, "getOwnPropertyDescriptor").
+    // 5. Let trap be ? GetMethod(handler, "getOwnPropertyDescriptor").
     auto trap = TRY(Value(&m_handler).get_method(global_object, vm.names.getOwnPropertyDescriptor));
 
-    // 7. If trap is undefined, then
+    // 6. If trap is undefined, then
     if (!trap) {
         // a. Return ? target.[[GetOwnProperty]](P).
-        return m_target.internal_get_own_property(property_name);
+        return m_target.internal_get_own_property(property_key);
     }
 
-    // 8. Let trapResultObj be ? Call(trap, handler, « target, P »).
-    auto trap_result = TRY(vm.call(*trap, &m_handler, &m_target, property_name_to_value(vm, property_name)));
+    // 7. Let trapResultObj be ? Call(trap, handler, « target, P »).
+    auto trap_result = TRY(call(global_object, *trap, &m_handler, &m_target, property_key_to_value(vm, property_key)));
 
-    // 9. If Type(trapResultObj) is neither Object nor Undefined, throw a TypeError exception.
+    // 8. If Type(trapResultObj) is neither Object nor Undefined, throw a TypeError exception.
     if (!trap_result.is_object() && !trap_result.is_undefined())
         return vm.throw_completion<TypeError>(global_object, ErrorType::ProxyGetOwnDescriptorReturn);
 
-    // 10. Let targetDesc be ? target.[[GetOwnProperty]](P).
-    auto target_descriptor = TRY(m_target.internal_get_own_property(property_name));
+    // 9. Let targetDesc be ? target.[[GetOwnProperty]](P).
+    auto target_descriptor = TRY(m_target.internal_get_own_property(property_key));
 
-    // 11. If trapResultObj is undefined, then
+    // 10. If trapResultObj is undefined, then
     if (trap_result.is_undefined()) {
         // a. If targetDesc is undefined, return undefined.
         if (!target_descriptor.has_value())
@@ -280,23 +274,23 @@ ThrowCompletionOr<Optional<PropertyDescriptor>> ProxyObject::internal_get_own_pr
         return Optional<PropertyDescriptor> {};
     }
 
-    // 12. Let extensibleTarget be ? IsExtensible(target).
+    // 11. Let extensibleTarget be ? IsExtensible(target).
     auto extensible_target = TRY(m_target.is_extensible());
 
-    // 13. Let resultDesc be ? ToPropertyDescriptor(trapResultObj).
+    // 12. Let resultDesc be ? ToPropertyDescriptor(trapResultObj).
     auto result_desc = TRY(to_property_descriptor(global_object, trap_result));
 
-    // 14. Call CompletePropertyDescriptor(resultDesc).
+    // 13. Perform CompletePropertyDescriptor(resultDesc).
     result_desc.complete();
 
-    // 15. Let valid be IsCompatiblePropertyDescriptor(extensibleTarget, resultDesc, targetDesc).
+    // 14. Let valid be IsCompatiblePropertyDescriptor(extensibleTarget, resultDesc, targetDesc).
     auto valid = is_compatible_property_descriptor(extensible_target, result_desc, target_descriptor);
 
-    // 16. If valid is false, throw a TypeError exception.
+    // 15. If valid is false, throw a TypeError exception.
     if (!valid)
         return vm.throw_completion<TypeError>(global_object, ErrorType::ProxyGetOwnDescriptorInvalidDescriptor);
 
-    // 17. If resultDesc.[[Configurable]] is false, then
+    // 16. If resultDesc.[[Configurable]] is false, then
     if (!*result_desc.configurable) {
         // a. If targetDesc is undefined or targetDesc.[[Configurable]] is true, then
         if (!target_descriptor.has_value() || *target_descriptor->configurable)
@@ -311,54 +305,53 @@ ThrowCompletionOr<Optional<PropertyDescriptor>> ProxyObject::internal_get_own_pr
         }
     }
 
-    // 18. Return resultDesc.
+    // 17. Return resultDesc.
     return result_desc;
 }
 
 // 10.5.6 [[DefineOwnProperty]] ( P, Desc ), https://tc39.es/ecma262/#sec-proxy-object-internal-methods-and-internal-slots-defineownproperty-p-desc
-ThrowCompletionOr<bool> ProxyObject::internal_define_own_property(PropertyKey const& property_name, PropertyDescriptor const& property_descriptor)
+ThrowCompletionOr<bool> ProxyObject::internal_define_own_property(PropertyKey const& property_key, PropertyDescriptor const& property_descriptor)
 {
     auto& vm = this->vm();
     auto& global_object = this->global_object();
 
-    // 1. Assert: IsPropertyKey(P) is true.
-    VERIFY(property_name.is_valid());
+    VERIFY(property_key.is_valid());
 
-    // 2. Let handler be O.[[ProxyHandler]].
+    // 1. Let handler be O.[[ProxyHandler]].
 
-    // 3. If handler is null, throw a TypeError exception.
+    // 2. If handler is null, throw a TypeError exception.
     if (m_is_revoked)
         return vm.throw_completion<TypeError>(global_object, ErrorType::ProxyRevoked);
 
-    // 4. Assert: Type(handler) is Object.
-    // 5. Let target be O.[[ProxyTarget]].
+    // 3. Assert: Type(handler) is Object.
+    // 4. Let target be O.[[ProxyTarget]].
 
-    // 6. Let trap be ? GetMethod(handler, "defineProperty").
+    // 5. Let trap be ? GetMethod(handler, "defineProperty").
     auto trap = TRY(Value(&m_handler).get_method(global_object, vm.names.defineProperty));
 
-    // 7. If trap is undefined, then
+    // 6. If trap is undefined, then
     if (!trap) {
         // a. Return ? target.[[DefineOwnProperty]](P, Desc).
-        return m_target.internal_define_own_property(property_name, property_descriptor);
+        return m_target.internal_define_own_property(property_key, property_descriptor);
     }
 
-    // 8. Let descObj be FromPropertyDescriptor(Desc).
+    // 7. Let descObj be FromPropertyDescriptor(Desc).
     auto descriptor_object = from_property_descriptor(global_object, property_descriptor);
 
-    // 9. Let booleanTrapResult be ! ToBoolean(? Call(trap, handler, « target, P, descObj »)).
-    auto trap_result = TRY(vm.call(*trap, &m_handler, &m_target, property_name_to_value(vm, property_name), descriptor_object)).to_boolean();
+    // 8. Let booleanTrapResult be ToBoolean(? Call(trap, handler, « target, P, descObj »)).
+    auto trap_result = TRY(call(global_object, *trap, &m_handler, &m_target, property_key_to_value(vm, property_key), descriptor_object)).to_boolean();
 
-    // 10. If booleanTrapResult is false, return false.
+    // 9. If booleanTrapResult is false, return false.
     if (!trap_result)
         return false;
 
-    // 11. Let targetDesc be ? target.[[GetOwnProperty]](P).
-    auto target_descriptor = TRY(m_target.internal_get_own_property(property_name));
+    // 10. Let targetDesc be ? target.[[GetOwnProperty]](P).
+    auto target_descriptor = TRY(m_target.internal_get_own_property(property_key));
 
-    // 12. Let extensibleTarget be ? IsExtensible(target).
+    // 11. Let extensibleTarget be ? IsExtensible(target).
     auto extensible_target = TRY(m_target.is_extensible());
 
-    // 14. Else, let settingConfigFalse be false.
+    // 12. Else, let settingConfigFalse be false.
     bool setting_config_false = false;
 
     // 13. If Desc has a [[Configurable]] field and if Desc.[[Configurable]] is false, then
@@ -367,7 +360,7 @@ ThrowCompletionOr<bool> ProxyObject::internal_define_own_property(PropertyKey co
         setting_config_false = true;
     }
 
-    // 15. If targetDesc is undefined, then
+    // 14. If targetDesc is undefined, then
     if (!target_descriptor.has_value()) {
         // a. If extensibleTarget is false, throw a TypeError exception.
         if (!extensible_target)
@@ -377,7 +370,7 @@ ThrowCompletionOr<bool> ProxyObject::internal_define_own_property(PropertyKey co
         if (setting_config_false)
             return vm.throw_completion<TypeError>(global_object, ErrorType::ProxyDefinePropNonConfigurableNonExisting);
     }
-    // 16. Else,
+    // 15. Else,
     else {
         // a. If IsCompatiblePropertyDescriptor(extensibleTarget, Desc, targetDesc) is false, throw a TypeError exception.
         if (!is_compatible_property_descriptor(extensible_target, property_descriptor, target_descriptor))
@@ -395,44 +388,43 @@ ThrowCompletionOr<bool> ProxyObject::internal_define_own_property(PropertyKey co
         }
     }
 
-    // 17. Return true.
+    // 16. Return true.
     return true;
 }
 
 // 10.5.7 [[HasProperty]] ( P ), https://tc39.es/ecma262/#sec-proxy-object-internal-methods-and-internal-slots-hasproperty-p
-ThrowCompletionOr<bool> ProxyObject::internal_has_property(PropertyKey const& property_name) const
+ThrowCompletionOr<bool> ProxyObject::internal_has_property(PropertyKey const& property_key) const
 {
     auto& vm = this->vm();
     auto& global_object = this->global_object();
 
-    // 1. Assert: IsPropertyKey(P) is true.
-    VERIFY(property_name.is_valid());
+    VERIFY(property_key.is_valid());
 
-    // 2. Let handler be O.[[ProxyHandler]].
+    // 1. Let handler be O.[[ProxyHandler]].
 
-    // 3. If handler is null, throw a TypeError exception.
+    // 2. If handler is null, throw a TypeError exception.
     if (m_is_revoked)
         return vm.throw_completion<TypeError>(global_object, ErrorType::ProxyRevoked);
 
-    // 4. Assert: Type(handler) is Object.
-    // 5. Let target be O.[[ProxyTarget]].
+    // 3. Assert: Type(handler) is Object.
+    // 4. Let target be O.[[ProxyTarget]].
 
-    // 6. Let trap be ? GetMethod(handler, "has").
+    // 5. Let trap be ? GetMethod(handler, "has").
     auto trap = TRY(Value(&m_handler).get_method(global_object, vm.names.has));
 
-    // 7. If trap is undefined, then
+    // 6. If trap is undefined, then
     if (!trap) {
         // a. Return ? target.[[HasProperty]](P).
-        return m_target.internal_has_property(property_name);
+        return m_target.internal_has_property(property_key);
     }
 
-    // 8. Let booleanTrapResult be ! ToBoolean(? Call(trap, handler, « target, P »)).
-    auto trap_result = TRY(vm.call(*trap, &m_handler, &m_target, property_name_to_value(vm, property_name))).to_boolean();
+    // 7. Let booleanTrapResult be ToBoolean(? Call(trap, handler, « target, P »)).
+    auto trap_result = TRY(call(global_object, *trap, &m_handler, &m_target, property_key_to_value(vm, property_key))).to_boolean();
 
-    // 9. If booleanTrapResult is false, then
+    // 8. If booleanTrapResult is false, then
     if (!trap_result) {
         // a. Let targetDesc be ? target.[[GetOwnProperty]](P).
-        auto target_descriptor = TRY(m_target.internal_get_own_property(property_name));
+        auto target_descriptor = TRY(m_target.internal_get_own_property(property_key));
 
         // b. If targetDesc is not undefined, then
         if (target_descriptor.has_value()) {
@@ -449,29 +441,29 @@ ThrowCompletionOr<bool> ProxyObject::internal_has_property(PropertyKey const& pr
         }
     }
 
-    // 10. Return booleanTrapResult.
+    // 9. Return booleanTrapResult.
     return trap_result;
 }
 
 // 10.5.8 [[Get]] ( P, Receiver ), https://tc39.es/ecma262/#sec-proxy-object-internal-methods-and-internal-slots-get-p-receiver
-ThrowCompletionOr<Value> ProxyObject::internal_get(PropertyKey const& property_name, Value receiver) const
+ThrowCompletionOr<Value> ProxyObject::internal_get(PropertyKey const& property_key, Value receiver) const
 {
     VERIFY(!receiver.is_empty());
 
     auto& vm = this->vm();
     auto& global_object = this->global_object();
 
-    // 1. Assert: IsPropertyKey(P) is true.
-    VERIFY(property_name.is_valid());
+    VERIFY(property_key.is_valid());
+    VERIFY(!receiver.is_empty());
 
-    // 2. Let handler be O.[[ProxyHandler]].
+    // 1. Let handler be O.[[ProxyHandler]].
 
-    // 3. If handler is null, throw a TypeError exception.
+    // 2. If handler is null, throw a TypeError exception.
     if (m_is_revoked)
         return vm.throw_completion<TypeError>(global_object, ErrorType::ProxyRevoked);
 
-    // 4. Assert: Type(handler) is Object.
-    // 5. Let target be O.[[ProxyTarget]].
+    // 3. Assert: Type(handler) is Object.
+    // 4. Let target be O.[[ProxyTarget]].
 
     // NOTE: We need to protect ourselves from a Proxy with the handler's prototype set to the
     // Proxy itself, which would by default bounce between these functions indefinitely and lead to
@@ -489,22 +481,22 @@ ThrowCompletionOr<Value> ProxyObject::internal_get(PropertyKey const& property_n
     if (vm.did_reach_stack_space_limit())
         return vm.throw_completion<InternalError>(global_object, ErrorType::CallStackSizeExceeded);
 
-    // 6. Let trap be ? GetMethod(handler, "get").
+    // 5. Let trap be ? GetMethod(handler, "get").
     auto trap = TRY(Value(&m_handler).get_method(global_object, vm.names.get));
 
-    // 7. If trap is undefined, then
+    // 6. If trap is undefined, then
     if (!trap) {
         // a. Return ? target.[[Get]](P, Receiver).
-        return m_target.internal_get(property_name, receiver);
+        return m_target.internal_get(property_key, receiver);
     }
 
-    // 8. Let trapResult be ? Call(trap, handler, « target, P, Receiver »).
-    auto trap_result = TRY(vm.call(*trap, &m_handler, &m_target, property_name_to_value(vm, property_name), receiver));
+    // 7. Let trapResult be ? Call(trap, handler, « target, P, Receiver »).
+    auto trap_result = TRY(call(global_object, *trap, &m_handler, &m_target, property_key_to_value(vm, property_key), receiver));
 
-    // 9. Let targetDesc be ? target.[[GetOwnProperty]](P).
-    auto target_descriptor = TRY(m_target.internal_get_own_property(property_name));
+    // 8. Let targetDesc be ? target.[[GetOwnProperty]](P).
+    auto target_descriptor = TRY(m_target.internal_get_own_property(property_key));
 
-    // 10. If targetDesc is not undefined and targetDesc.[[Configurable]] is false, then
+    // 9. If targetDesc is not undefined and targetDesc.[[Configurable]] is false, then
     if (target_descriptor.has_value() && !*target_descriptor->configurable) {
         // a. If IsDataDescriptor(targetDesc) is true and targetDesc.[[Writable]] is false, then
         if (target_descriptor->is_data_descriptor() && !*target_descriptor->writable) {
@@ -520,51 +512,49 @@ ThrowCompletionOr<Value> ProxyObject::internal_get(PropertyKey const& property_n
         }
     }
 
-    // 11. Return trapResult.
+    // 10. Return trapResult.
     return trap_result;
 }
 
 // 10.5.9 [[Set]] ( P, V, Receiver ), https://tc39.es/ecma262/#sec-proxy-object-internal-methods-and-internal-slots-set-p-v-receiver
-ThrowCompletionOr<bool> ProxyObject::internal_set(PropertyKey const& property_name, Value value, Value receiver)
+ThrowCompletionOr<bool> ProxyObject::internal_set(PropertyKey const& property_key, Value value, Value receiver)
 {
-    VERIFY(!value.is_empty());
-    VERIFY(!receiver.is_empty());
-
     auto& vm = this->vm();
     auto& global_object = this->global_object();
 
-    // 1. Assert: IsPropertyKey(P) is true.
-    VERIFY(property_name.is_valid());
+    VERIFY(property_key.is_valid());
+    VERIFY(!value.is_empty());
+    VERIFY(!receiver.is_empty());
 
-    // 2. Let handler be O.[[ProxyHandler]].
+    // 1. Let handler be O.[[ProxyHandler]].
 
-    // 3. If handler is null, throw a TypeError exception.
+    // 2. If handler is null, throw a TypeError exception.
     if (m_is_revoked)
         return vm.throw_completion<TypeError>(global_object, ErrorType::ProxyRevoked);
 
-    // 4. Assert: Type(handler) is Object.
-    // 5. Let target be O.[[ProxyTarget]].
+    // 3. Assert: Type(handler) is Object.
+    // 4. Let target be O.[[ProxyTarget]].
 
-    // 6. Let trap be ? GetMethod(handler, "set").
+    // 5. Let trap be ? GetMethod(handler, "set").
     auto trap = TRY(Value(&m_handler).get_method(global_object, vm.names.set));
 
-    // 7. If trap is undefined, then
+    // 6. If trap is undefined, then
     if (!trap) {
         // a. Return ? target.[[Set]](P, V, Receiver).
-        return m_target.internal_set(property_name, value, receiver);
+        return m_target.internal_set(property_key, value, receiver);
     }
 
-    // 8. Let booleanTrapResult be ! ToBoolean(? Call(trap, handler, « target, P, V, Receiver »)).
-    auto trap_result = TRY(vm.call(*trap, &m_handler, &m_target, property_name_to_value(vm, property_name), value, receiver)).to_boolean();
+    // 7. Let booleanTrapResult be ToBoolean(? Call(trap, handler, « target, P, V, Receiver »)).
+    auto trap_result = TRY(call(global_object, *trap, &m_handler, &m_target, property_key_to_value(vm, property_key), value, receiver)).to_boolean();
 
-    // 9. If booleanTrapResult is false, return false.
+    // 8. If booleanTrapResult is false, return false.
     if (!trap_result)
         return false;
 
-    // 10. Let targetDesc be ? target.[[GetOwnProperty]](P).
-    auto target_descriptor = TRY(m_target.internal_get_own_property(property_name));
+    // 9. Let targetDesc be ? target.[[GetOwnProperty]](P).
+    auto target_descriptor = TRY(m_target.internal_get_own_property(property_key));
 
-    // 11. If targetDesc is not undefined and targetDesc.[[Configurable]] is false, then
+    // 10. If targetDesc is not undefined and targetDesc.[[Configurable]] is false, then
     if (target_descriptor.has_value() && !*target_descriptor->configurable) {
         // a. If IsDataDescriptor(targetDesc) is true and targetDesc.[[Writable]] is false, then
         if (target_descriptor->is_data_descriptor() && !*target_descriptor->writable) {
@@ -580,68 +570,67 @@ ThrowCompletionOr<bool> ProxyObject::internal_set(PropertyKey const& property_na
         }
     }
 
-    // 12. Return true.
+    // 11. Return true.
     return true;
 }
 
 // 10.5.10 [[Delete]] ( P ), https://tc39.es/ecma262/#sec-proxy-object-internal-methods-and-internal-slots-delete-p
-ThrowCompletionOr<bool> ProxyObject::internal_delete(PropertyKey const& property_name)
+ThrowCompletionOr<bool> ProxyObject::internal_delete(PropertyKey const& property_key)
 {
     auto& vm = this->vm();
     auto& global_object = this->global_object();
 
-    // 1. Assert: IsPropertyKey(P) is true.
-    VERIFY(property_name.is_valid());
+    VERIFY(property_key.is_valid());
 
-    // 2. Let handler be O.[[ProxyHandler]].
+    // 1. Let handler be O.[[ProxyHandler]].
 
-    // 3. If handler is null, throw a TypeError exception.
+    // 2. If handler is null, throw a TypeError exception.
     if (m_is_revoked)
         return vm.throw_completion<TypeError>(global_object, ErrorType::ProxyRevoked);
 
-    // 4. Assert: Type(handler) is Object.
-    // 5. Let target be O.[[ProxyTarget]].
+    // 3. Assert: Type(handler) is Object.
+    // 4. Let target be O.[[ProxyTarget]].
 
-    // 6. Let trap be ? GetMethod(handler, "deleteProperty").
+    // 5. Let trap be ? GetMethod(handler, "deleteProperty").
     auto trap = TRY(Value(&m_handler).get_method(global_object, vm.names.deleteProperty));
 
-    // 7. If trap is undefined, then
+    // 6. If trap is undefined, then
     if (!trap) {
         // a. Return ? target.[[Delete]](P).
-        return m_target.internal_delete(property_name);
+        return m_target.internal_delete(property_key);
     }
 
-    // 8. Let booleanTrapResult be ! ToBoolean(? Call(trap, handler, « target, P »)).
-    auto trap_result = TRY(vm.call(*trap, &m_handler, &m_target, property_name_to_value(vm, property_name))).to_boolean();
+    // 7. Let booleanTrapResult be ToBoolean(? Call(trap, handler, « target, P »)).
+    auto trap_result = TRY(call(global_object, *trap, &m_handler, &m_target, property_key_to_value(vm, property_key))).to_boolean();
 
-    // 9. If booleanTrapResult is false, return false.
+    // 8. If booleanTrapResult is false, return false.
     if (!trap_result)
         return false;
 
-    // 10. Let targetDesc be ? target.[[GetOwnProperty]](P).
-    auto target_descriptor = TRY(m_target.internal_get_own_property(property_name));
+    // 9. Let targetDesc be ? target.[[GetOwnProperty]](P).
+    auto target_descriptor = TRY(m_target.internal_get_own_property(property_key));
 
-    // 11. If targetDesc is undefined, return true.
+    // 10. If targetDesc is undefined, return true.
     if (!target_descriptor.has_value())
         return true;
 
-    // 12. If targetDesc.[[Configurable]] is false, throw a TypeError exception.
+    // 11. If targetDesc.[[Configurable]] is false, throw a TypeError exception.
     if (!*target_descriptor->configurable)
         return vm.throw_completion<TypeError>(global_object, ErrorType::ProxyDeleteNonConfigurable);
 
-    // 13. Let extensibleTarget be ? IsExtensible(target).
+    // 12. Let extensibleTarget be ? IsExtensible(target).
     auto extensible_target = TRY(m_target.is_extensible());
 
-    // 14. If extensibleTarget is false, throw a TypeError exception.
+    // 13. If extensibleTarget is false, throw a TypeError exception.
     if (!extensible_target)
         return vm.throw_completion<TypeError>(global_object, ErrorType::ProxyDeleteNonExtensible);
 
-    // 15. Return true.
+    // 14. Return true.
     return true;
 }
 
 // 10.5.11 [[OwnPropertyKeys]] ( ), https://tc39.es/ecma262/#sec-proxy-object-internal-methods-and-internal-slots-ownpropertykeys
-ThrowCompletionOr<MarkedValueList> ProxyObject::internal_own_property_keys() const
+ThrowCompletionOr<MarkedVector<Value>> ProxyObject::internal_own_property_keys() const
 {
     auto& vm = this->vm();
     auto& global_object = this->global_object();
@@ -665,7 +654,7 @@ ThrowCompletionOr<MarkedValueList> ProxyObject::internal_own_property_keys() con
     }
 
     // 7. Let trapResultArray be ? Call(trap, handler, « target »).
-    auto trap_result_array = TRY(vm.call(*trap, &m_handler, &m_target));
+    auto trap_result_array = TRY(call(global_object, *trap, &m_handler, &m_target));
 
     // 8. Let trapResult be ? CreateListFromArrayLike(trapResultArray, « String, Symbol »).
     HashTable<PropertyKey> unique_keys;
@@ -688,19 +677,21 @@ ThrowCompletionOr<MarkedValueList> ProxyObject::internal_own_property_keys() con
     // 11. Let targetKeys be ? target.[[OwnPropertyKeys]]().
     auto target_keys = TRY(m_target.internal_own_property_keys());
 
-    // 12. Assert: targetKeys is a List whose elements are only String and Symbol values.
+    // 12. Assert: targetKeys is a List of property keys.
     // 13. Assert: targetKeys contains no duplicate entries.
 
     // 14. Let targetConfigurableKeys be a new empty List.
-    auto target_configurable_keys = MarkedValueList { heap() };
+    auto target_configurable_keys = MarkedVector<Value> { heap() };
 
     // 15. Let targetNonconfigurableKeys be a new empty List.
-    auto target_nonconfigurable_keys = MarkedValueList { heap() };
+    auto target_nonconfigurable_keys = MarkedVector<Value> { heap() };
 
     // 16. For each element key of targetKeys, do
     for (auto& key : target_keys) {
+        auto property_key = MUST(PropertyKey::from_value(global_object, key));
+
         // a. Let desc be ? target.[[GetOwnProperty]](key).
-        auto descriptor = TRY(m_target.internal_get_own_property(PropertyKey::from_value(global_object, key)));
+        auto descriptor = TRY(m_target.internal_get_own_property(property_key));
 
         // b. If desc is not undefined and desc.[[Configurable]] is false, then
         if (descriptor.has_value() && !*descriptor->configurable) {
@@ -721,7 +712,7 @@ ThrowCompletionOr<MarkedValueList> ProxyObject::internal_own_property_keys() con
     }
 
     // 18. Let uncheckedResultKeys be a List whose elements are the elements of trapResult.
-    auto unchecked_result_keys = MarkedValueList { heap() };
+    auto unchecked_result_keys = MarkedVector<Value> { heap() };
     unchecked_result_keys.extend(trap_result);
 
     // 19. For each element key of targetNonconfigurableKeys, do
@@ -761,7 +752,7 @@ ThrowCompletionOr<MarkedValueList> ProxyObject::internal_own_property_keys() con
 }
 
 // 10.5.12 [[Call]] ( thisArgument, argumentsList ), https://tc39.es/ecma262/#sec-proxy-object-internal-methods-and-internal-slots-call-thisargument-argumentslist
-ThrowCompletionOr<Value> ProxyObject::internal_call(Value this_argument, MarkedValueList arguments_list)
+ThrowCompletionOr<Value> ProxyObject::internal_call(Value this_argument, MarkedVector<Value> arguments_list)
 {
     auto& vm = this->vm();
     auto& global_object = this->global_object();
@@ -791,7 +782,7 @@ ThrowCompletionOr<Value> ProxyObject::internal_call(Value this_argument, MarkedV
         return call(global_object, &m_target, this_argument, move(arguments_list));
     }
 
-    // 7. Let argArray be ! CreateArrayFromList(argumentsList).
+    // 7. Let argArray be CreateArrayFromList(argumentsList).
     auto* arguments_array = Array::create_from(global_object, arguments_list);
 
     // 8. Return ? Call(trap, handler, « target, thisArgument, argArray »).
@@ -809,7 +800,7 @@ bool ProxyObject::has_constructor() const
 }
 
 // 10.5.13 [[Construct]] ( argumentsList, newTarget ), https://tc39.es/ecma262/#sec-proxy-object-internal-methods-and-internal-slots-construct-argumentslist-newtarget
-ThrowCompletionOr<Object*> ProxyObject::internal_construct(MarkedValueList arguments_list, FunctionObject& new_target)
+ThrowCompletionOr<Object*> ProxyObject::internal_construct(MarkedVector<Value> arguments_list, FunctionObject& new_target)
 {
     auto& vm = this->vm();
     auto& global_object = this->global_object();
@@ -839,7 +830,7 @@ ThrowCompletionOr<Object*> ProxyObject::internal_construct(MarkedValueList argum
         return construct(global_object, static_cast<FunctionObject&>(m_target), move(arguments_list), &new_target);
     }
 
-    // 8. Let argArray be ! CreateArrayFromList(argumentsList).
+    // 8. Let argArray be CreateArrayFromList(argumentsList).
     auto* arguments_array = Array::create_from(global_object, arguments_list);
 
     // 9. Let newObj be ? Call(trap, handler, « target, argArray, newTarget »).
@@ -860,7 +851,7 @@ void ProxyObject::visit_edges(Cell::Visitor& visitor)
     visitor.visit(&m_handler);
 }
 
-const FlyString& ProxyObject::name() const
+FlyString const& ProxyObject::name() const
 {
     VERIFY(is_function());
     return static_cast<FunctionObject&>(m_target).name();

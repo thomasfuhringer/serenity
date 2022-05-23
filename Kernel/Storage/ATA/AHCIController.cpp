@@ -5,6 +5,7 @@
  */
 
 #include <AK/Atomic.h>
+#include <AK/BuiltinWrappers.h>
 #include <AK/OwnPtr.h>
 #include <AK/RefPtr.h>
 #include <AK/Types.h>
@@ -50,7 +51,7 @@ size_t AHCIController::devices_count() const
 {
     size_t count = 0;
     for (auto& port_handler : m_handlers) {
-        port_handler.enumerate_ports([&](const AHCIPort& port) {
+        port_handler.enumerate_ports([&](AHCIPort const& port) {
             if (port.connected_device())
                 count++;
         });
@@ -58,7 +59,7 @@ size_t AHCIController::devices_count() const
     return count;
 }
 
-void AHCIController::start_request(const ATADevice& device, AsyncBlockDeviceRequest& request)
+void AHCIController::start_request(ATADevice const& device, AsyncBlockDeviceRequest& request)
 {
     // FIXME: For now we have one port handler, check all of them...
     VERIFY(m_handlers.size() > 0);
@@ -131,12 +132,10 @@ AHCI::HBADefinedCapabilities AHCIController::capabilities() const
 
 NonnullOwnPtr<Memory::Region> AHCIController::default_hba_region() const
 {
-    return MM.allocate_kernel_region(PhysicalAddress(PCI::get_BAR5(pci_address())).page_base(), Memory::page_round_up(sizeof(AHCI::HBA)), "AHCI HBA", Memory::Region::Access::ReadWrite).release_value();
+    return MM.allocate_kernel_region(PhysicalAddress(PCI::get_BAR5(pci_address())).page_base(), Memory::page_round_up(sizeof(AHCI::HBA)).release_value_but_fixme_should_propagate_errors(), "AHCI HBA", Memory::Region::Access::ReadWrite).release_value();
 }
 
-AHCIController::~AHCIController()
-{
-}
+AHCIController::~AHCIController() = default;
 
 void AHCIController::initialize_hba(PCI::DeviceIdentifier const& pci_device_identifier)
 {
@@ -155,7 +154,7 @@ void AHCIController::initialize_hba(PCI::DeviceIdentifier const& pci_device_iden
     PCI::enable_bus_mastering(pci_address());
     enable_global_interrupts();
     m_handlers.append(AHCIPortHandler::create(*this, pci_device_identifier.interrupt_line().value(),
-        AHCI::MaskedBitField((volatile u32&)(hba().control_regs.pi))));
+        AHCI::MaskedBitField((u32 volatile&)(hba().control_regs.pi))));
 }
 
 void AHCIController::disable_global_interrupts() const
@@ -185,12 +184,12 @@ RefPtr<StorageDevice> AHCIController::device(u32 index) const
 {
     NonnullRefPtrVector<StorageDevice> connected_devices;
     u32 pi = hba().control_regs.pi;
-    u32 bit = __builtin_ffsl(pi);
+    u32 bit = bit_scan_forward(pi);
     while (bit) {
         dbgln_if(AHCI_DEBUG, "Checking implemented port {}, pi {:b}", bit - 1, pi);
         pi &= ~(1u << (bit - 1));
         auto checked_device = device_by_port(bit - 1);
-        bit = __builtin_ffsl(pi);
+        bit = bit_scan_forward(pi);
         if (checked_device.is_null())
             continue;
         connected_devices.append(checked_device.release_nonnull());

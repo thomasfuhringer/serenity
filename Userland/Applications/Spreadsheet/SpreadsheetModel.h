@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2020, the SerenityOS developers.
+ * Copyright (c) 2020-2022, the SerenityOS developers.
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -14,7 +14,7 @@ namespace Spreadsheet {
 class SheetModel final : public GUI::Model {
 public:
     static NonnullRefPtr<SheetModel> create(Sheet& sheet) { return adopt_ref(*new SheetModel(sheet)); }
-    virtual ~SheetModel() override;
+    virtual ~SheetModel() override = default;
 
     virtual int row_count(const GUI::ModelIndex& = GUI::ModelIndex()) const override { return m_sheet->row_count(); }
     virtual int column_count(const GUI::ModelIndex& = GUI::ModelIndex()) const override { return m_sheet->column_count(); }
@@ -29,6 +29,9 @@ public:
 
     void update();
 
+    Function<void(Cell&, String&)> on_cell_data_change;
+    Function<void(Vector<CellChange>)> on_cells_data_change;
+
 private:
     explicit SheetModel(Sheet& sheet)
         : m_sheet(sheet)
@@ -36,6 +39,18 @@ private:
     }
 
     NonnullRefPtr<Sheet> m_sheet;
+};
+
+class CellsUndoCommand : public GUI::Command {
+public:
+    CellsUndoCommand(Cell&, String const&);
+    CellsUndoCommand(Vector<CellChange>);
+
+    virtual void undo() override;
+    virtual void redo() override;
+
+private:
+    Vector<CellChange> m_cell_changes;
 };
 
 }

@@ -110,7 +110,9 @@ Optional<Core::DateTime> parse_utc_time(StringView time)
         return {};
     }
 
-    auto full_year = (Core::DateTime::now().year() / 100) * 100 + year_in_century.value();
+    // RFC5280 section 4.1.2.5.1.
+    auto full_year = year_in_century.value();
+    full_year += (full_year < 50) ? 2000 : 1900;
     auto full_seconds = seconds.value_or(0);
 
     // FIXME: Handle offsets!
@@ -183,7 +185,7 @@ done_parsing:;
     if (offset_hours.has_value() || offset_minutes.has_value())
         dbgln("FIXME: Implement GeneralizedTime with offset!");
 
-    // Unceremonially drop the milliseconds on the floor.
+    // Unceremoniously drop the milliseconds on the floor.
     return Core::DateTime::create(year.value(), month.value(), day.value(), hour.value(), minute.value_or(0), seconds.value_or(0));
 }
 

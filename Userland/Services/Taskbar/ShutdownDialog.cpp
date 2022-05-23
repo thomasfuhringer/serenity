@@ -13,8 +13,8 @@
 #include <LibGUI/Label.h>
 #include <LibGUI/RadioButton.h>
 #include <LibGUI/Widget.h>
-#include <LibGfx/Font.h>
-#include <LibGfx/FontDatabase.h>
+#include <LibGfx/Font/Font.h>
+#include <LibGfx/Font/FontDatabase.h>
 
 struct Option {
     String title;
@@ -23,7 +23,7 @@ struct Option {
     bool default_action;
 };
 
-static const Vector<Option> options = {
+static Vector<Option> const options = {
     { "Power off computer", { "/bin/shutdown", "--now", nullptr }, true, true },
     { "Reboot", { "/bin/reboot", nullptr }, true, false },
     { "Log out", { "/bin/logout", nullptr }, true, false },
@@ -33,7 +33,7 @@ Vector<char const*> ShutdownDialog::show()
 {
     auto dialog = ShutdownDialog::construct();
     auto rc = dialog->exec();
-    if (rc == ExecResult::ExecOK && dialog->m_selected_option != -1)
+    if (rc == ExecResult::OK && dialog->m_selected_option != -1)
         return options[dialog->m_selected_option].cmd;
 
     return {};
@@ -100,12 +100,12 @@ ShutdownDialog::ShutdownDialog()
     auto& ok_button = button_container.add<GUI::Button>("OK");
     ok_button.set_fixed_size(80, 23);
     ok_button.on_click = [this](auto) {
-        done(Dialog::ExecOK);
+        done(ExecResult::OK);
     };
     auto& cancel_button = button_container.add<GUI::Button>("Cancel");
     cancel_button.set_fixed_size(80, 23);
     cancel_button.on_click = [this](auto) {
-        done(ExecResult::ExecCancel);
+        done(ExecResult::Cancel);
     };
 
     resize(413, 235);
@@ -116,8 +116,4 @@ ShutdownDialog::ShutdownDialog()
 
     // Request WindowServer to re-update us on the current theme as we might've not been alive for the last notification.
     refresh_system_theme();
-}
-
-ShutdownDialog::~ShutdownDialog()
-{
 }

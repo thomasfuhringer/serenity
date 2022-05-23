@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2018-2020, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2022, the SerenityOS developers.
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -19,11 +20,7 @@ ProfileModel::ProfileModel(Profile& profile)
     m_kernel_frame_icon.set_bitmap_for_size(16, Gfx::Bitmap::try_load_from_file("/res/icons/16x16/inspector-object-red.png").release_value_but_fixme_should_propagate_errors());
 }
 
-ProfileModel::~ProfileModel()
-{
-}
-
-GUI::ModelIndex ProfileModel::index(int row, int column, const GUI::ModelIndex& parent) const
+GUI::ModelIndex ProfileModel::index(int row, int column, GUI::ModelIndex const& parent) const
 {
     if (!parent.is_valid()) {
         if (m_profile.roots().is_empty())
@@ -34,7 +31,7 @@ GUI::ModelIndex ProfileModel::index(int row, int column, const GUI::ModelIndex& 
     return create_index(row, column, remote_parent.children().at(row).ptr());
 }
 
-GUI::ModelIndex ProfileModel::parent_index(const GUI::ModelIndex& index) const
+GUI::ModelIndex ProfileModel::parent_index(GUI::ModelIndex const& index) const
 {
     if (!index.is_valid())
         return {};
@@ -62,7 +59,7 @@ GUI::ModelIndex ProfileModel::parent_index(const GUI::ModelIndex& index) const
     return {};
 }
 
-int ProfileModel::row_count(const GUI::ModelIndex& index) const
+int ProfileModel::row_count(GUI::ModelIndex const& index) const
 {
     if (!index.is_valid())
         return m_profile.roots().size();
@@ -70,7 +67,7 @@ int ProfileModel::row_count(const GUI::ModelIndex& index) const
     return node.children().size();
 }
 
-int ProfileModel::column_count(const GUI::ModelIndex&) const
+int ProfileModel::column_count(GUI::ModelIndex const&) const
 {
     return Column::__Count;
 }
@@ -94,7 +91,7 @@ String ProfileModel::column_name(int column) const
     }
 }
 
-GUI::Variant ProfileModel::data(const GUI::ModelIndex& index, GUI::ModelRole role) const
+GUI::Variant ProfileModel::data(GUI::ModelIndex const& index, GUI::ModelRole role) const
 {
     auto* node = static_cast<ProfileNode*>(index.internal_data());
     if (role == GUI::ModelRole::TextAlignment) {
@@ -114,14 +111,19 @@ GUI::Variant ProfileModel::data(const GUI::ModelIndex& index, GUI::ModelRole rol
         return {};
     }
     if (role == GUI::ModelRole::Display) {
+        auto round_percentages = [this](auto percentage) {
+            return roundf(static_cast<float>(percentage) / static_cast<float>(m_profile.filtered_event_indices().size())
+                       * percent_digits_rounding_constant)
+                * 100.0f / percent_digits_rounding_constant;
+        };
         if (index.column() == Column::SampleCount) {
             if (m_profile.show_percentages())
-                return ((float)node->event_count() / (float)m_profile.filtered_event_indices().size()) * 100.0f;
+                return round_percentages(node->event_count());
             return node->event_count();
         }
         if (index.column() == Column::SelfCount) {
             if (m_profile.show_percentages())
-                return ((float)node->self_count() / (float)m_profile.filtered_event_indices().size()) * 100.0f;
+                return round_percentages(node->self_count());
             return node->self_count();
         }
         if (index.column() == Column::ObjectName)
@@ -135,7 +137,7 @@ GUI::Variant ProfileModel::data(const GUI::ModelIndex& index, GUI::ModelRole rol
         if (index.column() == Column::SymbolAddress) {
             if (node->is_root())
                 return "";
-            auto library = node->process().library_metadata.library_containing(node->address());
+            auto const* library = node->process().library_metadata.library_containing(node->address());
             if (!library)
                 return "";
             return String::formatted("{:p} (offset {:p})", node->address(), node->address() - library->base);

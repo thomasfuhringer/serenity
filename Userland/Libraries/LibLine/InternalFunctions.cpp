@@ -170,6 +170,7 @@ void Editor::kill_line()
     for (size_t i = 0; i < m_cursor; ++i)
         remove_at_index(0);
     m_cursor = 0;
+    m_inline_search_cursor = m_cursor;
     m_refresh_needed = true;
 }
 
@@ -515,7 +516,7 @@ void Editor::uppercase_word()
 
 void Editor::edit_in_external_editor()
 {
-    const auto* editor_command = getenv("EDITOR");
+    auto const* editor_command = getenv("EDITOR");
     if (!editor_command)
         editor_command = m_configuration.m_default_text_editor.characters();
 
@@ -528,14 +529,8 @@ void Editor::edit_in_external_editor()
     }
 
     {
-        auto* fp = fdopen(fd, "rw");
-        if (!fp) {
-            perror("fdopen");
-            return;
-        }
-
-        OutputFileStream stream { fp };
-
+        auto write_fd = dup(fd);
+        OutputFileStream stream { write_fd };
         StringBuilder builder;
         builder.append(Utf32View { m_buffer.data(), m_buffer.size() });
         auto bytes = builder.string_view().bytes();
@@ -543,6 +538,7 @@ void Editor::edit_in_external_editor()
             auto nwritten = stream.write(bytes);
             bytes = bytes.slice(nwritten);
         }
+        lseek(fd, 0, SEEK_SET);
     }
 
     ScopeGuard remove_temp_file_guard {
@@ -552,11 +548,11 @@ void Editor::edit_in_external_editor()
         }
     };
 
-    Vector<const char*> args { editor_command, file_path, nullptr };
-    auto pid = vfork();
+    Vector<char const*> args { editor_command, file_path, nullptr };
+    auto pid = fork();
 
     if (pid == -1) {
-        perror("vfork");
+        perror("fork");
         return;
     }
 

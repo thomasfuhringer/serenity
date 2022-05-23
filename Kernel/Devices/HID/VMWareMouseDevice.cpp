@@ -6,23 +6,21 @@
 
 #include <Kernel/Devices/DeviceManagement.h>
 #include <Kernel/Devices/HID/VMWareMouseDevice.h>
-#include <Kernel/Devices/VMWareBackdoor.h>
+#include <Kernel/Firmware/Hypervisor/VMWareBackdoor.h>
 #include <Kernel/Sections.h>
 
 namespace Kernel {
 
-UNMAP_AFTER_INIT RefPtr<VMWareMouseDevice> VMWareMouseDevice::try_to_initialize(const I8042Controller& ps2_controller)
+UNMAP_AFTER_INIT ErrorOr<NonnullRefPtr<VMWareMouseDevice>> VMWareMouseDevice::try_to_initialize(I8042Controller const& ps2_controller)
 {
+    // FIXME: return the correct error
     if (!VMWareBackdoor::the())
-        return {};
+        return Error::from_errno(EIO);
     if (!VMWareBackdoor::the()->vmmouse_is_absolute())
-        return {};
-    auto mouse_device_or_error = DeviceManagement::try_create_device<VMWareMouseDevice>(ps2_controller);
-    // FIXME: Find a way to propagate errors
-    VERIFY(!mouse_device_or_error.is_error());
-    if (mouse_device_or_error.value()->initialize())
-        return mouse_device_or_error.release_value();
-    return {};
+        return Error::from_errno(EIO);
+    auto mouse_device = TRY(DeviceManagement::try_create_device<VMWareMouseDevice>(ps2_controller));
+    TRY(mouse_device->initialize());
+    return mouse_device;
 }
 
 void VMWareMouseDevice::irq_handle_byte_read(u8)
@@ -49,16 +47,14 @@ void VMWareMouseDevice::irq_handle_byte_read(u8)
             SpinlockLocker lock(m_queue_lock);
             m_queue.enqueue(mouse_packet);
         }
-        evaluate_block_conditions();
     }
+    evaluate_block_conditions();
 }
 
-VMWareMouseDevice::VMWareMouseDevice(const I8042Controller& ps2_controller)
+VMWareMouseDevice::VMWareMouseDevice(I8042Controller const& ps2_controller)
     : PS2MouseDevice(ps2_controller)
 {
 }
-VMWareMouseDevice::~VMWareMouseDevice()
-{
-}
+VMWareMouseDevice::~VMWareMouseDevice() = default;
 
 }

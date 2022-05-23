@@ -1,6 +1,7 @@
 /*
  * Copyright (c) 2018-2020, Andreas Kling <kling@serenityos.org>
  * Copyright (c) 2019-2020, William McPherson <willmcpherson2@gmail.com>
+ * Copyright (c) 2022, the SerenityOS developers.
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -52,19 +53,15 @@ MainWidget::MainWidget(TrackManager& track_manager, AudioPlayerLoop& loop)
     m_roll_widget->set_keys_widget(m_keys_widget);
 }
 
-MainWidget::~MainWidget()
+void MainWidget::add_track_actions(GUI::Menu& menu)
 {
-}
-
-void MainWidget::add_actions(GUI::Menu& menu)
-{
-    menu.add_action(GUI::Action::create("&Add Track", { Mod_Ctrl, Key_T }, [&](auto&) {
-        m_track_manager.add_track();
+    menu.add_action(GUI::Action::create("&Add Track", { Mod_Ctrl, Key_T }, Gfx::Bitmap::try_load_from_file("/res/icons/16x16/plus.png").release_value_but_fixme_should_propagate_errors(), [&](auto&) {
+        m_player_widget->add_track();
     }));
 
-    menu.add_action(GUI::Action::create("&Next Track", { Mod_Ctrl, Key_N }, [&](auto&) {
+    menu.add_action(GUI::Action::create("&Next Track", { Mod_Ctrl, Key_N }, Gfx::Bitmap::try_load_from_file("/res/icons/16x16/go-last.png").release_value_but_fixme_should_propagate_errors(), [&](auto&) {
         turn_off_pressed_keys();
-        m_track_manager.next_track();
+        m_player_widget->next_track();
         turn_on_pressed_keys();
 
         m_knobs_widget->update_knobs();
@@ -118,6 +115,9 @@ void MainWidget::special_key_action(int key_code)
         break;
     case Key_C:
         m_knobs_widget->cycle_waveform();
+        break;
+    case Key_Space:
+        m_player_widget->toggle_paused();
         break;
     }
 }

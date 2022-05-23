@@ -6,8 +6,10 @@
 
 #include "CustomGameDialog.h"
 #include "Field.h"
+#include <AK/URL.h>
 #include <LibConfig/Client.h>
 #include <LibCore/System.h>
+#include <LibDesktop/Launcher.h>
 #include <LibGUI/Action.h>
 #include <LibGUI/ActionGroup.h>
 #include <LibGUI/Application.h>
@@ -28,14 +30,18 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
 
     auto app = TRY(GUI::Application::try_create(arguments));
 
-    Config::pledge_domains("Minesweeper");
+    Config::pledge_domain("Minesweeper");
+
+    TRY(Desktop::Launcher::add_allowed_handler_with_only_specific_urls("/bin/Help", { URL::create_with_file_protocol("/usr/share/man/man6/Minesweeper.md") }));
+    TRY(Desktop::Launcher::seal_allowlist());
 
     TRY(Core::System::pledge("stdio rpath recvfd sendfd"));
 
     TRY(Core::System::unveil("/res", "r"));
+    TRY(Core::System::unveil("/tmp/portal/launch", "rw"));
     TRY(Core::System::unveil(nullptr, nullptr));
 
-    auto app_icon = GUI::Icon::default_icon("app-minesweeper");
+    auto app_icon = TRY(GUI::Icon::try_create_default_icon("app-minesweeper"));
 
     auto window = TRY(GUI::Window::try_create());
     window->set_resizable(false);
@@ -43,7 +49,7 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
     window->resize(139, 175);
 
     auto widget = TRY(window->try_set_main_widget<GUI::Widget>());
-    TRY(widget->try_set_layout<GUI::VerticalBoxLayout>());
+    (void)TRY(widget->try_set_layout<GUI::VerticalBoxLayout>());
     widget->layout()->set_spacing(0);
 
     auto top_line = TRY(widget->try_add<GUI::SeparatorWidget>(Gfx::Orientation::Horizontal));
@@ -52,7 +58,7 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
     auto container = TRY(widget->try_add<GUI::Widget>());
     container->set_fill_with_background_color(true);
     container->set_fixed_height(36);
-    TRY(container->try_set_layout<GUI::HorizontalBoxLayout>());
+    (void)TRY(container->try_set_layout<GUI::HorizontalBoxLayout>());
 
     container->layout()->add_spacer();
 
@@ -90,7 +96,7 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
 
     auto game_menu = TRY(window->try_add_menu("&Game"));
 
-    TRY(game_menu->try_add_action(GUI::Action::create("&New Game", { Mod_None, Key_F2 }, [&](auto&) {
+    TRY(game_menu->try_add_action(GUI::Action::create("&New Game", { Mod_None, Key_F2 }, TRY(Gfx::Bitmap::try_load_from_file("/res/icons/16x16/reload.png")), [&](auto&) {
         field->reset();
     })));
 
@@ -149,6 +155,9 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
     difficulty_actions.add_action(action);
 
     auto help_menu = TRY(window->try_add_menu("&Help"));
+    TRY(help_menu->try_add_action(GUI::CommonActions::make_help_action([](auto&) {
+        Desktop::Launcher::open(URL::create_with_file_protocol("/usr/share/man/man6/Minesweeper.md"), "/bin/Help");
+    })));
     TRY(help_menu->try_add_action(GUI::CommonActions::make_about_action("Minesweeper", app_icon, window)));
 
     window->show();

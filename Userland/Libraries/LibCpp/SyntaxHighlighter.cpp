@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2020, the SerenityOS developers.
+ * Copyright (c) 2020-2022, the SerenityOS developers.
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -8,7 +8,7 @@
 #include <LibCpp/Lexer.h>
 #include <LibCpp/SyntaxHighlighter.h>
 #include <LibGUI/TextEditor.h>
-#include <LibGfx/Font.h>
+#include <LibGfx/Font/Font.h>
 #include <LibGfx/Palette.h>
 
 namespace Cpp {
@@ -96,10 +96,6 @@ Vector<SyntaxHighlighter::MatchingTokenPair> SyntaxHighlighter::matching_token_p
 bool SyntaxHighlighter::token_types_equal(u64 token1, u64 token2) const
 {
     return static_cast<Cpp::Token::Type>(token1) == static_cast<Cpp::Token::Type>(token2);
-}
-
-SyntaxHighlighter::~SyntaxHighlighter()
-{
 }
 
 }

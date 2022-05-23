@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2020, the SerenityOS developers.
+ * Copyright (c) 2020-2022, the SerenityOS developers.
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -44,7 +44,7 @@ struct ParserTraits {
     E(NonConformingColumnCount, "Header count does not match given column count") \
     E(QuoteFailure, "Quoting failure")                                            \
     E(InternalError, "Internal error")                                            \
-    E(DataPastLogicalEnd, "Exrta data past the logical end of the rows")
+    E(DataPastLogicalEnd, "Extra data past the logical end of the rows")
 
 enum class ReadError {
 #define E(name, _) name,
@@ -68,7 +68,7 @@ public:
         parse_preview();
     }
 
-    virtual ~XSV() { }
+    virtual ~XSV() = default;
 
     void parse();
     bool has_error() const { return m_error != ReadError::None; }
@@ -146,11 +146,11 @@ public:
         }
 
         bool is_end() const { return m_index == m_xsv.m_rows.size(); }
-        bool operator==(const RowIterator& other) const
+        bool operator==(RowIterator const& other) const
         {
             return m_index == other.m_index && &m_xsv == &other.m_xsv;
         }
-        bool operator==(const RowIterator<!const_>& other) const
+        bool operator==(RowIterator<!const_> const& other) const
         {
             return m_index == other.m_index && &m_xsv == &other.m_xsv;
         }

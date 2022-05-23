@@ -11,7 +11,6 @@
 #include <AK/Function.h>
 #include <AK/HashTable.h>
 #include <AK/IntrusiveList.h>
-#include <AK/String.h>
 #include <AK/WeakPtr.h>
 #include <Kernel/FileSystem/FIFO.h>
 #include <Kernel/FileSystem/FileSystem.h>
@@ -23,7 +22,7 @@
 
 namespace Kernel {
 
-class Inode : public ListedRefCounted<Inode>
+class Inode : public ListedRefCounted<Inode, LockType::Spinlock>
     , public Weakable<Inode> {
     friend class VirtualFileSystem;
     friend class FileSystem;
@@ -31,7 +30,7 @@ class Inode : public ListedRefCounted<Inode>
 public:
     virtual ~Inode();
 
-    virtual void one_ref_left() { }
+    virtual void remove_from_secondary_lists() { }
 
     FileSystem& fs() { return m_file_system; }
     FileSystem const& fs() const { return m_file_system; }
@@ -55,7 +54,7 @@ public:
     virtual ErrorOr<size_t> read_bytes(off_t, size_t, UserOrKernelBuffer& buffer, OpenFileDescription*) const = 0;
     virtual ErrorOr<void> traverse_as_directory(Function<ErrorOr<void>(FileSystem::DirectoryEntryView const&)>) const = 0;
     virtual ErrorOr<NonnullRefPtr<Inode>> lookup(StringView name) = 0;
-    virtual ErrorOr<size_t> write_bytes(off_t, size_t, const UserOrKernelBuffer& data, OpenFileDescription*) = 0;
+    virtual ErrorOr<size_t> write_bytes(off_t, size_t, UserOrKernelBuffer const& data, OpenFileDescription*) = 0;
     virtual ErrorOr<NonnullRefPtr<Inode>> create_child(StringView name, mode_t, dev_t, UserID, GroupID) = 0;
     virtual ErrorOr<void> add_child(Inode&, StringView name, mode_t) = 0;
     virtual ErrorOr<void> remove_child(StringView name) = 0;
@@ -66,12 +65,9 @@ public:
 
     virtual ErrorOr<int> get_block_address(int) { return ENOTSUP; }
 
-    LocalSocket* socket() { return m_socket.ptr(); }
-    const LocalSocket* socket() const { return m_socket.ptr(); }
+    RefPtr<LocalSocket> bound_socket() const;
     bool bind_socket(LocalSocket&);
     bool unbind_socket();
-
-    virtual OpenFileDescription* preopen_fd() { return nullptr; };
 
     bool is_metadata_dirty() const { return m_metadata_dirty; }
 
@@ -85,15 +81,15 @@ public:
 
     void will_be_destroyed();
 
-    void set_shared_vmobject(Memory::SharedInodeVMObject&);
+    ErrorOr<void> set_shared_vmobject(Memory::SharedInodeVMObject&);
     RefPtr<Memory::SharedInodeVMObject> shared_vmobject() const;
 
     static void sync_all();
     void sync();
 
-    bool has_watchers() const { return !m_watchers.is_empty(); }
+    bool has_watchers() const;
 
-    void register_watcher(Badge<InodeWatcher>, InodeWatcher&);
+    ErrorOr<void> register_watcher(Badge<InodeWatcher>, InodeWatcher&);
     void unregister_watcher(Badge<InodeWatcher>, InodeWatcher&);
 
     ErrorOr<NonnullRefPtr<FIFO>> fifo();
@@ -108,8 +104,8 @@ protected:
     void set_metadata_dirty(bool);
     ErrorOr<void> prepare_to_write_data();
 
-    void did_add_child(InodeIdentifier const& child_id, String const& name);
-    void did_remove_child(InodeIdentifier const& child_id, String const& name);
+    void did_add_child(InodeIdentifier child_id, StringView);
+    void did_remove_child(InodeIdentifier child_id, StringView);
     void did_modify_contents();
     void did_delete_self();
 
@@ -119,8 +115,8 @@ private:
     FileSystem& m_file_system;
     InodeIndex m_index { 0 };
     WeakPtr<Memory::SharedInodeVMObject> m_shared_vmobject;
-    RefPtr<LocalSocket> m_socket;
-    HashTable<InodeWatcher*> m_watchers;
+    RefPtr<LocalSocket> m_bound_socket;
+    SpinlockProtected<HashTable<InodeWatcher*>> m_watchers;
     bool m_metadata_dirty { false };
     RefPtr<FIFO> m_fifo;
     IntrusiveListNode<Inode> m_inode_list_node;
@@ -133,7 +129,7 @@ private:
         short type;
     };
 
-    Vector<Flock> m_flocks;
+    SpinlockProtected<Vector<Flock>> m_flocks;
 
 public:
     using AllInstancesList = IntrusiveList<&Inode::m_inode_list_node>;

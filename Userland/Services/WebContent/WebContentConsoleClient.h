@@ -8,7 +8,7 @@
 
 #pragma once
 
-#include "ClientConnection.h"
+#include "ConnectionFromClient.h"
 #include <LibJS/Console.h>
 #include <LibJS/Forward.h>
 #include <LibWeb/Forward.h>
@@ -18,37 +18,34 @@ namespace WebContent {
 
 class WebContentConsoleClient final : public JS::ConsoleClient {
 public:
-    WebContentConsoleClient(JS::Console&, WeakPtr<JS::Interpreter>, ClientConnection&);
+    WebContentConsoleClient(JS::Console&, WeakPtr<JS::Interpreter>, ConnectionFromClient&);
 
     void handle_input(String const& js_source);
     void send_messages(i32 start_index);
 
 private:
-    virtual JS::Value log() override;
-    virtual JS::Value info() override;
-    virtual JS::Value debug() override;
-    virtual JS::Value warn() override;
-    virtual JS::Value error() override;
-    virtual JS::Value clear() override;
-    virtual JS::Value trace() override;
-    virtual JS::Value count() override;
-    virtual JS::Value count_reset() override;
-    virtual JS::Value assert_() override;
+    virtual void clear() override;
+    virtual JS::ThrowCompletionOr<JS::Value> printer(JS::Console::LogLevel log_level, PrinterArguments) override;
 
-    ClientConnection& m_client;
+    ConnectionFromClient& m_client;
     WeakPtr<JS::Interpreter> m_interpreter;
     JS::Handle<ConsoleGlobalObject> m_console_global_object;
 
     void clear_output();
     void print_html(String const& line);
+    void begin_group(String const& label, bool start_expanded);
+    virtual void end_group() override;
 
     struct ConsoleOutput {
         enum class Type {
             HTML,
-            Clear
+            Clear,
+            BeginGroup,
+            BeginGroupCollapsed,
+            EndGroup,
         };
         Type type;
-        String html;
+        String data;
     };
     Vector<ConsoleOutput> m_message_log;
 };

@@ -6,7 +6,8 @@
 
 #include <LibCore/ArgsParser.h>
 #include <LibCore/File.h>
-#include <stdio.h>
+#include <LibCore/System.h>
+#include <LibMain/Main.h>
 #include <stdlib.h>
 #include <unistd.h>
 
@@ -18,7 +19,7 @@ static int tail_from_pos(Core::File& file, off_t startline, bool want_follow)
         return 1;
 
     while (true) {
-        const auto& b = file.read(4096);
+        auto const& b = file.read(4096);
         if (b.is_empty()) {
             if (!want_follow) {
                 break;
@@ -55,7 +56,7 @@ static off_t find_seek_pos(Core::File& file, int wanted_lines)
     // is smart enough to not read char-by-char. Fix it there, or fix it here :)
     for (; pos >= 0; pos--) {
         file.seek(pos);
-        const auto& ch = file.read(1);
+        auto const& ch = file.read(1);
         if (ch.is_empty()) {
             // Presumably the file got truncated?
             // Keep trying to read backwards...
@@ -71,34 +72,23 @@ static off_t find_seek_pos(Core::File& file, int wanted_lines)
     return pos;
 }
 
-int main(int argc, char* argv[])
+ErrorOr<int> serenity_main(Main::Arguments arguments)
 {
-    if (pledge("stdio rpath", nullptr) < 0) {
-        perror("pledge");
-        return 1;
-    }
+    TRY(Core::System::pledge("stdio rpath"));
 
     bool follow = false;
     int line_count = DEFAULT_LINE_COUNT;
-    const char* file = nullptr;
+    char const* file = nullptr;
 
     Core::ArgsParser args_parser;
     args_parser.set_general_help("Print the end ('tail') of a file.");
     args_parser.add_option(follow, "Output data as it is written to the file", "follow", 'f');
     args_parser.add_option(line_count, "Fetch the specified number of lines", "lines", 'n', "number");
     args_parser.add_positional_argument(file, "File path", "file");
-    args_parser.parse(argc, argv);
+    args_parser.parse(arguments);
 
-    auto f = Core::File::construct(file);
-    if (!f->open(Core::OpenMode::ReadOnly)) {
-        warnln("Failed to open {}: {}", f->name(), f->error_string());
-        exit(1);
-    }
-
-    if (pledge("stdio", nullptr) < 0) {
-        perror("pledge");
-        return 1;
-    }
+    auto f = TRY(Core::File::open(file, Core::OpenMode::ReadOnly));
+    TRY(Core::System::pledge("stdio"));
 
     auto pos = find_seek_pos(*f, line_count);
     return tail_from_pos(*f, pos, follow);

@@ -12,7 +12,7 @@ if [ "$#" -eq "1" ]; then
             '*.h' \
             ':!:Base' \
             ':!:Kernel/FileSystem/ext2_fs.h' \
-            ':!:Userland/DevTools/HackStudio/LanguageServers/Cpp/Tests/*' \
+            ':!:Userland/Libraries/LibCodeComprehension/Cpp/Tests/*' \
             ':!:Userland/Libraries/LibCpp/Tests/parser/*' \
             ':!:Userland/Libraries/LibCpp/Tests/preprocessor/*'
     )
@@ -26,18 +26,21 @@ else
 fi
 
 if (( ${#files[@]} )); then
+    TOOLCHAIN_DIR=Toolchain/Local/clang/bin
     CLANG_FORMAT=false
-    if command -v clang-format-11 >/dev/null 2>&1 ; then
-        CLANG_FORMAT=clang-format-11
+    if command -v clang-format-14 >/dev/null 2>&1 ; then
+        CLANG_FORMAT=clang-format-14
+    elif command -v $TOOLCHAIN_DIR/clang-format >/dev/null 2>&1 && $TOOLCHAIN_DIR/clang-format --version | grep -qF ' 14.' ; then
+        CLANG_FORMAT=$TOOLCHAIN_DIR/clang-format
     elif command -v clang-format >/dev/null 2>&1 ; then
         CLANG_FORMAT=clang-format
-        if ! "${CLANG_FORMAT}" --version | awk '{ if (substr($NF, 1, index($NF, ".") - 1) < 11) exit 1; }'; then
-            echo "You are using '$("${CLANG_FORMAT}" --version)', which appears to not be clang-format 11 or later."
+        if ! "${CLANG_FORMAT}" --version | awk '{ if (substr($NF, 1, index($NF, ".") - 1) < 14) exit 1; }'; then
+            echo "You are using '$("${CLANG_FORMAT}" --version)', which appears to not be clang-format 14 or later."
             echo "It is very likely that the resulting changes are not what you wanted."
         fi
     else
-        echo "clang-format-11 is not available, but C or C++ files need linting! Either skip this script, or install clang-format-11."
-        echo "(If you install a package 'clang-format', please make sure it's version 11 or later.)"
+        echo "clang-format-14 is not available, but C or C++ files need linting! Either skip this script, or install clang-format-14."
+        echo "(If you install a package 'clang-format', please make sure it's version 14 or later.)"
         exit 1
     fi
 

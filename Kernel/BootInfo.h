@@ -6,10 +6,13 @@
 
 #pragma once
 
-#include <Kernel/Arch/x86/PageDirectory.h>
 #include <Kernel/Multiboot.h>
 #include <Kernel/PhysicalAddress.h>
 #include <Kernel/VirtualAddress.h>
+
+namespace Kernel {
+class PageTableEntry;
+}
 
 extern "C" PhysicalAddress start_of_prekernel_image;
 extern "C" PhysicalAddress end_of_prekernel_image;
@@ -25,7 +28,7 @@ extern "C" PhysicalAddress boot_pdpt;
 extern "C" PhysicalAddress boot_pd0;
 extern "C" PhysicalAddress boot_pd_kernel;
 extern "C" Kernel::PageTableEntry* boot_pd_kernel_pt1023;
-extern "C" const char* kernel_cmdline;
+extern "C" char const* kernel_cmdline;
 extern "C" u32 multiboot_flags;
 extern "C" multiboot_memory_map_t* multiboot_memory_map;
 extern "C" size_t multiboot_memory_map_count;

@@ -14,8 +14,10 @@
 #include <Kernel/Panic.h>
 #include <Kernel/Sections.h>
 
-namespace Kernel {
-namespace PCI {
+namespace Kernel::PCI {
+
+READONLY_AFTER_INIT bool g_pci_access_io_probe_failed;
+READONLY_AFTER_INIT bool g_pci_access_is_disabled_from_commandline;
 
 static bool test_pci_io();
 
@@ -28,7 +30,7 @@ UNMAP_AFTER_INIT static PCIAccessLevel detect_optimal_access_type()
     if (boot_determined != PCIAccessLevel::IOAddressing)
         return boot_determined;
 
-    if (test_pci_io())
+    if (!g_pci_access_io_probe_failed)
         return PCIAccessLevel::IOAddressing;
 
     PANIC("No PCI bus access method detected!");
@@ -36,16 +38,20 @@ UNMAP_AFTER_INIT static PCIAccessLevel detect_optimal_access_type()
 
 UNMAP_AFTER_INIT void initialize()
 {
+    g_pci_access_io_probe_failed = !test_pci_io();
+    g_pci_access_is_disabled_from_commandline = kernel_command_line().is_pci_disabled();
+    if (g_pci_access_is_disabled_from_commandline || g_pci_access_io_probe_failed)
+        return;
     switch (detect_optimal_access_type()) {
     case PCIAccessLevel::MemoryAddressing: {
         auto mcfg = ACPI::Parser::the()->find_table("MCFG");
         VERIFY(mcfg.has_value());
-        auto success = Access::initialize_for_memory_access(mcfg.value());
+        auto success = Access::initialize_for_multiple_pci_domains(mcfg.value());
         VERIFY(success);
         break;
     }
     case PCIAccessLevel::IOAddressing: {
-        auto success = Access::initialize_for_io_access();
+        auto success = Access::initialize_for_one_pci_domain();
         VERIFY(success);
         break;
     }
@@ -55,9 +61,9 @@ UNMAP_AFTER_INIT void initialize()
 
     PCI::PCIBusSysFSDirectory::initialize();
 
-    PCI::enumerate([&](DeviceIdentifier const& device_identifier) {
+    MUST(PCI::enumerate([&](DeviceIdentifier const& device_identifier) {
         dmesgln("{} {}", device_identifier.address(), device_identifier.hardware_id());
-    });
+    }));
 }
 
 UNMAP_AFTER_INIT bool test_pci_io()
@@ -75,5 +81,4 @@ UNMAP_AFTER_INIT bool test_pci_io()
     return false;
 }
 
-}
 }

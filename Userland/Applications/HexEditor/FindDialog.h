@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2021, the SerenityOS developers.
+ * Copyright (c) 2021-2022, the SerenityOS developers.
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -7,7 +7,6 @@
 #pragma once
 
 #include <AK/Result.h>
-#include <AK/Vector.h>
 #include <LibGUI/Dialog.h>
 
 enum OptionId {
@@ -20,7 +19,7 @@ class FindDialog : public GUI::Dialog {
     C_OBJECT(FindDialog);
 
 public:
-    static int show(GUI::Window* parent_window, String& out_tex, ByteBuffer& out_buffer, bool& find_all);
+    static ExecResult show(GUI::Window* parent_window, String& out_tex, ByteBuffer& out_buffer, bool& find_all);
 
 private:
     Result<ByteBuffer, String> process_input(String text_value, OptionId opt);
@@ -30,7 +29,7 @@ private:
     bool find_all() const { return m_find_all; }
 
     FindDialog();
-    virtual ~FindDialog() override;
+    virtual ~FindDialog() override = default;
 
     RefPtr<GUI::TextEditor> m_text_editor;
     RefPtr<GUI::Button> m_find_button;

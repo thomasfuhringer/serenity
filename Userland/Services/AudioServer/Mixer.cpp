@@ -1,16 +1,16 @@
 /*
  * Copyright (c) 2018-2020, Andreas Kling <kling@serenityos.org>
- * Copyright (c) 2021, kleines Filmröllchen <malu.bertsch@gmail.com>
+ * Copyright (c) 2021, kleines Filmröllchen <filmroellchen@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #include "Mixer.h"
-#include "AK/Format.h"
 #include <AK/Array.h>
+#include <AK/Format.h>
 #include <AK/MemoryStream.h>
 #include <AK/NumericLimits.h>
-#include <AudioServer/ClientConnection.h>
+#include <AudioServer/ConnectionFromClient.h>
 #include <AudioServer/Mixer.h>
 #include <LibCore/ConfigFile.h>
 #include <LibCore/Timer.h>
@@ -23,7 +23,8 @@ namespace AudioServer {
 u8 Mixer::m_zero_filled_buffer[4096];
 
 Mixer::Mixer(NonnullRefPtr<Core::ConfigFile> config)
-    : m_device(Core::File::construct("/dev/audio", this))
+    // FIXME: Allow AudioServer to use other audio channels as well
+    : m_device(Core::File::construct("/dev/audio/0", this))
     , m_sound_thread(Threading::Thread::construct(
           [this] {
               mix();
@@ -43,11 +44,7 @@ Mixer::Mixer(NonnullRefPtr<Core::ConfigFile> config)
     m_sound_thread->start();
 }
 
-Mixer::~Mixer()
-{
-}
-
-NonnullRefPtr<ClientAudioStream> Mixer::create_queue(ClientConnection& client)
+NonnullRefPtr<ClientAudioStream> Mixer::create_queue(ConnectionFromClient& client)
 {
     auto queue = adopt_ref(*new ClientAudioStream(client));
     m_pending_mutex.lock();
@@ -97,6 +94,8 @@ void Mixer::mix()
                 Audio::Sample sample;
                 if (!queue->get_next_sample(sample))
                     break;
+                if (queue->is_muted())
+                    continue;
                 sample.log_multiply(SAMPLE_HEADROOM);
                 sample.log_multiply(queue->volume());
                 mixed_sample += sample;
@@ -146,7 +145,7 @@ void Mixer::set_main_volume(double volume)
     m_config->write_num_entry("Master", "Volume", static_cast<int>(volume * 100));
     request_setting_sync();
 
-    ClientConnection::for_each([&](ClientConnection& client) {
+    ConnectionFromClient::for_each([&](ConnectionFromClient& client) {
         client.did_change_main_mix_volume({}, main_volume());
     });
 }
@@ -160,8 +159,8 @@ void Mixer::set_muted(bool muted)
     m_config->write_bool_entry("Master", "Mute", m_muted);
     request_setting_sync();
 
-    ClientConnection::for_each([muted](ClientConnection& client) {
-        client.did_change_muted_state({}, muted);
+    ConnectionFromClient::for_each([muted](ConnectionFromClient& client) {
+        client.did_change_main_mix_muted_state({}, muted);
     });
 }
 
@@ -188,21 +187,17 @@ void Mixer::request_setting_sync()
         m_config_write_timer = Core::Timer::create_single_shot(
             AUDIO_CONFIG_WRITE_INTERVAL,
             [this] {
-                m_config->sync();
+                if (auto result = m_config->sync(); result.is_error())
+                    dbgln("Failed to write audio mixer config: {}", result.error());
             },
             this);
         m_config_write_timer->start();
     }
 }
 
-ClientAudioStream::ClientAudioStream(ClientConnection& client)
+ClientAudioStream::ClientAudioStream(ConnectionFromClient& client)
     : m_client(client)
 {
 }
 
-void ClientAudioStream::enqueue(NonnullRefPtr<Audio::Buffer>&& buffer)
-{
-    m_remaining_samples += buffer->sample_count();
-    m_queue.enqueue(move(buffer));
-}
 }

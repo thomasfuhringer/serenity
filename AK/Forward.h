@@ -33,6 +33,7 @@ class URL;
 class FlyString;
 class Utf16View;
 class Utf32View;
+class Utf8CodePointIterator;
 class Utf8View;
 class InputStream;
 class InputMemoryStream;
@@ -90,6 +91,9 @@ class Badge;
 template<typename T>
 class FixedArray;
 
+template<size_t precision, typename Underlying = i32>
+class FixedPoint;
+
 template<typename>
 class Function;
 
@@ -144,6 +148,7 @@ using AK::DuplexMemoryStream;
 using AK::Error;
 using AK::ErrorOr;
 using AK::FixedArray;
+using AK::FixedPoint;
 using AK::FlyString;
 using AK::Function;
 using AK::GenericLexer;
@@ -179,5 +184,6 @@ using AK::Traits;
 using AK::URL;
 using AK::Utf16View;
 using AK::Utf32View;
+using AK::Utf8CodePointIterator;
 using AK::Utf8View;
 using AK::Vector;

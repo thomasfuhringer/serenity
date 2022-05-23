@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2018-2021, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2022, the SerenityOS developers.
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -20,8 +21,9 @@
  *  [ ] switch to use tsc values for perf check
  *  [ ] handle mouse events differently for smoother painting (queue)
  *  [ ] handle fire bitmap edges better
-*/
+ */
 
+#include <AK/Array.h>
 #include <LibCore/ElapsedTimer.h>
 #include <LibCore/System.h>
 #include <LibGUI/Action.h>
@@ -40,11 +42,11 @@
 #include <time.h>
 #include <unistd.h>
 
-#define FIRE_WIDTH 320
-#define FIRE_HEIGHT 200
-#define FIRE_MAX 29
+static constexpr int FIRE_WIDTH = 320;
+static constexpr int FIRE_HEIGHT = 200;
+static constexpr int FIRE_MAX = 29;
 
-static const Color s_palette[] = {
+static constexpr Array<Color, 30> s_palette = {
     Color(0x07, 0x07, 0x07), Color(0x1F, 0x07, 0x07), Color(0x2F, 0x0F, 0x07),
     Color(0x47, 0x0F, 0x07), Color(0x57, 0x17, 0x07), Color(0x67, 0x1F, 0x07),
     Color(0x77, 0x1F, 0x07), Color(0x9F, 0x2F, 0x07), Color(0xAF, 0x3F, 0x07),
@@ -61,7 +63,7 @@ class Fire : public GUI::Frame {
     C_OBJECT(Fire);
 
 public:
-    virtual ~Fire() override;
+    virtual ~Fire() override = default;
     void set_stat_label(RefPtr<GUI::Label> l) { stats = l; };
 
 private:
@@ -107,11 +109,7 @@ Fire::Fire()
         bitmap->scanline_u8(bitmap->height() - 1)[i] = FIRE_MAX;
 
     /* Set off initital paint event */
-    //update();
-}
-
-Fire::~Fire()
-{
+    // update();
 }
 
 void Fire::paint_event(GUI::PaintEvent& event)
@@ -176,9 +174,9 @@ void Fire::mousedown_event(GUI::MouseEvent& event)
 void Fire::mousemove_event(GUI::MouseEvent& event)
 {
     if (dragging) {
-        if (event.y() >= 2 && event.y() < 398 && event.x() <= 638) {
-            int ypos = event.y() / 2;
-            int xpos = event.x() / 2;
+        int ypos = event.y() / 2;
+        int xpos = event.x() / 2;
+        if (bitmap->rect().shrunken(1, 1, 0, 0).contains(xpos, ypos)) {
             bitmap->scanline_u8(ypos - 1)[xpos] = FIRE_MAX + 5;
             bitmap->scanline_u8(ypos - 1)[xpos + 1] = FIRE_MAX + 5;
             bitmap->scanline_u8(ypos)[xpos] = FIRE_MAX + 5;

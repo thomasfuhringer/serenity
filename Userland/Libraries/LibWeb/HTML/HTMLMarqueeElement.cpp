@@ -8,14 +8,12 @@
 
 namespace Web::HTML {
 
-HTMLMarqueeElement::HTMLMarqueeElement(DOM::Document& document, QualifiedName qualified_name)
+HTMLMarqueeElement::HTMLMarqueeElement(DOM::Document& document, DOM::QualifiedName qualified_name)
     : HTMLElement(document, move(qualified_name))
 {
 }
 
-HTMLMarqueeElement::~HTMLMarqueeElement()
-{
-}
+HTMLMarqueeElement::~HTMLMarqueeElement() = default;
 
 void HTMLMarqueeElement::apply_presentational_hints(CSS::StyleProperties& style) const
 {

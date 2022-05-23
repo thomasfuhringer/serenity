@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2020, Matthew Olsson <mattco@serenityos.org>
- * Copyright (c) 2021, Sam Atkins <atkinssj@serenityos.org>
+ * Copyright (c) 2021-2022, Sam Atkins <atkinssj@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -18,18 +18,13 @@ class SVGGraphicsElement : public SVGElement {
 public:
     using WrapperType = Bindings::SVGGraphicsElementWrapper;
 
-    SVGGraphicsElement(DOM::Document&, QualifiedName);
+    SVGGraphicsElement(DOM::Document&, DOM::QualifiedName);
 
-    virtual void parse_attribute(FlyString const& name, String const& value) override;
+    virtual void apply_presentational_hints(CSS::StyleProperties&) const override;
 
     Optional<Gfx::Color> fill_color() const;
     Optional<Gfx::Color> stroke_color() const;
     Optional<float> stroke_width() const;
-
-protected:
-    Optional<Gfx::Color> m_fill_color;
-    Optional<Gfx::Color> m_stroke_color;
-    Optional<float> m_stroke_width;
 };
 
 }

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2021, Tim Flynn <trflynn89@pm.me>
+ * Copyright (c) 2021, Tim Flynn <trflynn89@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -24,13 +24,13 @@ struct ParsedCookie {
     bool http_only_attribute_present { false };
 };
 
-Optional<ParsedCookie> parse_cookie(const String& cookie_string);
+Optional<ParsedCookie> parse_cookie(String const& cookie_string);
 
 }
 
 namespace IPC {
 
-bool encode(IPC::Encoder&, const Web::Cookie::ParsedCookie&);
-ErrorOr<void> decode(IPC::Decoder&, Web::Cookie::ParsedCookie&);
+bool encode(Encoder&, Web::Cookie::ParsedCookie const&);
+ErrorOr<void> decode(Decoder&, Web::Cookie::ParsedCookie&);
 
 }

@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2018-2020, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2022, the SerenityOS developers.
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -16,13 +17,14 @@ class Label : public Frame {
     C_OBJECT(Label);
 
 public:
-    virtual ~Label() override;
+    virtual ~Label() override = default;
 
     String text() const { return m_text; }
     void set_text(String);
 
-    void set_icon(const Gfx::Bitmap*);
-    const Gfx::Bitmap* icon() const { return m_icon.ptr(); }
+    void set_icon(Gfx::Bitmap const*);
+    void set_icon_from_path(String const&);
+    Gfx::Bitmap const* icon() const { return m_icon.ptr(); }
     Gfx::Bitmap* icon() { return m_icon.ptr(); }
 
     Gfx::TextAlignment text_alignment() const { return m_text_alignment; }
@@ -35,7 +37,7 @@ public:
     void set_should_stretch_icon(bool b) { m_should_stretch_icon = b; }
 
     bool is_autosize() const { return m_autosize; }
-    void set_autosize(bool);
+    void set_autosize(bool, size_t padding = 0);
 
     int preferred_height() const;
 
@@ -56,6 +58,7 @@ private:
     Gfx::TextWrapping m_text_wrapping { Gfx::TextWrapping::Wrap };
     bool m_should_stretch_icon { false };
     bool m_autosize { false };
+    size_t m_autosize_padding { 0 };
 };
 
 }

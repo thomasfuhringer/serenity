@@ -8,13 +8,11 @@
 
 namespace Web::HTML {
 
-HTMLSlotElement::HTMLSlotElement(DOM::Document& document, QualifiedName qualified_name)
+HTMLSlotElement::HTMLSlotElement(DOM::Document& document, DOM::QualifiedName qualified_name)
     : HTMLElement(document, move(qualified_name))
 {
 }
 
-HTMLSlotElement::~HTMLSlotElement()
-{
-}
+HTMLSlotElement::~HTMLSlotElement() = default;
 
 }

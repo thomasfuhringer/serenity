@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2021, Linus Groh <linusg@serenityos.org>
+ * Copyright (c) 2021-2022, Linus Groh <linusg@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -50,7 +50,7 @@ ThrowCompletionOr<Object*> CalendarConstructor::construct(FunctionObject& new_ta
     // 2. Set id to ? ToString(id).
     auto identifier = TRY(vm.argument(0).to_string(global_object));
 
-    // 3. If ! IsBuiltinCalendar(id) is false, then
+    // 3. If IsBuiltinCalendar(id) is false, then
     if (!is_builtin_calendar(identifier)) {
         // a. Throw a RangeError exception.
         return vm.throw_completion<RangeError>(global_object, ErrorType::TemporalInvalidCalendarIdentifier, identifier);
@@ -60,13 +60,13 @@ ThrowCompletionOr<Object*> CalendarConstructor::construct(FunctionObject& new_ta
     return TRY(create_temporal_calendar(global_object, identifier, &new_target));
 }
 
-// 12.3.2 Temporal.Calendar.from ( item ), https://tc39.es/proposal-temporal/#sec-temporal.calendar.from
+// 12.3.2 Temporal.Calendar.from ( calendarLike ), https://tc39.es/proposal-temporal/#sec-temporal.calendar.from
 JS_DEFINE_NATIVE_FUNCTION(CalendarConstructor::from)
 {
-    auto item = vm.argument(0);
+    auto calendar_like = vm.argument(0);
 
-    // 1. Return ? ToTemporalCalendar(item).
-    return TRY(to_temporal_calendar(global_object, item));
+    // 1. Return ? ToTemporalCalendar(calendarLike).
+    return TRY(to_temporal_calendar(global_object, calendar_like));
 }
 
 }

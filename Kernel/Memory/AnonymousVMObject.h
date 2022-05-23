@@ -29,7 +29,7 @@ public:
     PageFaultResponse handle_cow_fault(size_t, VirtualAddress);
     size_t cow_pages() const;
     bool should_cow(size_t page_index, bool) const;
-    void set_should_cow(size_t page_index, bool);
+    ErrorOr<void> set_should_cow(size_t page_index, bool);
 
     bool is_purgeable() const { return m_purgeable; }
     bool is_volatile() const { return m_volatile; }
@@ -41,10 +41,12 @@ public:
 private:
     class SharedCommittedCowPages;
 
-    explicit AnonymousVMObject(size_t, AllocationStrategy, Optional<CommittedPhysicalPageSet>);
-    explicit AnonymousVMObject(PhysicalAddress, size_t);
-    explicit AnonymousVMObject(Span<NonnullRefPtr<PhysicalPage>>);
-    explicit AnonymousVMObject(AnonymousVMObject const&, NonnullRefPtr<SharedCommittedCowPages>);
+    static ErrorOr<NonnullRefPtr<AnonymousVMObject>> try_create_with_shared_cow(AnonymousVMObject const&, NonnullRefPtr<SharedCommittedCowPages>, FixedArray<RefPtr<PhysicalPage>>&&);
+
+    explicit AnonymousVMObject(FixedArray<RefPtr<PhysicalPage>>&&, AllocationStrategy, Optional<CommittedPhysicalPageSet>);
+    explicit AnonymousVMObject(PhysicalAddress, FixedArray<RefPtr<PhysicalPage>>&&);
+    explicit AnonymousVMObject(FixedArray<RefPtr<PhysicalPage>>&&);
+    explicit AnonymousVMObject(AnonymousVMObject const&, NonnullRefPtr<SharedCommittedCowPages>, FixedArray<RefPtr<PhysicalPage>>&&);
 
     virtual StringView class_name() const override { return "AnonymousVMObject"sv; }
 
@@ -54,8 +56,8 @@ private:
 
     virtual bool is_anonymous() const override { return true; }
 
-    Bitmap& ensure_cow_map();
-    void ensure_or_reset_cow_map();
+    ErrorOr<void> ensure_cow_map();
+    ErrorOr<void> ensure_or_reset_cow_map();
 
     Optional<CommittedPhysicalPageSet> m_unused_committed_pages;
     Bitmap m_cow_map;

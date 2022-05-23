@@ -1,17 +1,17 @@
 /*
- * Copyright (c) 2020, the SerenityOS developers.
+ * Copyright (c) 2020-2022, the SerenityOS developers.
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #pragma once
 
-#ifndef AWAVLOADER_DEBUG
-#cmakedefine01 AWAVLOADER_DEBUG
-#endif
-
 #ifndef AFLACLOADER_DEBUG
 #cmakedefine01 AFLACLOADER_DEBUG
+#endif
+
+#ifndef AWAVLOADER_DEBUG
+#cmakedefine01 AWAVLOADER_DEBUG
 #endif
 
 #ifndef BMP_DEBUG
@@ -26,12 +26,8 @@
 #cmakedefine01 CALLBACK_MACHINE_DEBUG
 #endif
 
-#ifndef CHTTPJOB_DEBUG
-#cmakedefine01 CHTTPJOB_DEBUG
-#endif
-
-#ifndef CNETWORKJOB_DEBUG
-#cmakedefine01 CNETWORKJOB_DEBUG
+#ifndef CANVAS_RENDERING_CONTEXT_2D_DEBUG
+#cmakedefine01 CANVAS_RENDERING_CONTEXT_2D_DEBUG
 #endif
 
 #ifndef COMPOSE_DEBUG
@@ -42,12 +38,12 @@
 #cmakedefine01 COPY_DEBUG
 #endif
 
-#ifndef CPP_LANGUAGE_SERVER_DEBUG
-#cmakedefine01 CPP_LANGUAGE_SERVER_DEBUG
-#endif
-
 #ifndef CPP_DEBUG
 #cmakedefine01 CPP_DEBUG
+#endif
+
+#ifndef CPP_LANGUAGE_SERVER_DEBUG
+#cmakedefine01 CPP_LANGUAGE_SERVER_DEBUG
 #endif
 
 #ifndef CRYPTO_DEBUG
@@ -82,12 +78,12 @@
 #cmakedefine01 DEFERRED_INVOKE_DEBUG
 #endif
 
-#ifndef DHCPV4CLIENT_DEBUG
-#cmakedefine01 DHCPV4CLIENT_DEBUG
-#endif
-
 #ifndef DHCPV4_DEBUG
 #cmakedefine01 DHCPV4_DEBUG
+#endif
+
+#ifndef DHCPV4CLIENT_DEBUG
+#cmakedefine01 DHCPV4CLIENT_DEBUG
 #endif
 
 #ifndef DIFF_DEBUG
@@ -100,6 +96,10 @@
 
 #ifndef DOUBLECLICK_DEBUG
 #cmakedefine01 DOUBLECLICK_DEBUG
+#endif
+
+#ifndef DRAG_DEBUG
+#cmakedefine01 DRAG_DEBUG
 #endif
 
 #ifndef DWARF_DEBUG
@@ -198,6 +198,10 @@
 #cmakedefine01 HTML_SCRIPT_DEBUG
 #endif
 
+#ifndef HTTPJOB_DEBUG
+#cmakedefine01 HTTPJOB_DEBUG
+#endif
+
 #ifndef HTTPSJOB_DEBUG
 #cmakedefine01 HTTPSJOB_DEBUG
 #endif
@@ -234,6 +238,10 @@
 #cmakedefine01 JS_BYTECODE_DEBUG
 #endif
 
+#ifndef JS_MODULE_DEBUG
+#cmakedefine01 JS_MODULE_DEBUG
+#endif
+
 #ifndef KEYBOARD_SHORTCUTS_DEBUG
 #cmakedefine01 KEYBOARD_SHORTCUTS_DEBUG
 #endif
@@ -244,6 +252,10 @@
 
 #ifndef LEXER_DEBUG
 #cmakedefine01 LEXER_DEBUG
+#endif
+
+#ifndef LIBWEB_CSS_DEBUG
+#cmakedefine01 LIBWEB_CSS_DEBUG
 #endif
 
 #ifndef LINE_EDITOR_DEBUG
@@ -294,6 +306,10 @@
 #cmakedefine01 MOVE_DEBUG
 #endif
 
+#ifndef NETWORKJOB_DEBUG
+#cmakedefine01 NETWORKJOB_DEBUG
+#endif
+
 #ifndef NT_DEBUG
 #cmakedefine01 NT_DEBUG
 #endif
@@ -302,8 +318,8 @@
 #cmakedefine01 OCCLUSIONS_DEBUG
 #endif
 
-#ifndef PARSER_DEBUG
-#cmakedefine01 PARSER_DEBUG
+#ifndef HTML_PARSER_DEBUG
+#cmakedefine01 HTML_PARSER_DEBUG
 #endif
 
 #ifndef PATH_DEBUG
@@ -338,6 +354,10 @@
 #cmakedefine01 REGEX_DEBUG
 #endif
 
+#ifndef REQUESTSERVER_DEBUG
+#cmakedefine01 REQUESTSERVER_DEBUG
+#endif
+
 #ifndef RESIZE_DEBUG
 #cmakedefine01 RESIZE_DEBUG
 #endif
@@ -364,6 +384,10 @@
 
 #ifndef SH_LANGUAGE_SERVER_DEBUG
 #cmakedefine01 SH_LANGUAGE_SERVER_DEBUG
+#endif
+
+#ifndef SHARED_QUEUE_DEBUG
+#cmakedefine01 SHARED_QUEUE_DEBUG
 #endif
 
 #ifndef SHELL_JOB_DEBUG
@@ -418,6 +442,10 @@
 #cmakedefine01 TLS_DEBUG
 #endif
 
+#ifndef TLS_SSL_KEYLOG_DEBUG
+#cmakedefine01 TLS_SSL_KEYLOG_DEBUG
+#endif
+
 #ifndef TOKENIZER_TRACE_DEBUG
 #cmakedefine01 TOKENIZER_TRACE_DEBUG
 #endif
@@ -432,6 +460,10 @@
 
 #ifndef URL_PARSER_DEBUG
 #cmakedefine01 URL_PARSER_DEBUG
+#endif
+
+#ifndef UTF8_DEBUG
+#cmakedefine01 UTF8_DEBUG
 #endif
 
 #ifndef WASM_BINPARSER_DEBUG
@@ -450,6 +482,10 @@
 #cmakedefine01 WEBSERVER_DEBUG
 #endif
 
+#ifndef WEB_WORKER_DEBUG
+#cmakedefine01 WEB_WORKER_DEBUG
+#endif
+
 #ifndef WINDOWMANAGER_DEBUG
 #cmakedefine01 WINDOWMANAGER_DEBUG
 #endif
@@ -464,4 +500,8 @@
 
 #ifndef WSSCREEN_DEBUG
 #cmakedefine01 WSSCREEN_DEBUG
+#endif
+
+#ifndef XML_PARSER_DEBUG
+#cmakedefine01 XML_PARSER_DEBUG
 #endif

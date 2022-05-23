@@ -8,23 +8,27 @@
 
 #include <AK/Vector.h>
 #include <LibGfx/Color.h>
+#include <LibGfx/Rect.h>
 
 namespace Web {
 
 class SVGContext {
 public:
-    SVGContext()
+    SVGContext(Gfx::FloatRect svg_element_bounds)
+        : m_svg_element_bounds(svg_element_bounds)
     {
         m_states.append(State());
     }
 
-    const Gfx::Color& fill_color() const { return state().fill_color; }
-    const Gfx::Color& stroke_color() const { return state().stroke_color; }
+    Gfx::Color const& fill_color() const { return state().fill_color; }
+    Gfx::Color const& stroke_color() const { return state().stroke_color; }
     float stroke_width() const { return state().stroke_width; }
 
     void set_fill_color(Gfx::Color color) { state().fill_color = color; }
     void set_stroke_color(Gfx::Color color) { state().stroke_color = color; }
     void set_stroke_width(float width) { state().stroke_width = width; }
+
+    Gfx::FloatPoint svg_element_position() const { return m_svg_element_bounds.top_left(); }
 
     void save() { m_states.append(m_states.last()); }
     void restore() { m_states.take_last(); }
@@ -36,9 +40,10 @@ private:
         float stroke_width { 1.0 };
     };
 
-    const State& state() const { return m_states.last(); }
+    State const& state() const { return m_states.last(); }
     State& state() { return m_states.last(); }
 
+    Gfx::FloatRect m_svg_element_bounds;
     Vector<State> m_states;
 };
 

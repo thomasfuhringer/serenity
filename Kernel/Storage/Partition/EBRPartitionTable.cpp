@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2020, Liav A. <liavalb@hotmail.co.il>
+ * Copyright (c) 2020-2022, Liav A. <liavalb@hotmail.co.il>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -9,17 +9,17 @@
 
 namespace Kernel {
 
-Result<NonnullOwnPtr<EBRPartitionTable>, PartitionTable::Error> EBRPartitionTable::try_to_initialize(const StorageDevice& device)
+ErrorOr<NonnullOwnPtr<EBRPartitionTable>> EBRPartitionTable::try_to_initialize(StorageDevice const& device)
 {
-    auto table = make<EBRPartitionTable>(device);
+    auto table = TRY(adopt_nonnull_own_or_enomem(new (nothrow) EBRPartitionTable(device)));
     if (table->is_protective_mbr())
-        return { PartitionTable::Error::MBRProtective };
+        return Error::from_errno(ENOTSUP);
     if (!table->is_valid())
-        return { PartitionTable::Error::Invalid };
+        return Error::from_errno(EINVAL);
     return table;
 }
 
-void EBRPartitionTable::search_extended_partition(const StorageDevice& device, MBRPartitionTable& checked_ebr, u64 current_block_offset, size_t limit)
+void EBRPartitionTable::search_extended_partition(StorageDevice const& device, MBRPartitionTable& checked_ebr, u64 current_block_offset, size_t limit)
 {
     if (limit == 0)
         return;
@@ -39,7 +39,7 @@ void EBRPartitionTable::search_extended_partition(const StorageDevice& device, M
     search_extended_partition(device, *next_ebr, current_block_offset, (limit - 1));
 }
 
-EBRPartitionTable::EBRPartitionTable(const StorageDevice& device)
+EBRPartitionTable::EBRPartitionTable(StorageDevice const& device)
     : MBRPartitionTable(device)
 {
     if (!is_header_valid())
@@ -64,12 +64,10 @@ EBRPartitionTable::EBRPartitionTable(const StorageDevice& device)
         if (entry.offset == 0x00) {
             continue;
         }
-        m_partitions.empend(entry.offset, (entry.offset + entry.length), entry.type);
+        MUST(m_partitions.try_empend(entry.offset, (entry.offset + entry.length), entry.type));
     }
 }
 
-EBRPartitionTable::~EBRPartitionTable()
-{
-}
+EBRPartitionTable::~EBRPartitionTable() = default;
 
 }

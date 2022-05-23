@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2020, Hüseyin Aslıtürk <asliturk@hotmail.com>
+ * Copyright (c) 2022, the SerenityOS developers.
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -27,11 +28,7 @@ ImageWidget::ImageWidget(StringView)
     REGISTER_BOOL_PROPERTY("should_stretch", should_stretch, set_should_stretch);
 }
 
-ImageWidget::~ImageWidget()
-{
-}
-
-void ImageWidget::set_bitmap(const Gfx::Bitmap* bitmap)
+void ImageWidget::set_bitmap(Gfx::Bitmap const* bitmap)
 {
     if (m_bitmap == bitmap)
         return;

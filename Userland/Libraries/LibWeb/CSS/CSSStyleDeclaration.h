@@ -13,8 +13,13 @@
 
 namespace Web::CSS {
 
+enum class Important {
+    No,
+    Yes,
+};
+
 struct StyleProperty {
-    bool important { false };
+    Important important { Important::No };
     CSS::PropertyID property_id;
     NonnullRefPtr<StyleValue> value;
     String custom_name {};
@@ -26,17 +31,21 @@ class CSSStyleDeclaration
 public:
     using WrapperType = Bindings::CSSStyleDeclarationWrapper;
 
-    virtual ~CSSStyleDeclaration();
+    virtual ~CSSStyleDeclaration() = default;
 
     virtual size_t length() const = 0;
     virtual String item(size_t index) const = 0;
 
     virtual Optional<StyleProperty> property(PropertyID) const = 0;
-    virtual bool set_property(PropertyID, StringView css_text) = 0;
 
-    void set_property(StringView property_name, StringView css_text);
+    virtual DOM::ExceptionOr<void> set_property(PropertyID, StringView css_text, StringView priority = "") = 0;
+    virtual DOM::ExceptionOr<String> remove_property(PropertyID) = 0;
+
+    DOM::ExceptionOr<void> set_property(StringView property_name, StringView css_text, StringView priority);
+    DOM::ExceptionOr<String> remove_property(StringView property_name);
 
     String get_property_value(StringView property) const;
+    String get_property_priority(StringView property) const;
 
     String css_text() const;
     void set_css_text(StringView);
@@ -44,7 +53,7 @@ public:
     virtual String serialized() const = 0;
 
 protected:
-    CSSStyleDeclaration() { }
+    CSSStyleDeclaration() = default;
 };
 
 class PropertyOwningCSSStyleDeclaration : public CSSStyleDeclaration {
@@ -56,16 +65,19 @@ public:
         return adopt_ref(*new PropertyOwningCSSStyleDeclaration(move(properties), move(custom_properties)));
     }
 
-    virtual ~PropertyOwningCSSStyleDeclaration() override;
+    virtual ~PropertyOwningCSSStyleDeclaration() override = default;
 
     virtual size_t length() const override;
     virtual String item(size_t index) const override;
 
     virtual Optional<StyleProperty> property(PropertyID) const override;
-    virtual bool set_property(PropertyID, StringView css_text) override;
 
-    const Vector<StyleProperty>& properties() const { return m_properties; }
-    Optional<StyleProperty> custom_property(const String& custom_property_name) const { return m_custom_properties.get(custom_property_name); }
+    virtual DOM::ExceptionOr<void> set_property(PropertyID, StringView css_text, StringView priority) override;
+    virtual DOM::ExceptionOr<String> remove_property(PropertyID) override;
+
+    Vector<StyleProperty> const& properties() const { return m_properties; }
+    HashMap<String, StyleProperty> const& custom_properties() const { return m_custom_properties; }
+    Optional<StyleProperty> custom_property(String const& custom_property_name) const { return m_custom_properties.get(custom_property_name); }
     size_t custom_property_count() const { return m_custom_properties.size(); }
 
     virtual String serialized() const final override;
@@ -73,25 +85,34 @@ public:
 protected:
     explicit PropertyOwningCSSStyleDeclaration(Vector<StyleProperty>, HashMap<String, StyleProperty>);
 
+    virtual void update_style_attribute() { }
+
 private:
+    bool set_a_css_declaration(PropertyID, NonnullRefPtr<StyleValue>, Important);
+
     Vector<StyleProperty> m_properties;
     HashMap<String, StyleProperty> m_custom_properties;
 };
 
 class ElementInlineCSSStyleDeclaration final : public PropertyOwningCSSStyleDeclaration {
 public:
-    static NonnullRefPtr<ElementInlineCSSStyleDeclaration> create(DOM::Element& element) { return adopt_ref(*new ElementInlineCSSStyleDeclaration(element)); }
-    static NonnullRefPtr<ElementInlineCSSStyleDeclaration> create_and_take_properties_from(DOM::Element& element, PropertyOwningCSSStyleDeclaration& declaration) { return adopt_ref(*new ElementInlineCSSStyleDeclaration(element, declaration)); }
-    virtual ~ElementInlineCSSStyleDeclaration() override;
+    static NonnullRefPtr<ElementInlineCSSStyleDeclaration> create(DOM::Element& element, Vector<StyleProperty> properties, HashMap<String, StyleProperty> custom_properties) { return adopt_ref(*new ElementInlineCSSStyleDeclaration(element, move(properties), move(custom_properties))); }
+    virtual ~ElementInlineCSSStyleDeclaration() override = default;
 
     DOM::Element* element() { return m_element.ptr(); }
     const DOM::Element* element() const { return m_element.ptr(); }
 
+    bool is_updating() const { return m_updating; }
+
 private:
-    explicit ElementInlineCSSStyleDeclaration(DOM::Element&);
-    explicit ElementInlineCSSStyleDeclaration(DOM::Element&, PropertyOwningCSSStyleDeclaration&);
+    explicit ElementInlineCSSStyleDeclaration(DOM::Element&, Vector<StyleProperty> properties, HashMap<String, StyleProperty> custom_properties);
+
+    virtual void update_style_attribute() override;
 
     WeakPtr<DOM::Element> m_element;
+
+    // https://drafts.csswg.org/cssom/#cssstyledeclaration-updating-flag
+    bool m_updating { false };
 };
 
 }

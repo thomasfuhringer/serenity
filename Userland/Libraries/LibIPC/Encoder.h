@@ -8,6 +8,7 @@
 
 #include <AK/Concepts.h>
 #include <AK/StdLibExtras.h>
+#include <LibCore/SharedCircularQueue.h>
 #include <LibIPC/Forward.h>
 #include <LibIPC/Message.h>
 
@@ -57,12 +58,30 @@ public:
         return *this;
     }
 
+    template<typename K, typename V>
+    Encoder& operator<<(OrderedHashMap<K, V> const& hashmap)
+    {
+        *this << (u32)hashmap.size();
+        for (auto it : hashmap) {
+            *this << it.key;
+            *this << it.value;
+        }
+        return *this;
+    }
+
     template<typename T>
     Encoder& operator<<(Vector<T> const& vector)
     {
         *this << (u64)vector.size();
         for (auto& value : vector)
             *this << value;
+        return *this;
+    }
+
+    template<typename T, size_t Size>
+    Encoder& operator<<(Core::SharedSingleProducerCircularQueue<T, Size> const& queue)
+    {
+        *this << IPC::File(queue.fd());
         return *this;
     }
 

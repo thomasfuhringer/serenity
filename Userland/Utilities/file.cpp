@@ -10,20 +10,22 @@
 #include <LibCore/FileStream.h>
 #include <LibCore/MappedFile.h>
 #include <LibCore/MimeData.h>
+#include <LibCore/System.h>
 #include <LibELF/Image.h>
 #include <LibELF/Validation.h>
 #include <LibGfx/ImageDecoder.h>
+#include <LibMain/Main.h>
 #include <stdio.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
-static Optional<String> description_only(String description, [[maybe_unused]] const String& path)
+static Optional<String> description_only(String description, [[maybe_unused]] String const& path)
 {
     return description;
 }
 
 // FIXME: Ideally Gfx::ImageDecoder could tell us the image type directly.
-static Optional<String> image_details(const String& description, const String& path)
+static Optional<String> image_details(String const& description, String const& path)
 {
     auto file_or_error = Core::MappedFile::map(path);
     if (file_or_error.is_error())
@@ -37,7 +39,7 @@ static Optional<String> image_details(const String& description, const String& p
     return String::formatted("{}, {} x {}", description, image_decoder->width(), image_decoder->height());
 }
 
-static Optional<String> gzip_details(String description, const String& path)
+static Optional<String> gzip_details(String description, String const& path)
 {
     auto file_or_error = Core::MappedFile::map(path);
     if (file_or_error.is_error())
@@ -54,7 +56,7 @@ static Optional<String> gzip_details(String description, const String& path)
     return String::formatted("{}, {}", description, gzip_details.value());
 }
 
-static Optional<String> elf_details(String description, const String& path)
+static Optional<String> elf_details(String description, String const& path)
 {
     auto file_or_error = Core::MappedFile::map(path);
     if (file_or_error.is_error())
@@ -65,9 +67,11 @@ static Optional<String> elf_details(String description, const String& path)
     if (!elf_image.is_valid())
         return {};
 
-    String interpreter_path;
-    if (!ELF::validate_program_headers(*(const ElfW(Ehdr)*)elf_data.data(), elf_data.size(), (const u8*)elf_data.data(), elf_data.size(), &interpreter_path))
+    StringBuilder interpreter_path_builder;
+    auto result_or_error = ELF::validate_program_headers(*(const ElfW(Ehdr)*)elf_data.data(), elf_data.size(), elf_data, &interpreter_path_builder);
+    if (result_or_error.is_error() || !result_or_error.value())
         return {};
+    auto interpreter_path = interpreter_path_builder.string_view();
 
     auto& header = *reinterpret_cast<const ElfW(Ehdr)*>(elf_data.data());
 
@@ -119,10 +123,11 @@ static Optional<String> elf_details(String description, const String& path)
     __ENUMERATE_MIME_TYPE_DESCRIPTION("image/x-portable-bitmap", "PBM image data", image_details)                   \
     __ENUMERATE_MIME_TYPE_DESCRIPTION("image/x-portable-graymap", "PGM image data", image_details)                  \
     __ENUMERATE_MIME_TYPE_DESCRIPTION("image/x-portable-pixmap", "PPM image data", image_details)                   \
+    __ENUMERATE_MIME_TYPE_DESCRIPTION("image/x-qoi", "QOI image data", image_details)                               \
     __ENUMERATE_MIME_TYPE_DESCRIPTION("text/markdown", "Markdown document", description_only)                       \
     __ENUMERATE_MIME_TYPE_DESCRIPTION("text/x-shellscript", "POSIX shell script text executable", description_only)
 
-static Optional<String> get_description_from_mime_type(const String& mime, const String& path)
+static Optional<String> get_description_from_mime_type(String const& mime, String const& path)
 {
 #define __ENUMERATE_MIME_TYPE_DESCRIPTION(mime_type, description, details) \
     if (String(mime_type) == mime)                                         \
@@ -132,37 +137,31 @@ static Optional<String> get_description_from_mime_type(const String& mime, const
     return {};
 }
 
-int main(int argc, char** argv)
+ErrorOr<int> serenity_main(Main::Arguments arguments)
 {
-    if (pledge("stdio rpath", nullptr) < 0) {
-        perror("pledge");
-        return 1;
-    }
+    TRY(Core::System::pledge("stdio rpath"));
 
-    Vector<const char*> paths;
+    Vector<String> paths;
     bool flag_mime_only = false;
 
     Core::ArgsParser args_parser;
     args_parser.set_general_help("Determine type of files");
     args_parser.add_option(flag_mime_only, "Only print mime type", "mime-type", 'I');
     args_parser.add_positional_argument(paths, "Files to identify", "files", Core::ArgsParser::Required::Yes);
-    args_parser.parse(argc, argv);
+    args_parser.parse(arguments);
 
     bool all_ok = true;
 
     for (auto path : paths) {
-        auto file = Core::File::construct(path);
-        if (!file->open(Core::OpenMode::ReadOnly)) {
-            perror(path);
+        auto file_or_error = Core::File::open(path, Core::OpenMode::ReadOnly);
+        if (file_or_error.is_error()) {
+            perror(path.characters());
             all_ok = false;
             continue;
         }
+        auto file = file_or_error.release_value();
 
-        struct stat file_stat;
-        if (lstat(path, &file_stat) < 0) {
-            perror("lstat");
-            return 1;
-        }
+        struct stat file_stat = TRY(Core::System::lstat(path));
 
         auto file_size_in_bytes = file_stat.st_size;
         if (file->is_directory()) {

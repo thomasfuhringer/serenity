@@ -33,11 +33,6 @@ private:
 
     RefPtr<TmpFSInode> m_root_inode;
 
-    HashMap<InodeIndex, NonnullRefPtr<TmpFSInode>> m_inodes;
-    ErrorOr<NonnullRefPtr<Inode>> get_inode(InodeIdentifier identifier) const;
-    void register_inode(TmpFSInode&);
-    void unregister_inode(InodeIdentifier);
-
     unsigned m_next_inode_index { 1 };
     unsigned next_inode_index();
 };
@@ -49,7 +44,7 @@ public:
     virtual ~TmpFSInode() override;
 
     TmpFS& fs() { return static_cast<TmpFS&>(Inode::fs()); }
-    const TmpFS& fs() const { return static_cast<const TmpFS&>(Inode::fs()); }
+    TmpFS const& fs() const { return static_cast<TmpFS const&>(Inode::fs()); }
 
     // ^Inode
     virtual ErrorOr<size_t> read_bytes(off_t, size_t, UserOrKernelBuffer& buffer, OpenFileDescription*) const override;
@@ -57,7 +52,7 @@ public:
     virtual ErrorOr<void> traverse_as_directory(Function<ErrorOr<void>(FileSystem::DirectoryEntryView const&)>) const override;
     virtual ErrorOr<NonnullRefPtr<Inode>> lookup(StringView name) override;
     virtual ErrorOr<void> flush_metadata() override;
-    virtual ErrorOr<size_t> write_bytes(off_t, size_t, const UserOrKernelBuffer& buffer, OpenFileDescription*) override;
+    virtual ErrorOr<size_t> write_bytes(off_t, size_t, UserOrKernelBuffer const& buffer, OpenFileDescription*) override;
     virtual ErrorOr<NonnullRefPtr<Inode>> create_child(StringView name, mode_t, dev_t, UserID, GroupID) override;
     virtual ErrorOr<void> add_child(Inode&, StringView name, mode_t) override;
     virtual ErrorOr<void> remove_child(StringView name) override;
@@ -67,13 +62,11 @@ public:
     virtual ErrorOr<void> set_atime(time_t) override;
     virtual ErrorOr<void> set_ctime(time_t) override;
     virtual ErrorOr<void> set_mtime(time_t) override;
-    virtual void one_ref_left() override;
 
 private:
-    TmpFSInode(TmpFS& fs, const InodeMetadata& metadata, InodeIdentifier parent);
-    static ErrorOr<NonnullRefPtr<TmpFSInode>> try_create(TmpFS&, InodeMetadata const& metadata, InodeIdentifier parent);
+    TmpFSInode(TmpFS& fs, InodeMetadata const& metadata, WeakPtr<TmpFSInode> parent);
+    static ErrorOr<NonnullRefPtr<TmpFSInode>> try_create(TmpFS&, InodeMetadata const& metadata, WeakPtr<TmpFSInode> parent);
     static ErrorOr<NonnullRefPtr<TmpFSInode>> try_create_root(TmpFS&);
-    void notify_watchers();
 
     struct Child {
         NonnullOwnPtr<KString> name;
@@ -85,7 +78,7 @@ private:
     Child* find_child_by_name(StringView);
 
     InodeMetadata m_metadata;
-    InodeIdentifier m_parent;
+    WeakPtr<TmpFSInode> m_parent;
 
     OwnPtr<KBuffer> m_content;
 

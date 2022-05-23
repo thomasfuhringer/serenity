@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2018-2020, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2022, the SerenityOS developers.
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -36,7 +37,7 @@ private:
         if (!is_focused())
             set_focus(true);
         if (on_mousewheel)
-            on_mousewheel(event.wheel_delta());
+            on_mousewheel(event.wheel_delta_y());
     }
 
     virtual void keydown_event(KeyEvent& event) override
@@ -137,16 +138,14 @@ ComboBox::ComboBox()
     };
 }
 
-ComboBox::~ComboBox()
-{
-}
+ComboBox::~ComboBox() = default;
 
 void ComboBox::set_editor_placeholder(StringView placeholder)
 {
     m_editor->set_placeholder(placeholder);
 }
 
-const String& ComboBox::editor_placeholder() const
+String const& ComboBox::editor_placeholder() const
 {
     return m_editor->placeholder();
 }
@@ -171,7 +170,7 @@ void ComboBox::navigate_relative(int delta)
         on_change(m_editor->text(), current_selected);
 }
 
-void ComboBox::selection_updated(const ModelIndex& index)
+void ComboBox::selection_updated(ModelIndex const& index)
 {
     if (index.is_valid())
         m_selected_index = index;
@@ -275,9 +274,9 @@ String ComboBox::text() const
     return m_editor->text();
 }
 
-void ComboBox::set_text(const String& text)
+void ComboBox::set_text(String const& text, AllowCallback allow_callback)
 {
-    m_editor->set_text(text);
+    m_editor->set_text(text, allow_callback);
 }
 
 void ComboBox::set_only_allow_values_from_model(bool b)
@@ -293,7 +292,7 @@ Model* ComboBox::model()
     return m_list_view->model();
 }
 
-const Model* ComboBox::model() const
+Model const* ComboBox::model() const
 {
     return m_list_view->model();
 }

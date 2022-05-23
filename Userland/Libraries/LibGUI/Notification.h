@@ -11,32 +11,32 @@
 
 namespace GUI {
 
-class NotificationServerConnection;
+class ConnectionToNotificationServer;
 
 class Notification : public Core::Object {
     C_OBJECT(Notification);
 
-    friend class NotificationServerConnection;
+    friend class ConnectionToNotificationServer;
 
 public:
     virtual ~Notification() override;
 
-    const String& text() const { return m_text; }
-    void set_text(const String& text)
+    String const& text() const { return m_text; }
+    void set_text(String const& text)
     {
         m_text_dirty = true;
         m_text = text;
     }
 
-    const String& title() const { return m_title; }
-    void set_title(const String& title)
+    String const& title() const { return m_title; }
+    void set_title(String const& title)
     {
         m_title_dirty = true;
         m_title = title;
     }
 
-    const Gfx::Bitmap* icon() const { return m_icon; }
-    void set_icon(const Gfx::Bitmap* icon)
+    Gfx::Bitmap const* icon() const { return m_icon; }
+    void set_icon(Gfx::Bitmap const* icon)
     {
         m_icon_dirty = true;
         m_icon = icon;
@@ -62,7 +62,7 @@ private:
 
     bool m_destroyed { false };
     bool m_shown { false };
-    RefPtr<NotificationServerConnection> m_connection;
+    RefPtr<ConnectionToNotificationServer> m_connection;
 };
 
 }

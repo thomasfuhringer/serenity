@@ -25,7 +25,7 @@ template<typename T>
 class WeakPtr;
 
 template<typename T>
-class NonnullOwnPtr {
+class [[nodiscard]] NonnullOwnPtr {
 public:
     using ElementType = T;
 
@@ -57,25 +57,25 @@ public:
 #endif
     }
 
-    NonnullOwnPtr(const NonnullOwnPtr&) = delete;
+    NonnullOwnPtr(NonnullOwnPtr const&) = delete;
     template<typename U>
-    NonnullOwnPtr(const NonnullOwnPtr<U>&) = delete;
-    NonnullOwnPtr& operator=(const NonnullOwnPtr&) = delete;
+    NonnullOwnPtr(NonnullOwnPtr<U> const&) = delete;
+    NonnullOwnPtr& operator=(NonnullOwnPtr const&) = delete;
     template<typename U>
-    NonnullOwnPtr& operator=(const NonnullOwnPtr<U>&) = delete;
+    NonnullOwnPtr& operator=(NonnullOwnPtr<U> const&) = delete;
 
     template<typename U, typename PtrTraits = RefPtrTraits<U>>
-    NonnullOwnPtr(const RefPtr<U, PtrTraits>&) = delete;
+    NonnullOwnPtr(RefPtr<U, PtrTraits> const&) = delete;
     template<typename U>
-    NonnullOwnPtr(const NonnullRefPtr<U>&) = delete;
+    NonnullOwnPtr(NonnullRefPtr<U> const&) = delete;
     template<typename U>
-    NonnullOwnPtr(const WeakPtr<U>&) = delete;
+    NonnullOwnPtr(WeakPtr<U> const&) = delete;
     template<typename U, typename PtrTraits = RefPtrTraits<U>>
-    NonnullOwnPtr& operator=(const RefPtr<U, PtrTraits>&) = delete;
+    NonnullOwnPtr& operator=(RefPtr<U, PtrTraits> const&) = delete;
     template<typename U>
-    NonnullOwnPtr& operator=(const NonnullRefPtr<U>&) = delete;
+    NonnullOwnPtr& operator=(NonnullRefPtr<U> const&) = delete;
     template<typename U>
-    NonnullOwnPtr& operator=(const WeakPtr<U>&) = delete;
+    NonnullOwnPtr& operator=(WeakPtr<U> const&) = delete;
 
     NonnullOwnPtr& operator=(NonnullOwnPtr&& other)
     {
@@ -159,8 +159,6 @@ inline NonnullOwnPtr<T> adopt_own(T& object)
     return NonnullOwnPtr<T>(NonnullOwnPtr<T>::Adopt, object);
 }
 
-#endif
-
 template<class T, class... Args>
 requires(IsConstructible<T, Args...>) inline NonnullOwnPtr<T> make(Args&&... args)
 {
@@ -174,12 +172,14 @@ inline NonnullOwnPtr<T> make(Args&&... args)
     return NonnullOwnPtr<T>(NonnullOwnPtr<T>::Adopt, *new T { forward<Args>(args)... });
 }
 
+#endif
+
 template<typename T>
 struct Traits<NonnullOwnPtr<T>> : public GenericTraits<NonnullOwnPtr<T>> {
     using PeekType = T*;
     using ConstPeekType = const T*;
-    static unsigned hash(const NonnullOwnPtr<T>& p) { return ptr_hash((FlatPtr)p.ptr()); }
-    static bool equals(const NonnullOwnPtr<T>& a, const NonnullOwnPtr<T>& b) { return a.ptr() == b.ptr(); }
+    static unsigned hash(NonnullOwnPtr<T> const& p) { return ptr_hash((FlatPtr)p.ptr()); }
+    static bool equals(NonnullOwnPtr<T> const& a, NonnullOwnPtr<T> const& b) { return a.ptr() == b.ptr(); }
 };
 
 template<typename T, typename U>
@@ -200,6 +200,6 @@ struct Formatter<NonnullOwnPtr<T>> : Formatter<const T*> {
 
 #if !defined(KERNEL)
 using AK::adopt_own;
-#endif
 using AK::make;
+#endif
 using AK::NonnullOwnPtr;

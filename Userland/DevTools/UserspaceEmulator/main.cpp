@@ -65,7 +65,7 @@ int main(int argc, char** argv, char** env)
     if (dump_profile) {
         profile_output_file = fopen(profile_dump_path.characters(), "w+");
         if (profile_output_file == nullptr) {
-            auto error_string = strerror(errno);
+            char const* error_string = strerror(errno);
             warnln("Failed to open '{}' for writing: {}", profile_dump_path, error_string);
             return 1;
         }
@@ -116,7 +116,7 @@ int main(int argc, char** argv, char** env)
     rc = emulator.exec();
 
     if (dump_profile) {
-        emulator.profile_stream().write_or_error(", \"strings\": ["sv.bytes());
+        emulator.profile_stream().write_or_error("], \"strings\": ["sv.bytes());
         if (emulator.profiler_strings().size()) {
             for (size_t i = 0; i < emulator.profiler_strings().size() - 1; ++i)
                 emulator.profile_stream().write_or_error(String::formatted("\"{}\", ", emulator.profiler_strings().at(i)).bytes());

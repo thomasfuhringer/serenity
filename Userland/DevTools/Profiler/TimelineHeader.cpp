@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2021, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2022, the SerenityOS developers.
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -27,10 +28,6 @@ TimelineHeader::TimelineHeader(Profile& profile, Process const& process)
     m_text = String::formatted("{} ({})", LexicalPath::basename(m_process.executable), m_process.pid);
 }
 
-TimelineHeader::~TimelineHeader()
-{
-}
-
 void TimelineHeader::paint_event(GUI::PaintEvent& event)
 {
     GUI::Frame::paint_event(event);
@@ -53,7 +50,7 @@ void TimelineHeader::paint_event(GUI::PaintEvent& event)
     };
     text_rect.center_vertically_within(frame_inner_rect());
 
-    auto& font = m_selected ? painter.font().bold_variant() : painter.font();
+    auto const& font = m_selected ? painter.font().bold_variant() : painter.font();
     auto color = m_selected ? palette().selection_text() : palette().button_text();
     painter.draw_text(text_rect, m_text, font, Gfx::TextAlignment::CenterLeft, color);
 }

@@ -7,8 +7,11 @@
 #pragma once
 
 #include <AK/Assertions.h>
-#include <AK/String.h>
+#include <AK/Format.h>
 #include <AK/Types.h>
+
+#include <AK/Platform.h>
+VALIDATE_IS_X86()
 
 namespace IO {
 
@@ -130,12 +133,12 @@ public:
 
     bool is_null() const { return m_address == 0; }
 
-    bool operator==(const IOAddress& other) const { return m_address == other.m_address; }
-    bool operator!=(const IOAddress& other) const { return m_address != other.m_address; }
-    bool operator>(const IOAddress& other) const { return m_address > other.m_address; }
-    bool operator>=(const IOAddress& other) const { return m_address >= other.m_address; }
-    bool operator<(const IOAddress& other) const { return m_address < other.m_address; }
-    bool operator<=(const IOAddress& other) const { return m_address <= other.m_address; }
+    bool operator==(IOAddress const& other) const { return m_address == other.m_address; }
+    bool operator!=(IOAddress const& other) const { return m_address != other.m_address; }
+    bool operator>(IOAddress const& other) const { return m_address > other.m_address; }
+    bool operator>=(IOAddress const& other) const { return m_address >= other.m_address; }
+    bool operator<(IOAddress const& other) const { return m_address < other.m_address; }
+    bool operator<=(IOAddress const& other) const { return m_address <= other.m_address; }
 
 private:
     u16 m_address { 0 };

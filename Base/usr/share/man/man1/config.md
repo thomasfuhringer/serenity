@@ -14,8 +14,6 @@ Show or modify values in the configuration files through ConfigServer.
 
 ## Options:
 
-* `--help`: Display help message and exit
-* `--version`: Print version
 * `-r`, `--remove`: Remove key
 
 ## Arguments:

@@ -16,7 +16,7 @@ class ConsoleObject final : public Object {
 public:
     explicit ConsoleObject(GlobalObject&);
     virtual void initialize(GlobalObject&) override;
-    virtual ~ConsoleObject() override;
+    virtual ~ConsoleObject() override = default;
 
 private:
     JS_DECLARE_NATIVE_FUNCTION(log);
@@ -29,6 +29,12 @@ private:
     JS_DECLARE_NATIVE_FUNCTION(count_reset);
     JS_DECLARE_NATIVE_FUNCTION(clear);
     JS_DECLARE_NATIVE_FUNCTION(assert_);
+    JS_DECLARE_NATIVE_FUNCTION(group);
+    JS_DECLARE_NATIVE_FUNCTION(group_collapsed);
+    JS_DECLARE_NATIVE_FUNCTION(group_end);
+    JS_DECLARE_NATIVE_FUNCTION(time);
+    JS_DECLARE_NATIVE_FUNCTION(time_log);
+    JS_DECLARE_NATIVE_FUNCTION(time_end);
 };
 
 }

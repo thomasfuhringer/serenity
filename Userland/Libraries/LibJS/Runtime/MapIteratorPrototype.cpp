@@ -27,10 +27,6 @@ void MapIteratorPrototype::initialize(GlobalObject& global_object)
     define_direct_property(*vm.well_known_symbol_to_string_tag(), js_string(global_object.heap(), "Map Iterator"), Attribute::Configurable);
 }
 
-MapIteratorPrototype::~MapIteratorPrototype()
-{
-}
-
 // 24.1.5.2.1 %MapIteratorPrototype%.next ( ), https://tc39.es/ecma262/#sec-%mapiteratorprototype%.next
 JS_DEFINE_NATIVE_FUNCTION(MapIteratorPrototype::next)
 {
@@ -38,8 +34,7 @@ JS_DEFINE_NATIVE_FUNCTION(MapIteratorPrototype::next)
     if (map_iterator->done())
         return create_iterator_result_object(global_object, js_undefined(), true);
 
-    auto& map = map_iterator->map();
-    if (map_iterator->m_iterator == map.entries().end()) {
+    if (map_iterator->m_iterator.is_end()) {
         map_iterator->m_done = true;
         return create_iterator_result_object(global_object, js_undefined(), true);
     }
@@ -50,7 +45,7 @@ JS_DEFINE_NATIVE_FUNCTION(MapIteratorPrototype::next)
     ++map_iterator->m_iterator;
     if (iteration_kind == Object::PropertyKind::Key)
         return create_iterator_result_object(global_object, entry.key, false);
-    else if (iteration_kind == Object::PropertyKind::Value)
+    if (iteration_kind == Object::PropertyKind::Value)
         return create_iterator_result_object(global_object, entry.value, false);
 
     return create_iterator_result_object(global_object, Array::create_from(global_object, { entry.key, entry.value }), false);

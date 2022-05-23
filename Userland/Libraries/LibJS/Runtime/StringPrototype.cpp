@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2020-2021, Andreas Kling <kling@serenityos.org>
- * Copyright (c) 2020-2021, Linus Groh <linusg@serenityos.org>
+ * Copyright (c) 2020-2022, Linus Groh <linusg@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -16,6 +16,9 @@
 #include <LibJS/Runtime/Error.h>
 #include <LibJS/Runtime/GlobalObject.h>
 #include <LibJS/Runtime/Intl/AbstractOperations.h>
+#include <LibJS/Runtime/Intl/Collator.h>
+#include <LibJS/Runtime/Intl/CollatorCompareFunction.h>
+#include <LibJS/Runtime/Intl/CollatorConstructor.h>
 #include <LibJS/Runtime/PrimitiveString.h>
 #include <LibJS/Runtime/RegExpObject.h>
 #include <LibJS/Runtime/StringIterator.h>
@@ -158,10 +161,6 @@ void StringPrototype::initialize(GlobalObject& global_object)
     define_native_function(vm.names.sup, sup, 0, attr);
     define_native_function(vm.names.localeCompare, locale_compare, 1, attr);
     define_native_function(*vm.well_known_symbol_iterator(), symbol_iterator, 0, attr);
-}
-
-StringPrototype::~StringPrototype()
-{
 }
 
 // thisStringValue ( value ), https://tc39.es/ecma262/#thisstringvalue
@@ -318,58 +317,91 @@ JS_DEFINE_NATIVE_FUNCTION(StringPrototype::index_of)
     return index.has_value() ? Value(*index) : Value(-1);
 }
 
-static ThrowCompletionOr<String> resolve_best_locale(GlobalObject& global_object, Value locales)
-{
-    // For details on these steps, see https://tc39.es/ecma402/#sup-string.prototype.tolocalelowercase
+enum class TargetCase {
+    Lower,
+    Upper,
+};
 
-    // 3. Let requestedLocales be ? CanonicalizeLocaleList(locales).
+// 19.1.2.1 TransformCase ( S, locales, targetCase ), https://tc39.es/ecma402/#sec-transform-case
+static ThrowCompletionOr<String> transform_case(GlobalObject& global_object, StringView string, Value locales, TargetCase target_case)
+{
+    // 1. Let requestedLocales be ? CanonicalizeLocaleList(locales).
     auto requested_locales = TRY(Intl::canonicalize_locale_list(global_object, locales));
 
     Optional<Unicode::LocaleID> requested_locale;
 
-    // 4. If requestedLocales is not an empty List, then
+    // 2. If requestedLocales is not an empty List, then
     if (!requested_locales.is_empty()) {
         // a. Let requestedLocale be requestedLocales[0].
         requested_locale = Unicode::parse_unicode_locale_id(requested_locales[0]);
     }
-    // 5. Else,
+    // 3. Else,
     else {
-        // a. Let requestedLocale be DefaultLocale().
+        // a. Let requestedLocale be ! DefaultLocale().
         requested_locale = Unicode::parse_unicode_locale_id(Unicode::default_locale());
     }
     VERIFY(requested_locale.has_value());
 
-    // 6. Let noExtensionsLocale be the String value that is requestedLocale with any Unicode locale extension sequences (6.2.1) removed.
+    // 4. Let noExtensionsLocale be the String value that is requestedLocale with any Unicode locale extension sequences (6.2.1) removed.
     requested_locale->remove_extension_type<Unicode::LocaleExtension>();
     auto no_extensions_locale = requested_locale->to_string();
 
-    // 7. Let availableLocales be a List with language tags that includes the languages for which the Unicode Character Database contains language sensitive case mappings. Implementations may add additional language tags if they support case mapping for additional locales.
-    // 8. Let locale be BestAvailableLocale(availableLocales, noExtensionsLocale).
+    // 5. Let availableLocales be a List with language tags that includes the languages for which the Unicode Character Database contains language sensitive case mappings. Implementations may add additional language tags if they support case mapping for additional locales.
+    // 6. Let locale be ! BestAvailableLocale(availableLocales, noExtensionsLocale).
     auto locale = Intl::best_available_locale(no_extensions_locale);
 
-    // 9. If locale is undefined, let locale be "und".
+    // 7. If locale is undefined, set locale to "und".
     if (!locale.has_value())
         locale = "und"sv;
 
-    return locale;
+    // 8. Let codePoints be StringToCodePoints(S).
+
+    String new_code_points;
+
+    switch (target_case) {
+    // 9. If targetCase is lower, then
+    case TargetCase::Lower:
+        // a. Let newCodePoints be a List whose elements are the result of a lowercase transformation of codePoints according to an implementation-derived algorithm using locale or the Unicode Default Case Conversion algorithm.
+        new_code_points = Unicode::to_unicode_lowercase_full(string, *locale);
+        break;
+    // 10. Else,
+    case TargetCase::Upper:
+        // a. Assert: targetCase is upper.
+        // b. Let newCodePoints be a List whose elements are the result of an uppercase transformation of codePoints according to an implementation-derived algorithm using locale or the Unicode Default Case Conversion algorithm.
+        new_code_points = Unicode::to_unicode_uppercase_full(string, *locale);
+        break;
+    default:
+        VERIFY_NOT_REACHED();
+    }
+
+    // 11. Return CodePointsToString(newCodePoints).
+    return new_code_points;
 }
 
-// 18.1.2 String.prototype.toLocaleLowerCase ( [ locales ] ), https://tc39.es/ecma402/#sup-string.prototype.tolocalelowercase
+// 19.1.2 String.prototype.toLocaleLowerCase ( [ locales ] ), https://tc39.es/ecma402/#sup-string.prototype.tolocalelowercase
 JS_DEFINE_NATIVE_FUNCTION(StringPrototype::to_locale_lowercase)
 {
+    auto locales = vm.argument(0);
+
+    // 1. Let O be ? RequireObjectCoercible(this value).
+    // 2. Let S be ? ToString(O).
     auto string = TRY(ak_string_from(vm, global_object));
-    auto locale = TRY(resolve_best_locale(global_object, vm.argument(0)));
-    auto lowercase = Unicode::to_unicode_lowercase_full(string, locale);
-    return js_string(vm, move(lowercase));
+
+    // 3. Return ? TransformCase(S, locales, lower).
+    return js_string(vm, TRY(transform_case(global_object, string, locales, TargetCase::Lower)));
 }
 
-// 18.1.3 String.prototype.toLocaleUpperCase ( [ locales ] ), https://tc39.es/ecma402/#sup-string.prototype.tolocaleuppercase
+// 19.1.3 String.prototype.toLocaleUpperCase ( [ locales ] ), https://tc39.es/ecma402/#sup-string.prototype.tolocaleuppercase
 JS_DEFINE_NATIVE_FUNCTION(StringPrototype::to_locale_uppercase)
 {
+    auto locales = vm.argument(0);
+
+    // 1. Let O be ? RequireObjectCoercible(this value).
+    // 2. Let S be ? ToString(O).
     auto string = TRY(ak_string_from(vm, global_object));
-    auto locale = TRY(resolve_best_locale(global_object, vm.argument(0)));
-    auto uppercase = Unicode::to_unicode_uppercase_full(string, locale);
-    return js_string(vm, move(uppercase));
+
+    // 3. Return ? TransformCase(S, locales, upper).
+    return js_string(vm, TRY(transform_case(global_object, string, locales, TargetCase::Upper)));
 }
 
 // 22.1.3.27 String.prototype.toLowerCase ( ), https://tc39.es/ecma262/#sec-string.prototype.tolowercase
@@ -452,27 +484,41 @@ JS_DEFINE_NATIVE_FUNCTION(StringPrototype::pad_end)
     return pad_string(global_object, move(string), PadPlacement::End);
 }
 
-static Utf8View const whitespace_characters = Utf8View("\x09\x0A\x0B\x0C\x0D\x20\xC2\xA0\xE1\x9A\x80\xE2\x80\x80\xE2\x80\x81\xE2\x80\x82\xE2\x80\x83\xE2\x80\x84\xE2\x80\x85\xE2\x80\x86\xE2\x80\x87\xE2\x80\x88\xE2\x80\x89\xE2\x80\x8A\xE2\x80\xAF\xE2\x81\x9F\xE3\x80\x80\xE2\x80\xA8\xE2\x80\xA9\xEF\xBB\xBF"sv);
+ThrowCompletionOr<String> trim_string(GlobalObject& global_object, Value input_value, TrimMode where)
+{
+    // 1. Let str be ? RequireObjectCoercible(string).
+    auto input_string = TRY(require_object_coercible(global_object, input_value));
+
+    // 2. Let S be ? ToString(str).
+    auto string = TRY(input_string.to_string(global_object));
+
+    // 3. If where is start, let T be the String value that is a copy of S with leading white space removed.
+    // 4. Else if where is end, let T be the String value that is a copy of S with trailing white space removed.
+    // 5. Else,
+    // a. Assert: where is start+end.
+    // b. Let T be the String value that is a copy of S with both leading and trailing white space removed.
+    auto trimmed_string = Utf8View(string).trim(whitespace_characters, where).as_string();
+
+    // 6. Return T.
+    return trimmed_string;
+}
 
 // 22.1.3.30 String.prototype.trim ( ), https://tc39.es/ecma262/#sec-string.prototype.trim
 JS_DEFINE_NATIVE_FUNCTION(StringPrototype::trim)
 {
-    auto string = TRY(ak_string_from(vm, global_object));
-    return js_string(vm, Utf8View(string).trim(whitespace_characters, TrimMode::Both).as_string());
+    return js_string(vm, TRY(trim_string(global_object, vm.this_value(global_object), TrimMode::Both)));
 }
 
 // 22.1.3.32 String.prototype.trimStart ( ), https://tc39.es/ecma262/#sec-string.prototype.trimstart
 JS_DEFINE_NATIVE_FUNCTION(StringPrototype::trim_start)
 {
-    auto string = TRY(ak_string_from(vm, global_object));
-    return js_string(vm, Utf8View(string).trim(whitespace_characters, TrimMode::Left).as_string());
+    return js_string(vm, TRY(trim_string(global_object, vm.this_value(global_object), TrimMode::Left)));
 }
 
 // 22.1.3.31 String.prototype.trimEnd ( ), https://tc39.es/ecma262/#sec-string.prototype.trimend
 JS_DEFINE_NATIVE_FUNCTION(StringPrototype::trim_end)
 {
-    auto string = TRY(ak_string_from(vm, global_object));
-    return js_string(vm, Utf8View(string).trim(whitespace_characters, TrimMode::Right).as_string());
+    return js_string(vm, TRY(trim_string(global_object, vm.this_value(global_object), TrimMode::Right)));
 }
 
 // 22.1.3.5 String.prototype.concat ( ...args ), https://tc39.es/ecma262/#sec-string.prototype.concat
@@ -517,8 +563,8 @@ JS_DEFINE_NATIVE_FUNCTION(StringPrototype::substr)
     auto int_start = TRY(vm.argument(0).to_integer_or_infinity(global_object));
     if (Value(int_start).is_negative_infinity())
         int_start = 0;
-    if (int_start < 0)
-        int_start = max(size + (i32)int_start, 0);
+    else if (int_start < 0)
+        int_start = max(size + int_start, 0);
 
     auto length = vm.argument(1);
 
@@ -599,7 +645,7 @@ JS_DEFINE_NATIVE_FUNCTION(StringPrototype::split)
     if (!separator_argument.is_nullish()) {
         auto splitter = TRY(separator_argument.get_method(global_object, *vm.well_known_symbol_split()));
         if (splitter)
-            return TRY(vm.call(*splitter, separator_argument, object, limit_argument));
+            return TRY(call(global_object, *splitter, separator_argument, object, limit_argument));
     }
 
     auto string = TRY(object.to_utf16_string(global_object));
@@ -724,7 +770,7 @@ JS_DEFINE_NATIVE_FUNCTION(StringPrototype::match)
     auto regexp = vm.argument(0);
     if (!regexp.is_nullish()) {
         if (auto* matcher = TRY(regexp.get_method(global_object, *vm.well_known_symbol_match())))
-            return TRY(vm.call(*matcher, regexp, this_object));
+            return TRY(call(global_object, *matcher, regexp, this_object));
     }
 
     auto string = TRY(this_object.to_utf16_string(global_object));
@@ -748,7 +794,7 @@ JS_DEFINE_NATIVE_FUNCTION(StringPrototype::match_all)
                 return vm.throw_completion<TypeError>(global_object, ErrorType::StringNonGlobalRegExp);
         }
         if (auto* matcher = TRY(regexp.get_method(global_object, *vm.well_known_symbol_match_all())))
-            return TRY(vm.call(*matcher, regexp, this_object));
+            return TRY(call(global_object, *matcher, regexp, this_object));
     }
 
     auto string = TRY(this_object.to_utf16_string(global_object));
@@ -766,7 +812,7 @@ JS_DEFINE_NATIVE_FUNCTION(StringPrototype::replace)
 
     if (!search_value.is_nullish()) {
         if (auto* replacer = TRY(search_value.get_method(global_object, *vm.well_known_symbol_replace())))
-            return TRY(vm.call(*replacer, search_value, this_object, replace_value));
+            return TRY(call(global_object, *replacer, search_value, this_object, replace_value));
     }
 
     auto string = TRY(this_object.to_utf16_string(global_object));
@@ -785,7 +831,7 @@ JS_DEFINE_NATIVE_FUNCTION(StringPrototype::replace)
     String replacement;
 
     if (replace_value.is_function()) {
-        auto result = TRY(vm.call(replace_value.as_function(), js_undefined(), js_string(vm, search_string), Value(position.value()), js_string(vm, string)));
+        auto result = TRY(call(global_object, replace_value.as_function(), js_undefined(), js_string(vm, search_string), Value(position.value()), js_string(vm, string)));
         replacement = TRY(result.to_string(global_object));
     } else {
         replacement = TRY(get_substitution(global_object, search_string.view(), string.view(), *position, {}, js_undefined(), replace_value));
@@ -819,7 +865,7 @@ JS_DEFINE_NATIVE_FUNCTION(StringPrototype::replace_all)
 
         auto* replacer = TRY(search_value.get_method(global_object, *vm.well_known_symbol_replace()));
         if (replacer)
-            return TRY(vm.call(*replacer, search_value, this_object, replace_value));
+            return TRY(call(global_object, *replacer, search_value, this_object, replace_value));
     }
 
     auto string = TRY(this_object.to_utf16_string(global_object));
@@ -850,7 +896,7 @@ JS_DEFINE_NATIVE_FUNCTION(StringPrototype::replace_all)
         String replacement;
 
         if (replace_value.is_function()) {
-            auto result = TRY(vm.call(replace_value.as_function(), js_undefined(), js_string(vm, search_string), Value(position), js_string(vm, string)));
+            auto result = TRY(call(global_object, replace_value.as_function(), js_undefined(), js_string(vm, search_string), Value(position), js_string(vm, string)));
             replacement = TRY(result.to_string(global_object));
         } else {
             replacement = TRY(get_substitution(global_object, search_string.view(), string.view(), position, {}, js_undefined(), replace_value));
@@ -875,7 +921,7 @@ JS_DEFINE_NATIVE_FUNCTION(StringPrototype::search)
     auto regexp = vm.argument(0);
     if (!regexp.is_nullish()) {
         if (auto* searcher = TRY(regexp.get_method(global_object, *vm.well_known_symbol_search())))
-            return TRY(vm.call(*searcher, regexp, this_object));
+            return TRY(call(global_object, *searcher, regexp, this_object));
     }
 
     auto string = TRY(this_object.to_utf16_string(global_object));
@@ -885,7 +931,7 @@ JS_DEFINE_NATIVE_FUNCTION(StringPrototype::search)
 }
 
 // B.2.2.2.1 CreateHTML ( string, tag, attribute, value ), https://tc39.es/ecma262/#sec-createhtml
-static ThrowCompletionOr<Value> create_html(GlobalObject& global_object, Value string, const String& tag, const String& attribute, Value value)
+static ThrowCompletionOr<Value> create_html(GlobalObject& global_object, Value string, String const& tag, String const& attribute, Value value)
 {
     auto& vm = global_object.vm();
     TRY(require_object_coercible(global_object, string));
@@ -988,19 +1034,23 @@ JS_DEFINE_NATIVE_FUNCTION(StringPrototype::sup)
 }
 
 // 22.1.3.11 String.prototype.localeCompare ( that [ , reserved1 [ , reserved2 ] ] ), https://tc39.es/ecma262/#sec-string.prototype.localecompare
-// NOTE: This is the minimum localeCompare implementation for engines without ECMA-402.
+// 19.1.1 String.prototype.localeCompare ( that [ , locales [ , options ] ] ), https://tc39.es/ecma402/#sup-String.prototype.localeCompare
 JS_DEFINE_NATIVE_FUNCTION(StringPrototype::locale_compare)
 {
-    auto string = TRY(ak_string_from(vm, global_object));
-    auto that_string = TRY(vm.argument(0).to_string(global_object));
+    // 1. Let O be ? RequireObjectCoercible(this value).
+    auto object = TRY(require_object_coercible(global_object, vm.this_value(global_object)));
 
-    // FIXME: Actually compare the string not just according to their bits.
-    if (string == that_string)
-        return Value(0);
-    if (string < that_string)
-        return Value(-1);
+    // 2. Let S be ? ToString(O).
+    auto string = TRY(object.to_string(global_object));
 
-    return Value(1);
+    // 3. Let thatValue be ? ToString(that).
+    auto that_value = TRY(vm.argument(0).to_string(global_object));
+
+    // 4. Let collator be ? Construct(%Collator%, « locales, options »).
+    auto* collator = TRY(construct(global_object, *global_object.intl_collator_constructor(), vm.argument(1), vm.argument(2)));
+
+    // 5. Return CompareStrings(collator, S, thatValue).
+    return Intl::compare_strings(static_cast<Intl::Collator&>(*collator), Utf8View(string), Utf8View(that_value));
 }
 
 }

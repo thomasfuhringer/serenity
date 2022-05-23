@@ -33,9 +33,6 @@ public:
     bool is_symlink() const { return Kernel::is_symlink(m_raw_inode.i_mode); }
     bool is_directory() const { return Kernel::is_directory(m_raw_inode.i_mode); }
 
-    // ^Inode (RefCounted magic)
-    virtual void one_ref_left() override;
-
 private:
     // ^Inode
     virtual ErrorOr<size_t> read_bytes(off_t, size_t, UserOrKernelBuffer& buffer, OpenFileDescription*) const override;
@@ -43,7 +40,7 @@ private:
     virtual ErrorOr<void> traverse_as_directory(Function<ErrorOr<void>(FileSystem::DirectoryEntryView const&)>) const override;
     virtual ErrorOr<NonnullRefPtr<Inode>> lookup(StringView name) override;
     virtual ErrorOr<void> flush_metadata() override;
-    virtual ErrorOr<size_t> write_bytes(off_t, size_t, const UserOrKernelBuffer& data, OpenFileDescription*) override;
+    virtual ErrorOr<size_t> write_bytes(off_t, size_t, UserOrKernelBuffer const& data, OpenFileDescription*) override;
     virtual ErrorOr<NonnullRefPtr<Inode>> create_child(StringView name, mode_t, dev_t, UserID, GroupID) override;
     virtual ErrorOr<void> add_child(Inode& child, StringView name, mode_t) override;
     virtual ErrorOr<void> remove_child(StringView name) override;
@@ -72,12 +69,12 @@ private:
     ErrorOr<Vector<BlockBasedFileSystem::BlockIndex>> compute_block_list_impl_internal(ext2_inode const&, bool include_block_list_blocks) const;
 
     Ext2FS& fs();
-    const Ext2FS& fs() const;
+    Ext2FS const& fs() const;
     Ext2FSInode(Ext2FS&, InodeIndex);
 
     mutable Vector<BlockBasedFileSystem::BlockIndex> m_block_list;
-    mutable HashMap<String, InodeIndex> m_lookup_cache;
-    ext2_inode m_raw_inode;
+    mutable HashMap<NonnullOwnPtr<KString>, InodeIndex> m_lookup_cache;
+    ext2_inode m_raw_inode {};
 };
 
 class Ext2FS final : public BlockBasedFileSystem {
@@ -103,7 +100,7 @@ public:
 
     virtual bool supports_watchers() const override { return true; }
 
-    virtual u8 internal_file_type_to_directory_entry_type(const DirectoryEntryView& entry) const override;
+    virtual u8 internal_file_type_to_directory_entry_type(DirectoryEntryView const& entry) const override;
 
     FeaturesReadOnly get_features_readonly() const;
 
@@ -112,10 +109,10 @@ private:
 
     explicit Ext2FS(OpenFileDescription&);
 
-    const ext2_super_block& super_block() const { return m_super_block; }
-    const ext2_group_desc& group_descriptor(GroupIndex) const;
+    ext2_super_block const& super_block() const { return m_super_block; }
+    ext2_group_desc const& group_descriptor(GroupIndex) const;
     ext2_group_desc* block_group_descriptors() { return (ext2_group_desc*)m_cached_group_descriptor_table->data(); }
-    const ext2_group_desc* block_group_descriptors() const { return (const ext2_group_desc*)m_cached_group_descriptor_table->data(); }
+    ext2_group_desc const* block_group_descriptors() const { return (ext2_group_desc const*)m_cached_group_descriptor_table->data(); }
     void flush_block_group_descriptor_table();
     u64 inodes_per_block() const;
     u64 inodes_per_group() const;
@@ -125,7 +122,7 @@ private:
     ErrorOr<void> write_ext2_inode(InodeIndex, ext2_inode const&);
     bool find_block_containing_inode(InodeIndex, BlockIndex& block_index, unsigned& offset) const;
 
-    bool flush_super_block();
+    ErrorOr<void> flush_super_block();
 
     virtual StringView class_name() const override { return "Ext2FS"sv; }
     virtual Ext2FSInode& root_inode() override;
@@ -159,7 +156,7 @@ private:
 
     u64 m_block_group_count { 0 };
 
-    mutable ext2_super_block m_super_block;
+    mutable ext2_super_block m_super_block {};
     mutable OwnPtr<KBuffer> m_cached_group_descriptor_table;
 
     mutable HashMap<InodeIndex, RefPtr<Ext2FSInode>> m_inode_cache;
@@ -191,9 +188,9 @@ inline Ext2FS& Ext2FSInode::fs()
     return static_cast<Ext2FS&>(Inode::fs());
 }
 
-inline const Ext2FS& Ext2FSInode::fs() const
+inline Ext2FS const& Ext2FSInode::fs() const
 {
-    return static_cast<const Ext2FS&>(Inode::fs());
+    return static_cast<Ext2FS const&>(Inode::fs());
 }
 
 }

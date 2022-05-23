@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2018-2020, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2022, the SerenityOS developers.
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -107,6 +108,7 @@ public:
     Function<void()> on_selection_change;
     Function<void()> on_focusin;
     Function<void()> on_focusout;
+    Function<void()> on_highlighter_change;
 
     void set_text(StringView, AllowCallback = AllowCallback::Yes);
     void scroll_cursor_into_view();
@@ -116,14 +118,14 @@ public:
     TextDocumentLine const& line(size_t index) const { return document().line(index); }
     NonnullOwnPtrVector<TextDocumentLine>& lines() { return document().lines(); }
     NonnullOwnPtrVector<TextDocumentLine> const& lines() const { return document().lines(); }
-    int line_spacing() const { return m_line_spacing; }
     int line_height() const;
     TextPosition cursor() const { return m_cursor; }
     TextRange normalized_selection() const { return m_selection.normalized(); }
 
     void insert_at_cursor_or_replace_selection(StringView);
+    void replace_all_text_without_resetting_undo_stack(StringView text);
     bool write_to_file(String const& path);
-    bool write_to_file_and_close(int fd);
+    bool write_to_file(Core::File&);
     bool has_selection() const { return m_selection.is_valid(); }
     String selected_text() const;
     size_t number_of_words() const;
@@ -155,6 +157,7 @@ public:
     Function<void()> on_mousedown;
     Function<void()> on_return_pressed;
     Function<void()> on_shift_return_pressed;
+    Function<void()> on_ctrl_return_pressed;
     Function<void()> on_escape_pressed;
     Function<void()> on_up_pressed;
     Function<void()> on_down_pressed;
@@ -175,6 +178,7 @@ public:
     void set_cursor(size_t line, size_t column);
     virtual void set_cursor(TextPosition const&);
 
+    Syntax::Highlighter* syntax_highlighter();
     Syntax::Highlighter const* syntax_highlighter() const;
     void set_syntax_highlighter(OwnPtr<Syntax::Highlighter>);
 
@@ -187,8 +191,8 @@ public:
     bool should_autocomplete_automatically() const { return m_autocomplete_timer; }
     void set_should_autocomplete_automatically(bool);
 
-    u32 substitution_code_point() const { return m_substitution_code_point; }
-    void set_substitution_code_point(u32 code_point);
+    Optional<u32> const& substitution_code_point() const { return m_substitution_code_point; }
+    void set_substitution_code_point(Optional<u32> code_point);
 
     bool is_in_drag_select() const { return m_in_drag_select; }
 
@@ -209,6 +213,16 @@ public:
 
     bool text_is_secret() const { return m_text_is_secret; }
     void set_text_is_secret(bool text_is_secret);
+    void force_rehighlight();
+
+    enum class SearchDirection {
+        Forward,
+        Backward,
+    };
+    TextRange find_text(StringView needle, SearchDirection, GUI::TextDocument::SearchShouldWrap, bool use_regex, bool match_case);
+    void reset_search_results();
+    Optional<size_t> search_result_index() const { return m_search_result_index; }
+    Vector<TextRange> const& search_results() const { return m_search_results; }
 
 protected:
     explicit TextEditor(Type = Type::MultiLine);
@@ -239,6 +253,8 @@ protected:
     int ruler_width() const;
     int gutter_width() const;
 
+    virtual void highlighter_did_set_spans(Vector<TextDocumentSpan> spans) final { document().set_spans(Syntax::HighlighterClient::span_collection_index, move(spans)); }
+
 private:
     friend class TextDocumentLine;
 
@@ -255,7 +271,6 @@ private:
     // ^Syntax::HighlighterClient
     virtual Vector<TextDocumentSpan>& spans() final { return document().spans(); }
     virtual Vector<TextDocumentSpan> const& spans() const final { return document().spans(); }
-    virtual void highlighter_did_set_spans(Vector<TextDocumentSpan> spans) final { document().set_spans(move(spans)); }
     virtual void set_span_at_index(size_t index, TextDocumentSpan span) final { document().set_span_at_index(index, move(span)); }
     virtual void highlighter_did_request_update() final { update(); }
     virtual String highlighter_did_request_text() const final { return text(); }
@@ -332,6 +347,9 @@ private:
     }
 
     virtual void will_execute(TextDocumentUndoCommand const&) { }
+    void on_search_results(GUI::TextRange current, Vector<GUI::TextRange> all_results);
+
+    static constexpr auto search_results_span_collection_index = 1;
 
     Type m_type { MultiLine };
     Mode m_mode { Editable };
@@ -343,19 +361,16 @@ private:
     bool m_ruler_visible { false };
     bool m_gutter_visible { false };
     bool m_needs_rehighlight { false };
-    bool m_has_pending_change_notification { false };
     bool m_automatic_indentation_enabled { false };
     WrappingMode m_wrapping_mode { WrappingMode::NoWrap };
     bool m_visualize_trailing_whitespace { true };
     bool m_visualize_leading_whitespace { false };
     bool m_cursor_line_highlighting { true };
-    int m_line_spacing { 4 };
     size_t m_soft_tab_width { 4 };
     int m_horizontal_content_padding { 3 };
     TextRange m_selection;
 
-    // NOTE: If non-zero, all glyphs will be substituted with this one.
-    u32 m_substitution_code_point { 0 };
+    Optional<u32> m_substitution_code_point;
     mutable OwnPtr<Vector<u32>> m_substitution_string_data; // Used to avoid repeated String construction.
 
     RefPtr<Menu> m_context_menu;
@@ -404,6 +419,9 @@ private:
     RefPtr<Gfx::Bitmap> m_icon;
 
     bool m_text_is_secret { false };
+
+    Optional<size_t> m_search_result_index;
+    Vector<GUI::TextRange> m_search_results;
 };
 
 }

@@ -4,9 +4,10 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <AK/Debug.h>
 #include <AK/StringBuilder.h>
 #include <AK/Utf8View.h>
-#include <AK/Vector.h>
+#include <LibCore/Object.h>
 #include <LibCore/Timer.h>
 #include <LibGUI/AbstractView.h>
 #include <LibGUI/DragOperation.h>
@@ -24,6 +25,21 @@ AbstractView::AbstractView()
     , m_selection(*this)
 {
     REGISTER_BOOL_PROPERTY("activates_on_selection", activates_on_selection, set_activates_on_selection);
+    REGISTER_BOOL_PROPERTY("editable", is_editable, set_editable);
+    REGISTER_BOOL_PROPERTY("searchable", is_searchable, set_searchable);
+    REGISTER_ENUM_PROPERTY("selection_behavior", selection_behavior, set_selection_behavior, SelectionBehavior,
+        { SelectionBehavior::SelectItems, "SelectItems" },
+        { SelectionBehavior::SelectRows, "SelectRows" });
+    REGISTER_ENUM_PROPERTY("selection_mode", selection_mode, set_selection_mode, SelectionMode,
+        { SelectionMode::SingleSelection, "SingleSelection" },
+        { SelectionMode::MultiSelection, "MultiSeleciton" },
+        { SelectionMode::NoSelection, "NoSelection" });
+    REGISTER_INT_PROPERTY("key_column", key_column, set_key_column);
+    REGISTER_ENUM_PROPERTY("sort_order", sort_order, set_sort_order, SortOrder,
+        { SortOrder::Ascending, "Ascending" },
+        { SortOrder::Descending, "Descending" });
+    REGISTER_BOOL_PROPERTY("tab_key_navigation_enabled", is_tab_key_navigation_enabled, set_tab_key_navigation_enabled);
+    REGISTER_BOOL_PROPERTY("draw_item_text_with_shadow", does_draw_item_text_with_shadow, set_draw_item_text_with_shadow);
 
     set_focus_policy(GUI::FocusPolicy::StrongFocus);
 }
@@ -71,7 +87,7 @@ void AbstractView::model_did_update(unsigned int flags)
             m_cursor_index = {};
         if (!model()->is_within_range(m_drop_candidate_index))
             m_drop_candidate_index = {};
-        selection().remove_matching([this](auto& index) { return !model()->is_within_range(index); });
+        selection().remove_all_matching([this](auto& index) { return !model()->is_within_range(index); });
 
         auto index = find_next_search_match(m_highlighted_search.view());
         if (index.is_valid())
@@ -307,7 +323,7 @@ void AbstractView::mousemove_event(MouseEvent& event)
     // Prevent this by just ignoring later drag initiations (until the current drag operation ends).
     TemporaryChange dragging { m_is_dragging, true };
 
-    dbgln("Initiate drag!");
+    dbgln_if(DRAG_DEBUG, "Initiate drag!");
     auto drag_operation = DragOperation::construct();
 
     drag_operation->set_mime_data(m_model->mime_data(m_selection));
@@ -316,10 +332,10 @@ void AbstractView::mousemove_event(MouseEvent& event)
 
     switch (outcome) {
     case DragOperation::Outcome::Accepted:
-        dbgln("Drag was accepted!");
+        dbgln_if(DRAG_DEBUG, "Drag was accepted!");
         break;
     case DragOperation::Outcome::Cancelled:
-        dbgln("Drag was cancelled!");
+        dbgln_if(DRAG_DEBUG, "Drag was cancelled!");
         m_might_drag = false;
         break;
     default:
@@ -569,9 +585,9 @@ void AbstractView::keydown_event(KeyEvent& event)
     if (is_searchable()) {
         if (event.key() == KeyCode::Key_Backspace) {
             if (!m_highlighted_search.is_null()) {
-                //if (event.modifiers() == Mod_Ctrl) {
-                // TODO: delete last word
-                //}
+                // if (event.modifiers() == Mod_Ctrl) {
+                //  TODO: delete last word
+                // }
                 Utf8View view(m_highlighted_search);
                 size_t n_code_points = view.length();
                 if (n_code_points > 1) {
@@ -613,6 +629,7 @@ void AbstractView::keydown_event(KeyEvent& event)
                 m_highlighted_search = sb.to_string();
                 highlight_search(index);
                 start_highlighted_search_timer();
+                set_cursor(index, SelectionUpdate::None, true);
             }
 
             event.accept();
@@ -704,7 +721,7 @@ void AbstractView::draw_item_text(Gfx::Painter& painter, ModelIndex const& index
 
         // Highlight the text background first
         auto background_searching_length = searching_length;
-        painter.draw_text([&](Gfx::IntRect const& rect, u32) {
+        painter.draw_text([&](Gfx::IntRect const& rect, Utf8CodePointIterator&) {
             if (background_searching_length > 0) {
                 background_searching_length--;
                 painter.fill_rect(rect.inflated(0, 2), palette().highlight_searching());
@@ -716,12 +733,12 @@ void AbstractView::draw_item_text(Gfx::Painter& painter, ModelIndex const& index
         auto text_searching_length = searching_length;
         auto highlight_text_color = palette().highlight_searching_text();
         searching_length = searching_text.length();
-        painter.draw_text([&](Gfx::IntRect const& rect, u32 code_point) {
+        painter.draw_text([&](Gfx::IntRect const& rect, Utf8CodePointIterator& it) {
             if (text_searching_length > 0) {
                 text_searching_length--;
-                painter.draw_glyph_or_emoji(rect.location(), code_point, font, highlight_text_color);
+                painter.draw_glyph_or_emoji(rect.location(), it, font, highlight_text_color);
             } else {
-                painter.draw_glyph_or_emoji(rect.location(), code_point, font, text_color);
+                painter.draw_glyph_or_emoji(rect.location(), it, font, text_color);
             }
         },
             text_rect, item_text, font, alignment, elision);
@@ -754,7 +771,7 @@ void AbstractView::drag_enter_event(DragEvent& event)
     //       We might be able to reduce event traffic by communicating the set of drag-accepting
     //       rects in this widget to the windowing system somehow.
     event.accept();
-    dbgln("accepting drag of {}", event.mime_types().first());
+    dbgln_if(DRAG_DEBUG, "accepting drag of {}", event.mime_types().first());
 }
 
 void AbstractView::drag_move_event(DragEvent& event)
@@ -797,8 +814,8 @@ void AbstractView::on_automatic_scrolling_timer_fired()
     if (m_automatic_scroll_delta.is_null())
         return;
 
-    vertical_scrollbar().set_value(vertical_scrollbar().value() + m_automatic_scroll_delta.y());
-    horizontal_scrollbar().set_value(horizontal_scrollbar().value() + m_automatic_scroll_delta.x());
+    vertical_scrollbar().increase_slider_by(m_automatic_scroll_delta.y());
+    horizontal_scrollbar().increase_slider_by(m_automatic_scroll_delta.x());
 }
 
 }
